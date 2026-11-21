@@ -125,8 +125,10 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                     'SelectPrimaryBacklogConnection', 'SelectStandaloneConnection')
             self.assertIn(expected_selection, raw_body)
             self.assertIn('''        if (connection is null)
+        {
             return SendBackloggedReadyAsync<TCommand, RespValue, RawReadySend>(operation, command, cancellationToken,
-                new RawReadySend(this, observation), default, null, default, false, observation);''', raw_body)
+                new RawReadySend(this, observation), default, null, default, false, observation);
+        }''', raw_body)
             self.assertIn('return SendOnConnectionAsync(operation, connection, command, cancellationToken, observation: observation);', raw_body)
             # Later replica, cluster, circuit and mutation ownership contracts remain available.
             for marker in ('TryDispatchReplica', 'SendOnReadyClusterAsync', 'SendCircuitReadyAsync',
@@ -150,6 +152,7 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                                     if method == 'ConvertResponseCoreAsync' else 'default')
                     expected = f'''                var durationStarted = RespireTelemetry.CaptureCommandDurationStart(operation);
                 RespireConnection? connection;
+
                 try
                 {{
                     connection = UsesPrimaryBacklog && !CommandDispatchAdmission<TCommand>.IsConnectionProtocol(in command)
@@ -161,20 +164,38 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                 {{
                     // The captured generation names the attempted data node, with or without Sentinel.
                     var endpoint = ct.IsCancellationRequested ? (RespireEndpoint?)null : readyMultiplexer.ActiveConnectionEndpoint;
+
                     if (core.Sentinel is not null)
+                    {{
                         return CaptureReadySendFailure<{result}>(error, cache, mutationFence, false, endpoint);
-                    if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence);
+                    }}
+
+                    if (mutationFence.IsRequired)
+                    {{
+                        cache!.CompleteMutation(in mutationFence);
+                    }}
+
                     throw;
                 }}
+
                 if (connection is null)
+                {{
                     return SendBackloggedReadyAsync<TCommand, {result}, {sender}>(operation, command, ct, {sender_value},
                         durationStarted, cache, mutationFence, false, observation);
+                }}
+
                 if (core.Circuits is not null && !_snapshotPrefixedBinaryKeys)
+                {{
                     return SendCircuitReadyAsync<TCommand, {result}, {sender}>(operation, connection, command, ct, {sender_value},
                         durationStarted, cache, mutationFence, observation);
+                }}
+
                 if (mutationFence.IsRequired)
+                {{
                     return SendReadyMutationAsync<TCommand, {result}, {sender}>(connection, operation, in command, ct, {sender_value},
                         cache!, mutationFence, durationStarted, observation);
+                }}
+
                 try
                 {{
                     return {send};
