@@ -147,6 +147,7 @@ jobs:
 
       # The action can finish successfully without the model ever posting a review.
       # Fail the check then, so a missing review shows red instead of green.
+      # Only the bot's own comments count, as in the merge gate, so a quoted marker cannot pass it.
       - name: Verify review was posted
         env:
           GH_TOKEN: ${{ github.token }}
@@ -154,7 +155,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
         run: |
           count=$(gh api --paginate "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
-            --jq '[.[] | select((.body | contains("<!-- claude-code-review -->")) and (.body | contains("<!-- REVIEW_HEAD_SHA: " + $ENV.REVIEW_HEAD_SHA + " -->")))] | length' \
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- claude-code-review -->")) and (.body | contains("<!-- REVIEW_HEAD_SHA: " + $ENV.REVIEW_HEAD_SHA + " -->")))] | length' \
             | awk '{ total += $1 } END { print total + 0 }')
           if [ "$count" -eq 0 ]; then
             echo "::error::No Claude review comment was posted for $REVIEW_HEAD_SHA. Rerun this workflow."
