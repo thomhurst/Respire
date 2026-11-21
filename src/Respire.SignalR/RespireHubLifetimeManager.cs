@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.SignalR.Internal;
 using Microsoft.AspNetCore.SignalR.Protocol;
 using Respire.SignalR.Internal;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -36,6 +37,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
     private Task _heartbeatTask = Task.CompletedTask;
     private bool _initialized;
     private int _disposed;
+    private CancellationTokenRegistration _applicationStopped;
 
     private readonly AckHandler _ackHandler;
     private int _internalAckId;
@@ -54,6 +56,30 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                                    IHubProtocolResolver hubProtocolResolver,
                                    IOptions<HubOptions>? globalHubOptions,
                                    IOptions<HubOptions<THub>>? hubOptions)
+        : this(client, logger, options, hubProtocolResolver, globalHubOptions, hubOptions, applicationLifetime: null)
+    {
+    }
+
+    /// <summary>
+    /// Constructs the <see cref="RespireHubLifetimeManager{THub}"/> with types from Dependency Injection,
+    /// stopping and joining its subscriptions when the application stops.
+    /// </summary>
+    /// <param name="logger">The logger to write information about what the class is doing.</param>
+    /// <param name="options">Backplane options.</param>
+    /// <param name="hubProtocolResolver">The <see cref="IHubProtocolResolver"/> to get an <see cref="IHubProtocol"/> instance when writing to connections.</param>
+    /// <param name="globalHubOptions">The global <see cref="HubOptions"/>.</param>
+    /// <param name="hubOptions">The <typeparamref name="THub"/> specific options.</param>
+    /// <param name="client">The shared client. This manager disposes its subscriptions, never the client.</param>
+    /// <param name="applicationLifetime">
+    /// The host lifetime. When <see cref="IHostApplicationLifetime.ApplicationStopped"/> fires, the manager shuts down
+    /// as <see cref="DisposeAsync"/> does, before the container disposes the shared client.
+    /// </param>
+    public RespireHubLifetimeManager(RespireClient client, ILogger<RespireHubLifetimeManager<THub>> logger,
+                                   IOptions<RespireSignalROptions> options,
+                                   IHubProtocolResolver hubProtocolResolver,
+                                   IOptions<HubOptions>? globalHubOptions,
+                                   IOptions<HubOptions<THub>>? hubOptions,
+                                   IHostApplicationLifetime? applicationLifetime)
     {
         _hubProtocolResolver = hubProtocolResolver;
         _logger = logger;
@@ -83,6 +109,10 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
             _protocol = new RedisProtocol(new DefaultHubMessageSerializer(hubProtocolResolver, supportedProtocols, null));
         }
 
+        // Microsoft DI 10 can dispose the shared client before this manager when the client's
+        // interface alias is first resolved after the manager, so stop with the host instead.
+        _applicationStopped = applicationLifetime?.ApplicationStopped.Register(
+            static state => ((RespireHubLifetimeManager<THub>)state!).Dispose(), this) ?? default;
     }
 
     /// <inheritdoc />
@@ -375,6 +405,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _applicationStopped.Unregister();
         foreach (var connection in _connections) _connections.Remove(connection);
         _ackHandler.Dispose();
         await _bus.DisposeAsync().ConfigureAwait(false);
