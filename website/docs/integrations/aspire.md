@@ -100,8 +100,10 @@ Settings live under `Aspire:Respire`, with per-client overrides under
 
 ### Options section
 
-`Options` binds scalar `RespireOptions` fields, endpoints, replica endpoints, hedged reads,
-reconnect policy, client-side caching, and scalar TLS settings.
+`Options` binds scalar `RespireOptions` fields, endpoints, replica endpoints, the node address
+map, hedged reads, and the `ReconnectPolicy`, `RetryPolicy`, `CircuitBreaker`, `DedicatedPool`
+and `ClientSideCache` sections. It also binds the scalar settings in `TlsOptions` and
+`SentinelTlsOptions`.
 
 - Endpoint arrays accept strings such as `"localhost:6379"` or objects such as
   `{ "Host": "localhost", "Port": 6379 }`.
