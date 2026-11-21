@@ -24,7 +24,7 @@ public class TopologyCommandRetryIntegrationTests
     [Arguments("group", "typed", true)]
     public async Task LostReplyAcrossRealPromotionPreservesReplicatedEffectAndExplicitRisk(string topology, string shape, bool allowDuplicate)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
             Topology = RespireContainerTopology.Sentinel,
@@ -192,9 +192,12 @@ public class TopologyCommandRetryIntegrationTests
         Connections = 1, CommandTimeout = TimeSpan.FromSeconds(30), ConnectTimeout = TimeSpan.FromSeconds(2),
     };
 
+    // BeforeDrop runs inside the faulted read and waits for a real failover or slot move.
+    // The command timeout is one deadline across every retry attempt, so keep it longer
+    // than each test's deadline: only that deadline may bound a slow Sentinel election.
     private static RespireOptions WithFault(RespireOptions options, LostReply fault) => options with
     {
-        Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, Connections = 1, CommandTimeout = TimeSpan.FromSeconds(30),
+        Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, Connections = 1, CommandTimeout = TimeSpan.FromMinutes(3),
         TestingStreamFactory = async (host, port, token) =>
         {
             if (Volatile.Read(ref fault.Dropped) != 0 && fault.BeforeDrop is not null)
