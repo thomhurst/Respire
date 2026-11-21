@@ -48,11 +48,11 @@ builder.AddKeyedRespireClient("valkey");
 
 In the AppHost, use the normal Aspire hosting integrations and references:
 
-<!-- doc-test-ignore: AppHost-only fragment requires generated Projects.Api metadata and Aspire hosting packages. -->
+<!-- doc-test-ignore: AppHost-only fragment requires Aspire hosting packages. -->
 ```csharp
 var cache = builder.AddRedis("cache");
 var valkey = builder.AddValkey("valkey");
-builder.AddProject<Projects.Api>("api")
+builder.AddDotnetProject("api", "../Api/Api.csproj")
     .WithReference(cache).WaitFor(cache)
     .WithReference(valkey).WaitFor(valkey);
 ```
@@ -60,6 +60,10 @@ builder.AddProject<Projects.Api>("api")
 The hosting integrations (Redis, Valkey, and Azure Managed Redis) inject `ConnectionStrings__cache`
 and `ConnectionStrings__valkey`, so the service needs no host, port, or password settings. Respire
 reads TLS, username, password, and database from the string.
+
+`AddDotnetProject` registers the service by project path, so the AppHost references the
+`Aspire.Hosting.Dotnet` package instead of the service project. The AppHost no longer builds the
+service: build the solution, not only the AppHost project, before you start it.
 
 ## Configuration
 

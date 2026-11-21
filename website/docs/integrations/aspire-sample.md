@@ -18,7 +18,7 @@ The sample uses project references, so you can run it before the `Respire.Aspire
 
 - The .NET 11 SDK from `global.json` (11.0.100 or a later compatible band) and runtime. The
   sample targets `net11.0` only; the integration itself also supports .NET 10.
-- [Aspire CLI](https://aspire.dev/get-started/install-cli/) 13.6 (the repository uses Aspire 13.6.5
+- [Aspire CLI](https://aspire.dev/get-started/install-cli/) 17.0 (the repository uses Aspire 17.0.0
   hosting packages).
 - A running Docker-compatible runtime. The first start downloads the Redis 8.10 and Valkey 9 images.
 - PowerShell 7 for the optional `Smoke.ps1` helper.
