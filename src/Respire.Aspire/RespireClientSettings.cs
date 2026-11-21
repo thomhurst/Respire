@@ -4,7 +4,20 @@ namespace Respire.Aspire;
 public sealed class RespireClientSettings
 {
     /// <summary>Connection string. A named <c>ConnectionStrings</c> entry takes precedence over configuration settings.</summary>
-    public string? ConnectionString { get; set; }
+    public string? ConnectionString
+    {
+        get => _connectionString;
+        set
+        {
+            _connectionString = value;
+            ConnectionStringAssigned = true;
+        }
+    }
+
+    private string? _connectionString;
+
+    /// <summary>Whether <see cref="ConnectionString"/> was assigned since the flag was last cleared.</summary>
+    internal bool ConnectionStringAssigned { get; set; }
 
     /// <summary>Disables automatic registration of the Respire connection health check.</summary>
     public bool DisableHealthChecks { get; set; }

@@ -250,6 +250,38 @@ public class RegistrationTests
         await Assert.That(host.Services.GetRequiredKeyedService<RespireClient>("late").Endpoint).IsEqualTo(new RespireEndpoint("localhost", 46293));
     }
 
+    /// <summary>Verifies a callback assignment wins over later configuration even when it matches the configured value.</summary>
+    [Test]
+    public async Task DeferredConfigurationKeepsCallbackConnectionStringEqualToConfiguredValue()
+    {
+        var builder = Builder(new() { ["ConnectionStrings:cache"] = "localhost:46291" });
+        builder.AddRespireClient("cache", settings =>
+        {
+            settings.DeferConfiguration = true;
+            settings.ConnectionString = "localhost:46291";
+        });
+        builder.Configuration["ConnectionStrings:cache"] = "localhost:46292";
+        using var host = builder.Build();
+        await Assert.That(host.Services.GetRequiredService<RespireClient>().Endpoint).IsEqualTo(new RespireEndpoint("localhost", 46291));
+    }
+
+    /// <summary>Verifies deferred missing endpoints and invalid option values are reported at first resolution.</summary>
+    [Test]
+    public async Task DeferredConfigurationReportsErrorsAtFirstResolution()
+    {
+        var missing = Builder([]);
+        missing.AddRespireClient("cache", settings => settings.DeferConfiguration = true);
+        using var missingHost = missing.Build();
+        await Assert.That(() => missingHost.Services.GetRequiredService<RespireClient>()).Throws<InvalidOperationException>();
+
+        var invalid = Builder(new() { ["ConnectionStrings:cache"] = "localhost:46291" });
+        invalid.AddRespireClient("cache", settings => settings.DeferConfiguration = true);
+        invalid.Configuration["Aspire:Respire:cache:Options:CommandTimeout"] = "invalid";
+        using var invalidHost = invalid.Build();
+        var exception = await Assert.That(() => invalidHost.Services.GetRequiredService<RespireClient>()).Throws<InvalidOperationException>();
+        await Assert.That(exception!.Message).Contains("Aspire:Respire:cache:Options:CommandTimeout");
+    }
+
     /// <summary>Verifies injection precedence and lazy client creation after immutable option overrides.</summary>
     [Test]
     public async Task ConfigurationPrecedencePreservesParsedOptionsAndAppliesCallbackLast()

@@ -110,7 +110,8 @@ the client is first resolved instead:
 builder.AddRespireClient("cache", settings => settings.DeferConfiguration = true);
 ```
 
-The precedence above still applies, and a connection string set in `configureSettings` still wins.
+The precedence above still applies. A connection string assigned in `configureSettings` still wins,
+even when it matches the configured value or is `null`.
 The other integration settings, including `DeferConfiguration` itself, are read at registration.
 A missing endpoint or an invalid value is reported when the client is first resolved, not at
 registration.

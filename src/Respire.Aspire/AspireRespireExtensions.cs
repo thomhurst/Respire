@@ -46,9 +46,10 @@ public static class AspireRespireExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionName);
         var settings = ReadSettings(builder.Configuration, connectionName);
-        var configuredConnectionString = settings.ConnectionString;
+        settings.ConnectionStringAssigned = false;
         configureSettings?.Invoke(settings);
-        var callbackConnectionString = settings.ConnectionString != configuredConnectionString ? settings.ConnectionString : null;
+        var callbackAssignedConnectionString = settings.ConnectionStringAssigned;
+        var callbackConnectionString = settings.ConnectionString;
         var disableLogging = settings.DisableLogging;
         RespireOptions? options = null;
         if (!settings.DeferConfiguration)
@@ -64,7 +65,7 @@ public static class AspireRespireExtensions
             {
                 var configuration = provider.GetService<IConfiguration>() ?? builder.Configuration;
                 configured = BuildOptions(configuration, connectionName,
-                    callbackConnectionString ?? ReadSettings(configuration, connectionName).ConnectionString);
+                    callbackAssignedConnectionString ? callbackConnectionString : ReadSettings(configuration, connectionName).ConnectionString);
             }
             var resolved = configureOptions is null ? configured : configureOptions(provider, configured)
                 ?? throw new InvalidOperationException("The Respire options callback returned null.");
