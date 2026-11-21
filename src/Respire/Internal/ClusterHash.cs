@@ -133,7 +133,7 @@ internal static class ClusterHash
     {
         var length = checked(first.Length + second.Length);
         char[]? rented = null;
-        // stackalloc-audit[083562931e8ebb2c]: init: the two CopyTo calls fill tag[..first.Length] and tag[first.Length..length];
+        // stackalloc-audit[9c7e85436c24a49e]: init: the two CopyTo calls fill tag[..first.Length] and tag[first.Length..length];
         // read: GetUtf8Slot reads tag[..length], exactly the copied chars; failure: a copy throw exits through finally before any read.
         Span<char> tag = length <= StackallocThreshold ? stackalloc char[length]
             : (rented = ArrayPool<char>.Shared.Rent(length));

@@ -22,7 +22,7 @@ For C# changes, follow the [shared EditorConfig profile](https://github.com/thom
 
 Use braces for all control-flow bodies, including single statements. Separate logical groups with one blank line and keep related statements together. Preserve the supported language version and local EditorConfig overrides.
 
-Use [Curb](https://github.com/nullean/curb) for formatting. Run `curb format <changed-path>` and `curb check <changed-path>` on changed C# files. Install the CLI with `dotnet tool install --global curb-cli` if needed. Keep Roslyn build analysis enabled for style rules that require compilation. Limit formatting to the code you change.
+Use [Curb](https://github.com/nullean/curb) for formatting. Run `curb format <changed-path>` and `curb check <changed-path>` on changed C# files. Install the CLI with `dotnet tool install --global curb-cli --version 0.16.0` if needed; the repository was formatted with that version. Keep Roslyn build analysis enabled for style rules that require compilation. Limit formatting to the code you change.
 
 ## Allocation tests
 

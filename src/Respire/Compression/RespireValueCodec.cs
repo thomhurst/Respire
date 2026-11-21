@@ -234,7 +234,7 @@ public abstract class RespireValueCodec : IRespireValueCodec
         {
             throw new InvalidDataException("Codec payload length does not match its frame.");
         }
-        // stackalloc-audit[810944128b7f8231]: init: WriteChecksum stores all 8 bytes (a UInt64 or the first 8 hash bytes);
+        // stackalloc-audit[b8304b2503ee31a4]: init: WriteChecksum stores all 8 bytes (a UInt64 or the first 8 hash bytes);
         // read: SequenceEqual compares exactly those 8 bytes; failure: a hashing exception propagates before any read.
         Span<byte> checksum = stackalloc byte[8];
         WriteChecksum(encoded, checksum, payload[4]);

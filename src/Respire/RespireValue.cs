@@ -259,7 +259,7 @@ public readonly partial struct RespireValue : IEquatable<RespireValue>, ISpanFor
 
         var length = GetWireLength();
         byte[]? rented = null;
-        // stackalloc-audit[f81437f6d186fa81]: init: WriteWirePayload writes GetWireLength() bytes, the length used to size the buffer;
+        // stackalloc-audit[838d53e54da07a09]: init: WriteWirePayload writes GetWireLength() bytes, the length used to size the buffer;
         // read: only payload[..length] is read; failure: a writer throw exits through finally before any read,
         // and the rented array is cleared on return.
         Span<byte> payload = length <= StackallocThreshold ? stackalloc byte[length]
@@ -404,7 +404,7 @@ public readonly partial struct RespireValue : IEquatable<RespireValue>, ISpanFor
         }
 
         byte[]? rented = null;
-        // stackalloc-audit[de2b8c97284584fb]: init: WriteWirePayload writes GetWireLength() bytes, the length used to size the buffer;
+        // stackalloc-audit[6bda640fea5bd9a2]: init: WriteWirePayload writes GetWireLength() bytes, the length used to size the buffer;
         // read: only payload[..length] is read; failure: a writer throw exits through finally before any read,
         // and the rented array is cleared on return.
         Span<byte> payload = length <= StackallocThreshold ? stackalloc byte[length]
@@ -486,10 +486,10 @@ public readonly partial struct RespireValue : IEquatable<RespireValue>, ISpanFor
             return EqualsUtf8(other._string!);
         }
 
-        // stackalloc-audit[2c356109700b8bbb]: init: WriteWirePayload writes leftLength bytes; only scalar kinds reach here, and their
+        // stackalloc-audit[7574b591e5128db8]: init: WriteWirePayload writes leftLength bytes; only scalar kinds reach here, and their
         // payloads fit in 32 bytes; read: only left[..leftLength]; failure: no throw path precedes the bounded read.
         Span<byte> left = stackalloc byte[32];
-        // stackalloc-audit[2c356109700b8bbb]: init: other.WriteWirePayload writes rightLength scalar payload bytes;
+        // stackalloc-audit[7574b591e5128db8]: init: other.WriteWirePayload writes rightLength scalar payload bytes;
         // read: only right[..rightLength]; failure: no throw path precedes the bounded read.
         Span<byte> right = stackalloc byte[32];
         var leftLength = WriteWirePayload(left);
@@ -516,7 +516,7 @@ public readonly partial struct RespireValue : IEquatable<RespireValue>, ISpanFor
 
         byte[]? rented = null;
         var total = checked(length * 2);
-        // stackalloc-audit[4f65e1da80dbf5cb]: init: the two WriteWirePayload calls fill payload[..length] and payload[length..total],
+        // stackalloc-audit[79019bee8e0bffbc]: init: the two WriteWirePayload calls fill payload[..length] and payload[length..total],
         // each value having the same GetWireLength(); read: SequenceEqual compares those two written halves;
         // failure: a writer throw exits through finally before any read.
         Span<byte> payload = total <= StackallocThreshold ? stackalloc byte[total]
@@ -541,7 +541,7 @@ public readonly partial struct RespireValue : IEquatable<RespireValue>, ISpanFor
     {
         var length = GetWireLength();
         byte[]? rented = null;
-        // stackalloc-audit[e8221662de4ab9b9]: init: WriteWirePayload writes GetWireLength() bytes, the length used to size the buffer;
+        // stackalloc-audit[b4dd2905adbb2a1f]: init: WriteWirePayload writes GetWireLength() bytes, the length used to size the buffer;
         // read: only payload[..length] is read; failure: a writer throw exits through finally before any read,
         // and the rented array is cleared on return.
         Span<byte> payload = length <= StackallocThreshold ? stackalloc byte[length]
@@ -587,7 +587,7 @@ public readonly partial struct RespireValue : IEquatable<RespireValue>, ISpanFor
 
         var length = GetWireLength();
         byte[]? rented = null;
-        // stackalloc-audit[acd0eab0263d9d22]: init: WriteWirePayload writes GetWireLength() bytes, the length used to size the buffer;
+        // stackalloc-audit[41033ccfcd24b0e4]: init: WriteWirePayload writes GetWireLength() bytes, the length used to size the buffer;
         // read: only payload[..length] is read; failure: a writer throw exits through finally before any read,
         // and the rented array is cleared on return.
         var payload = length <= StackallocThreshold
@@ -734,7 +734,7 @@ public readonly partial struct RespireValue : IEquatable<RespireValue>, ISpanFor
     private static int HashText(string text)
     {
         byte[]? rented = null;
-        // stackalloc-audit[5aaa9cc9f227d8b4]: init: Ascii.FromUtf16 writes `written` bytes, and the UTF-8 suffix, if any,
+        // stackalloc-audit[cdb2bb068852047f]: init: Ascii.FromUtf16 writes `written` bytes, and the UTF-8 suffix, if any,
         // is encoded after them (into a larger rental when needed); read: HashPayload reads payload[..written];
         // failure: an encoder throw exits through finally before any read.
         Span<byte> payload = text.Length <= StackallocThreshold ? stackalloc byte[StackallocThreshold]
@@ -793,7 +793,7 @@ public readonly partial struct RespireValue : IEquatable<RespireValue>, ISpanFor
             return _bytes.Length;
         }
 
-        // stackalloc-audit[0cefe07274db4861]: init: WriteWirePayload writes the scalar payload; the bytes are never read here;
+        // stackalloc-audit[22cd0c69bf737b42]: init: WriteWirePayload writes the scalar payload; the bytes are never read here;
         // read: none, only the returned length is used; failure: only scalar kinds reach here, and their payloads fit in 32 bytes.
         Span<byte> buffer = stackalloc byte[32];
         return WriteWirePayload(buffer);

@@ -432,7 +432,7 @@ public sealed class RespireJsonClient
         var count = entries.Count;
         var arguments = new RespireValue[checked(count * 3)];
         int[]? rentedEndOffsets = null;
-        // stackalloc-audit[f8b001ffa28dbec8]: init: the first loop writes endOffsets[index] for every index below count;
+        // stackalloc-audit[a71c3323c8e6659b]: init: the first loop writes endOffsets[index] for every index below count;
         // read: the second loop reads the same indexes, after the first loop completes; failure: a serializer throw
         // exits through finally before the second loop reads anything.
         Span<int> endOffsets = count <= MaxStackAllocatedOffsets ? stackalloc int[count] : (rentedEndOffsets = ArrayPool<int>.Shared.Rent(count));

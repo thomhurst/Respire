@@ -139,7 +139,7 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
 
         var length = WireLength;
         byte[]? rented = null;
-        // stackalloc-audit[7d544854f6f47cb4]: init: WriteWirePayload writes the key payload and returns its length;
+        // stackalloc-audit[b0d2ca6098890291]: init: WriteWirePayload writes the key payload and returns its length;
         // read: Matches reads encoded[..written], the written bytes; failure: a writer throw exits through finally before any read.
         Span<byte> encoded = length <= 256 ? stackalloc byte[length] : (rented = ArrayPool<byte>.Shared.Rent(length));
 
