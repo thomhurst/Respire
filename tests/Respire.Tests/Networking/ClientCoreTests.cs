@@ -159,21 +159,25 @@ public class ClientCoreTests
     {
         var core = new ClientCore(new RespireOptions { Protocol = RespireProtocol.Resp2, UseCluster = true });
         var endpoint = new RespireEndpoint("retained-primary", 7000);
-        var changes = new List<RespireConnectionStateChange>();
         var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         core.ConnectionStateChanged += change =>
         {
-            changes.Add(change);
-            if (change.Endpoint == endpoint && change.State == RespireConnectionState.Reconnecting)
+            if (change.Endpoint != endpoint)
+                return;
+            if (change.State == RespireConnectionState.Reconnecting)
                 reconnecting.TrySetResult();
+            else if (change.State == RespireConnectionState.Disconnected)
+                disconnected.TrySetResult();
         };
         core.NotifyClusterSubscriptionStateChanged(new(endpoint, RespireConnectionState.Reconnecting, null));
         await reconnecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         await core.DisposeAsync();
 
-        await Assert.That(changes.Any(change =>
-            change.Endpoint == endpoint && change.State == RespireConnectionState.Disconnected)).IsTrue();
+        // The thread-pool worker that delivered Reconnecting can still own the dispatcher
+        // when DisposeAsync returns, so Disconnected may arrive after it.
+        await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Test]
