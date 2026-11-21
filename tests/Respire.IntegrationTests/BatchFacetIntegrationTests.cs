@@ -248,6 +248,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [SkipOnGarnet("Garnet 2.2.12 with --lua-transaction-mode never replies to EXEC when MULTI queues a keyed EVAL (microsoft/garnet#2420).")]
     public async Task BatchAndTransaction_QueueTypedReadsAndScripts()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
