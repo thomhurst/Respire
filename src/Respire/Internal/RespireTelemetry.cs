@@ -756,6 +756,8 @@ internal static partial class RespireTelemetry
     }
 
     // Keyed by exception identity, so the caller's exception and token stay unchanged.
+    // Layers that rethrow with the caller's token (retries, redirects, backlogs) wrap the
+    // keyed exception, so the lookup walks the inner-exception chain.
     private static readonly ConditionalWeakTable<OperationCanceledException, RespireTimeoutDiagnostics> CancellationDiagnostics = new();
 
     /// <summary>Records the command stage observed when caller cancellation won a submitted command.</summary>
@@ -769,8 +771,17 @@ internal static partial class RespireTelemetry
 
     private static void SetCancellationTags(Activity activity, Exception error)
     {
-        if (error is not OperationCanceledException cancelled
-            || !CancellationDiagnostics.TryGetValue(cancelled, out var diagnostics))
+        if (error is not OperationCanceledException)
+            return;
+
+        RespireTimeoutDiagnostics? diagnostics = null;
+        for (var current = error; current is not null && diagnostics is null; current = current.InnerException)
+        {
+            if (current is OperationCanceledException cancelled)
+                CancellationDiagnostics.TryGetValue(cancelled, out diagnostics);
+        }
+
+        if (diagnostics is null)
             return;
 
         activity.SetTag("respire.command.stage", diagnostics.Stage.ToString());

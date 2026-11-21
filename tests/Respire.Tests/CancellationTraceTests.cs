@@ -13,7 +13,14 @@ public class CancellationTraceTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(15);
 
     [Test]
-    public async Task CallerCancellationTagsSpanWithAwaitingReplyAndKeepsToken()
+    public Task CallerCancellationTagsSpanWithAwaitingReplyAndKeepsToken()
+        => AssertCancelledSpanAsync(retryPolicy: null);
+
+    [Test]
+    public Task CallerCancellationTagsSpanWhenRetryPolicyWrapsTheCancellation()
+        => AssertCancelledSpanAsync(new RespireRetryPolicy { InitialBackoff = TimeSpan.Zero });
+
+    private static async Task AssertCancelledSpanAsync(RespireRetryPolicy? retryPolicy)
     {
         var stopped = new ConcurrentQueue<Activity>();
         using var listener = new ActivityListener
@@ -27,7 +34,7 @@ public class CancellationTraceTests
         await using var server = new RespireFakeServer();
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(
-            server.CreateOptions() with { Connections = 1, CommandTimeout = TimeSpan.FromSeconds(30) });
+            server.CreateOptions() with { Connections = 1, CommandTimeout = TimeSpan.FromSeconds(30), RetryPolicy = retryPolicy });
 #pragma warning restore RESP010
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("PING", RespireFakeFault.Pause(gate, afterExecution: true), occurrences: null);
@@ -36,6 +43,8 @@ public class CancellationTraceTests
             using var caller = new CancellationTokenSource();
             var pending = client.PingAsync(caller.Token).AsTask();
             await fault.Matched.WaitAsync(Limit);
+            // The server can execute PING before the flush loop records the sent bytes.
+            await WaitForWriteFlushAsync(client.Core.Multiplexer.GetConnection());
             await caller.CancelAsync();
 
             var error = await Assert.That(async () => await pending.WaitAsync(Limit))
@@ -52,5 +61,12 @@ public class CancellationTraceTests
         {
             gate.Release();
         }
+    }
+
+    private static async Task WaitForWriteFlushAsync(Respire.Networking.RespireConnection connection)
+    {
+        using var timeout = new CancellationTokenSource(Limit);
+        while (connection.CaptureTimeoutDiagnostics().PendingWriteBytes != 0)
+            await Task.Delay(1, timeout.Token);
     }
 }
