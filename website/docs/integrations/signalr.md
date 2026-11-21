@@ -36,6 +36,9 @@ Map hubs with the usual `MapHub<THub>`.
   later one retries.
 - The container owns a client created by `services.AddRespire`; you own a client you supply. The
   backplane never disposes the client, so dispose the host before a client you own.
+- In a hosted app, the backplane stops its subscriptions when the application stops, before the
+  container disposes the client. A normal shutdown does not log `SubscriptionEnded`; that event
+  means a subscription ended while the app was still running.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
