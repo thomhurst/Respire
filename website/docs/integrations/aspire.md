@@ -48,11 +48,11 @@ builder.AddKeyedRespireClient("valkey");
 
 In the AppHost, use the normal Aspire hosting integrations and references:
 
-<!-- doc-test-ignore: AppHost-only fragment requires generated Projects.Api metadata and Aspire hosting packages. -->
+<!-- doc-test-ignore: AppHost-only fragment requires Aspire hosting packages. -->
 ```csharp
 var cache = builder.AddRedis("cache");
 var valkey = builder.AddValkey("valkey");
-builder.AddProject<Projects.Api>("api")
+builder.AddDotnetProject("api", "../Api/Api.csproj")
     .WithReference(cache).WaitFor(cache)
     .WithReference(valkey).WaitFor(valkey);
 ```
@@ -60,6 +60,10 @@ builder.AddProject<Projects.Api>("api")
 The hosting integrations (Redis, Valkey, and Azure Managed Redis) inject `ConnectionStrings__cache`
 and `ConnectionStrings__valkey`, so the service needs no host, port, or password settings. Respire
 reads TLS, username, password, and database from the string.
+
+`AddDotnetProject` registers the service by project path, so the AppHost references the
+`Aspire.Hosting.Dotnet` package instead of the service project. Building the AppHost project does
+not build the service; Aspire builds it when the AppHost starts, before launching it.
 
 ## Configuration
 
@@ -230,6 +234,6 @@ builder.AddRespireClient("cache", configureOptions: (services, options) => optio
 });
 ```
 
-The hosting reference supplies the endpoint and TLS (Aspire 13.6 emits `host:10000,ssl=true`,
-which Respire accepts). The provider refreshes Entra credentials; you own the credential. See
+The hosting reference supplies the endpoint and TLS (a connection string such as
+`host:10000,ssl=true`, which Respire accepts). The provider refreshes Entra credentials; you own the credential. See
 [Azure Managed Redis](../guides/azure-managed-redis.md).

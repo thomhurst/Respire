@@ -37,7 +37,7 @@ cd MyRedisApp.AppHost
 aspire start --non-interactive
 ```
 
-The `respire-aspire` starter requires .NET SDK 11.0.100+, Aspire CLI 13.6+, a running
+The `respire-aspire` starter requires .NET SDK 11.0.100+, Aspire CLI 17.0+, a running
 Docker-compatible runtime, and a trusted development certificate
 (`dotnet dev-certs https --trust`). Aspire supplies Redis credentials and dynamic
 endpoints. Use `aspire describe --non-interactive` to find the API URL and

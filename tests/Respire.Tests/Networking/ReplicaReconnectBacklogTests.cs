@@ -531,7 +531,9 @@ public class ReplicaReconnectBacklogTests
         var preferred = fixture.Client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
         await Assert.That(await preferred.GetStringAsync("fallback")).IsEqualTo("value");
         await Assert.That(fixture.Primary.ReceivedCommands.Contains("GET fallback")).IsTrue();
-        await Assert.That(fixture.Client.Core.ReadRouter.IsBacklogDraining).IsFalse();
+        // The read can complete through the backlog, whose drain loop stops just after the reply.
+        using var drained = new CancellationTokenSource(Limit);
+        while (fixture.Client.Core.ReadRouter.IsBacklogDraining) await Task.Delay(1, drained.Token);
     }
 
     [Test]
