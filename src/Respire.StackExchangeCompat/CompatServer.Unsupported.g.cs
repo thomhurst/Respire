@@ -47,6 +47,12 @@ partial class CompatServer
     public global::StackExchange.Redis.ClusterSlotsResult ClusterSlots(global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ClusterSlots");
     /// <inheritdoc />
+    public global::StackExchange.Redis.ClusterSlotStatsResult ClusterSlotStatsBySlotRange(global::System.Int32 @startSlot, global::System.Int32 @endSlot, global::StackExchange.Redis.CommandFlags @flags)
+        => throw Compatibility.Unsupported("ClusterSlotStatsBySlotRange");
+    /// <inheritdoc />
+    public global::StackExchange.Redis.ClusterSlotStatsResult ClusterSlotStatsOrderBy(global::StackExchange.Redis.ClusterSlotStatsMetric @metric, global::System.Int64 @limit, global::StackExchange.Redis.Order @order, global::StackExchange.Redis.CommandFlags @flags)
+        => throw Compatibility.Unsupported("ClusterSlotStatsOrderBy");
+    /// <inheritdoc />
     public global::StackExchange.Redis.CommandTrace[] SlowlogGet(global::System.Int32 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SlowlogGet");
     /// <inheritdoc />
@@ -211,6 +217,12 @@ partial class CompatServer
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.ClusterSlotsResult> ClusterSlotsAsync(global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("ClusterSlotsAsync");
+    /// <inheritdoc />
+    public global::System.Threading.Tasks.Task<global::StackExchange.Redis.ClusterSlotStatsResult> ClusterSlotStatsBySlotRangeAsync(global::System.Int32 @startSlot, global::System.Int32 @endSlot, global::StackExchange.Redis.CommandFlags @flags)
+        => throw Compatibility.Unsupported("ClusterSlotStatsBySlotRangeAsync");
+    /// <inheritdoc />
+    public global::System.Threading.Tasks.Task<global::StackExchange.Redis.ClusterSlotStatsResult> ClusterSlotStatsOrderByAsync(global::StackExchange.Redis.ClusterSlotStatsMetric @metric, global::System.Int64 @limit, global::StackExchange.Redis.Order @order, global::StackExchange.Redis.CommandFlags @flags)
+        => throw Compatibility.Unsupported("ClusterSlotStatsOrderByAsync");
     /// <inheritdoc />
     public global::System.Threading.Tasks.Task<global::StackExchange.Redis.CommandTrace[]> SlowlogGetAsync(global::System.Int32 @count, global::StackExchange.Redis.CommandFlags @flags)
         => throw Compatibility.Unsupported("SlowlogGetAsync");
