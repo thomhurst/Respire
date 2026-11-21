@@ -24,14 +24,16 @@ public class ServerLockTests(RedisTestContainer fixture)
             new Hangfire.Redis.StackExchange.RedisStorageOptions { Db = fixture.IsolatedDatabase, UseTransactions = false });
         using var storageConnection = storage.GetConnection();
         Assert.InRange(((Hangfire.Storage.JobStorageConnection)storageConnection).GetUtcDateTime(), DateTime.UtcNow.AddSeconds(-5), DateTime.UtcNow.AddSeconds(5));
-        using (storageConnection.AcquireDistributedLock("adapter-lock", TimeSpan.FromSeconds(1)))
+        // Both protocol cases run in parallel against the same database, so each needs its own lock key.
+        var resource = $"adapter-lock-{protocol}";
+        using (storageConnection.AcquireDistributedLock(resource, TimeSpan.FromSeconds(1)))
         {
             await using var control = await RespireClient.ConnectAsync(Options(protocol));
-            using var token = await control.ExecuteAsync(RespireCommands.String.GET, "{hangfire}:adapter-lock");
+            using var token = await control.ExecuteAsync(RespireCommands.String.GET, $"{{hangfire}}:{resource}");
             Assert.False(token.IsNull);
         }
         await using var after = await RespireClient.ConnectAsync(Options(protocol));
-        using var released = await after.ExecuteAsync(RespireCommands.String.GET, "{hangfire}:adapter-lock");
+        using var released = await after.ExecuteAsync(RespireCommands.String.GET, $"{{hangfire}}:{resource}");
         Assert.True(released.IsNull);
     }
 
