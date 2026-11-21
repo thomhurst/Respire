@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Respire.Networking;
 using Respire.Protocol;
@@ -754,6 +755,43 @@ internal static partial class RespireTelemetry
         return prefix;
     }
 
+    // Keyed by exception identity, so the caller's exception and token stay unchanged.
+    // Layers that rethrow with the caller's token (retries, redirects, backlogs) wrap the
+    // keyed exception, so the lookup walks the inner-exception chain.
+    private static readonly ConditionalWeakTable<OperationCanceledException, RespireTimeoutDiagnostics> CancellationDiagnostics = new();
+
+    /// <summary>Records the command stage observed when caller cancellation won a submitted command.</summary>
+    /// <remarks>Runs inside the canceller's <c>Cancel</c> call, so it must never throw.</remarks>
+    internal static void AttachCancellationDiagnostics(OperationCanceledException error,
+        RespireConnection connection, long writeStart, long writeEnd, RespireCommandStage stage = RespireCommandStage.Unknown)
+    {
+        try { CancellationDiagnostics.AddOrUpdate(error, connection.CaptureTimeoutDiagnostics(writeStart, writeEnd, stage)); }
+        catch { /* Diagnostics must not change cancellation. */ }
+    }
+
+    private static void SetCancellationTags(Activity activity, Exception error)
+    {
+        if (error is not OperationCanceledException)
+            return;
+
+        RespireTimeoutDiagnostics? diagnostics = null;
+        for (var current = error; current is not null && diagnostics is null; current = current.InnerException)
+        {
+            if (current is OperationCanceledException cancelled)
+                CancellationDiagnostics.TryGetValue(cancelled, out diagnostics);
+        }
+
+        if (diagnostics is null)
+            return;
+
+        activity.SetTag("respire.command.stage", diagnostics.Stage.ToString());
+        activity.SetTag("respire.connection.id", diagnostics.ConnectionId);
+        activity.SetTag("respire.connection.inflight", diagnostics.InflightCount);
+        activity.SetTag("respire.connection.pending_write_bytes", diagnostics.PendingWriteBytes);
+        activity.SetTag("respire.connection.last_read_ms", diagnostics.TimeSinceLastRead?.TotalMilliseconds);
+        activity.SetTag("respire.connection.last_write_ms", diagnostics.TimeSinceLastWrite?.TotalMilliseconds);
+    }
+
     internal readonly struct OperationScope(Activity? activity, long startTimestamp)
     {
         internal void UpdateServerEndpoint(string host, int port)
@@ -817,6 +855,7 @@ internal static partial class RespireTelemetry
                     }
 
                     activity.SetStatus(ActivityStatusCode.Error, errorType);
+                    if (activity.IsAllDataRequested) SetCancellationTags(activity, error);
                 }
 
                 activity.Stop();

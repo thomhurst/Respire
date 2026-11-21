@@ -222,7 +222,7 @@ Respire.Networking.PendingResponse | method InspectForTests() : TestInspection
 Respire.Networking.PendingResponse | method IsCompleted(long) : bool
 Respire.Networking.PendingResponse | method PrepareException(Exception) : Exception
 Respire.Networking.PendingResponse | method PrepareForUse(int) : void
-Respire.Networking.PendingResponse | method RegisterCancellation(CancellationToken) : void
+Respire.Networking.PendingResponse | method RegisterCancellation(CancellationToken, RespireConnection?) : void
 Respire.Networking.PendingResponse | method ReleaseCallerRef() : void
 Respire.Networking.PendingResponse | method ReleaseRef() : void
 Respire.Networking.PendingResponse | method ReleaseRefAtomic() : void
