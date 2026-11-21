@@ -34,7 +34,7 @@
     <PackageReference Include="Respire.StackExchangeCompat" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Streaming" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Streaming.Dashboard" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="ZiggyCreatures.FusionCache.Serialization.SystemTextJson" Version="2.9.0" />
+    <PackageReference Include="ZiggyCreatures.FusionCache.Serialization.SystemTextJson" Version="2.10.0" />
     <PackageReference Include="Respire.DependencyInjection" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.DataProtection" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.HealthChecks" Version="$(RespirePackageVersion)" />
@@ -51,7 +51,7 @@
     <PackageReference Include="Respire.Resilience" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="11.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.DataProtection.StackExchangeRedis" Version="11.0.0" />
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.21.0" />
   </ItemGroup>
 
   <ItemGroup>
