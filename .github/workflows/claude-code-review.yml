@@ -144,3 +144,20 @@ jobs:
               `<!-- REVIEW_VERDICT: BLOCKING -->`. The merge gate reads this marker.
           claude_args: |
             --permission-mode default --add-dir pr-head --allowedTools "Read,Glob,Grep,Bash(.github/scripts/pr-review-comment.sh:*),Bash(gh pr view:*),Bash(gh pr diff:*)"
+
+      # The action can finish successfully without the model ever posting a review.
+      # Fail the check then, so a missing review shows red instead of green.
+      - name: Verify review was posted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+        run: |
+          count=$(gh api --paginate "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
+            --jq '[.[] | select((.body | contains("<!-- claude-code-review -->")) and (.body | contains("<!-- REVIEW_HEAD_SHA: " + $ENV.REVIEW_HEAD_SHA + " -->")))] | length' \
+            | awk '{ total += $1 } END { print total + 0 }')
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No Claude review comment was posted for $REVIEW_HEAD_SHA. Rerun this workflow."
+            exit 1
+          fi
+          echo "Found $count review comment(s) for $REVIEW_HEAD_SHA."
