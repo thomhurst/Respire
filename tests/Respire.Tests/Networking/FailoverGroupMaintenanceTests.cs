@@ -68,9 +68,8 @@ public class FailoverGroupMaintenanceTests
         {
             ProbeInterval = TimeSpan.FromMilliseconds(15),
         });
-        var connection = ((RespireClient)group.ActiveClient).Core.Multiplexer.GetConnection();
         await server.SendRawAsync(Start(kind));
-        await WaitUntilAsync(() => connection.HasMaintenanceWindow);
+        await WaitUntilAsync(() => GroupMaintenance(group));
         server.DelayCommand("PING", 1500);
 
         await group.ActiveClient.PingAsync();
@@ -119,8 +118,6 @@ public class FailoverGroupMaintenanceTests
     {
         await using var server = Server();
         await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server)], ManualOptions());
-        var client = (RespireClient)group.ActiveClient;
-        var connection = client.Core.Multiplexer.GetConnection();
         var replies = server.ReplyOverride!;
         server.ReplyOverride = (id, command) => command == "PING" ? Start(start) : replies(id, command);
 
@@ -135,7 +132,7 @@ public class FailoverGroupMaintenanceTests
 
         // The late PONG drains the cancelled probe's FIFO entry before the next probe.
         await server.SendRawAsync([.. Finish(finish), .. FakeRespServer.PongReply]);
-        await WaitUntilAsync(() => !connection.HasMaintenanceWindow);
+        await WaitUntilAsync(() => !GroupMaintenance(group));
         server.ReplyOverride = (id, command) => command == "PING" ? "-ERR unavailable\r\n"u8.ToArray() : replies(id, command);
         await group.ForTests.ProbeAsync(0);
         await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(1);
@@ -181,9 +178,9 @@ public class FailoverGroupMaintenanceTests
             [Candidate(server, window: TimeSpan.FromSeconds(1))], ManualOptions());
         var connection = ((RespireClient)group.ActiveClient).Core.Multiplexer.GetConnection();
         await server.SendRawAsync(Start(start));
-        await WaitUntilAsync(() => connection.HasMaintenanceWindow);
+        await WaitUntilAsync(() => GroupMaintenance(group));
         if (completed) await server.SendRawAsync(Finish(finish));
-        await WaitUntilAsync(() => !connection.HasMaintenanceWindow);
+        await WaitUntilAsync(() => !GroupMaintenance(group));
         var replies = server.ReplyOverride!;
         server.ReplyOverride = (id, command) => command == "PING"
             ? [.. Start(start), .. "-ERR unavailable\r\n"u8.ToArray()]
@@ -270,14 +267,13 @@ public class FailoverGroupMaintenanceTests
         await using var server = Server();
         await using var group = await RespireFailoverGroup.ConnectAsync(
             [Candidate(server, window: TimeSpan.FromSeconds(1))], ManualOptions());
-        var connection = ((RespireClient)group.ActiveClient).Core.Multiplexer.GetConnection();
         await server.SendRawAsync(Start("FAILING_OVER"));
-        await WaitUntilAsync(() => connection.HasMaintenanceWindow);
+        await WaitUntilAsync(() => GroupMaintenance(group));
         await server.DisposeAsync();
 
         await group.ForTests.ProbeAsync(0);
         await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(0);
-        await WaitUntilAsync(() => !connection.HasMaintenanceWindow);
+        await WaitUntilAsync(() => !GroupMaintenance(group));
         await group.ForTests.ProbeAsync(0);
         await Assert.That(group.GetEndpointStatuses()[0].ConsecutiveFailures).IsEqualTo(1);
         await Assert.That(group.GetEndpointStatuses()[0].IsHealthy).IsFalse();
@@ -359,6 +355,10 @@ public class FailoverGroupMaintenanceTests
 
     private static byte[] Start(string kind) => Encoding.UTF8.GetBytes($">3\r\n+{kind}\r\n:1\r\n:1\r\n");
     private static byte[] Finish(string kind) => Encoding.UTF8.GetBytes($">2\r\n+{kind}\r\n:1\r\n");
+
+    // The probe reads the group's shared tracker, which the reader updates just after the connection's own window.
+    private static bool GroupMaintenance(RespireFailoverGroup group)
+        => ((RespireClient)group.ActiveClient).Core.Options.FailoverMaintenance!.IsActive;
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
