@@ -645,7 +645,11 @@ public class ReplicaReconnectBacklogTests
         await Assert.That(fixture.Primary.ReceivedCommands.Contains("GET fallback")).IsTrue();
         // The read can complete through the backlog, whose drain loop stops just after the reply.
         using var drained = new CancellationTokenSource(Limit);
-        while (fixture.Client.Core.ReadRouter.IsBacklogDraining) await Task.Delay(1, drained.Token);
+
+        while (fixture.Client.Core.ReadRouter.IsBacklogDraining)
+        {
+            await Task.Delay(1, drained.Token);
+        }
     }
 
     [Test]
