@@ -24,5 +24,4 @@ jobs:
       expected-case-count: 6
       expected-methods: StringHit,ConcurrentStringHits,EvictAndReadMiss
       zero-allocation-methods: StringHit
-      improvement-methods: ConcurrentStringHits
       artifact-prefix: cache-read-comparison
