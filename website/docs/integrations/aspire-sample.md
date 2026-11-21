@@ -33,7 +33,8 @@ dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net11.0
 ```
 
 The AppHost registers the HTTP service by project path, so building the AppHost does not build
-the service. Build both, as above, or build the repository solution.
+the service. Aspire builds it when the AppHost starts; building both up front, as above, reports
+build errors before startup.
 
 The AppHost sets `AspireUseCliBundle=true`, so orchestration (DCP) and the dashboard come from
 the Aspire CLI bundle. The SDK can prepare the bundle during the first build; without a compatible

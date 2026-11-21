@@ -62,8 +62,8 @@ and `ConnectionStrings__valkey`, so the service needs no host, port, or password
 reads TLS, username, password, and database from the string.
 
 `AddDotnetProject` registers the service by project path, so the AppHost references the
-`Aspire.Hosting.Dotnet` package instead of the service project. The AppHost no longer builds the
-service: build the solution, not only the AppHost project, before you start it.
+`Aspire.Hosting.Dotnet` package instead of the service project. Building the AppHost project does
+not build the service; Aspire builds it when the AppHost starts, before launching it.
 
 ## Configuration
 
