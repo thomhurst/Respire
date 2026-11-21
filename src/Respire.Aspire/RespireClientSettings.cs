@@ -18,6 +18,11 @@ public sealed class RespireClientSettings
     /// <summary>Uses a null logger factory, including when the host registers its own logger factory.</summary>
     public bool DisableLogging { get; set; }
 
+    /// <summary>Reads the connection string and <c>Options</c> sections when the client is first resolved instead of at registration.</summary>
+    /// <remarks>Lets configuration added after registration, such as a test host's endpoint override, reach the client.
+    /// A connection string set by the settings callback still takes precedence. The other settings are read at registration.</remarks>
+    public bool DeferConfiguration { get; set; }
+
     /// <summary>Copies registration values without retaining a caller-owned mutable settings object.</summary>
     internal RespireClientSettings Copy() => new()
     {
@@ -26,5 +31,6 @@ public sealed class RespireClientSettings
         DisableTracing = DisableTracing,
         DisableMetrics = DisableMetrics,
         DisableLogging = DisableLogging,
+        DeferConfiguration = DeferConfiguration,
     };
 }

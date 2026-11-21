@@ -1,1 +1,3 @@
 #nullable enable
+Respire.Aspire.RespireClientSettings.DeferConfiguration.get -> bool
+Respire.Aspire.RespireClientSettings.DeferConfiguration.set -> void

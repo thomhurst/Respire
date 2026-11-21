@@ -201,6 +201,55 @@ public class RegistrationTests
         return builder;
     }
 
+    /// <summary>Verifies deferred registration reads endpoint overrides made after registration, for default and keyed clients.</summary>
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DeferredConfigurationReadsOverridesMadeAfterRegistration(bool keyed)
+    {
+        var builder = Builder(new() { ["ConnectionStrings:cache"] = "localhost:46291" });
+        if (keyed) builder.AddKeyedRespireClient("cache", settings => settings.DeferConfiguration = true);
+        else builder.AddRespireClient("cache", settings => settings.DeferConfiguration = true);
+        builder.Configuration["ConnectionStrings:cache"] = "localhost:46292";
+        builder.Configuration["Aspire:Respire:cache:Options:ClientName"] = "late";
+        using var host = builder.Build();
+        var client = keyed
+            ? host.Services.GetRequiredKeyedService<RespireClient>("cache")
+            : host.Services.GetRequiredService<RespireClient>();
+        await Assert.That(client.Endpoint).IsEqualTo(new RespireEndpoint("localhost", 46292));
+        await Assert.That(client.Core.Options.ClientName).IsEqualTo("late");
+        await Assert.That(client.IsConnected).IsFalse();
+    }
+
+    /// <summary>Verifies registration-time reading stays the default and ignores later overrides.</summary>
+    [Test]
+    public async Task ConfigurationIsReadAtRegistrationByDefault()
+    {
+        var builder = Builder(new() { ["ConnectionStrings:cache"] = "localhost:46291" });
+        builder.AddRespireClient("cache");
+        builder.Configuration["ConnectionStrings:cache"] = "localhost:46292";
+        using var host = builder.Build();
+        await Assert.That(host.Services.GetRequiredService<RespireClient>().Endpoint).IsEqualTo(new RespireEndpoint("localhost", 46291));
+    }
+
+    /// <summary>Verifies deferral keeps a callback connection string ahead of later configuration and skips registration validation.</summary>
+    [Test]
+    public async Task DeferredConfigurationKeepsCallbackConnectionStringAndDefersValidation()
+    {
+        var builder = Builder([]);
+        builder.AddRespireClient("cache", settings =>
+        {
+            settings.DeferConfiguration = true;
+            settings.ConnectionString = "callback:6390";
+        });
+        builder.AddKeyedRespireClient("late", settings => settings.DeferConfiguration = true);
+        builder.Configuration["ConnectionStrings:cache"] = "localhost:46292";
+        builder.Configuration["ConnectionStrings:late"] = "localhost:46293";
+        using var host = builder.Build();
+        await Assert.That(host.Services.GetRequiredService<RespireClient>().Endpoint).IsEqualTo(new RespireEndpoint("callback", 6390));
+        await Assert.That(host.Services.GetRequiredKeyedService<RespireClient>("late").Endpoint).IsEqualTo(new RespireEndpoint("localhost", 46293));
+    }
+
     /// <summary>Verifies injection precedence and lazy client creation after immutable option overrides.</summary>
     [Test]
     public async Task ConfigurationPrecedencePreservesParsedOptionsAndAppliesCallbackLast()
