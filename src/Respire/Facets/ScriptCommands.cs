@@ -23,13 +23,15 @@ public sealed class RespireScript
     private const string HexDigits = "0123456789abcdef";
 
     private RespireScript(string source, string sha1, bool readOnly, bool cacheReadOnly,
-        RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never)
+        RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never,
+        bool accessesOnlyDeclaredKeys = false)
     {
         Source = source;
         Sha1 = sha1;
         IsReadOnly = readOnly;
         IsCacheReadOnly = cacheReadOnly;
         RetryCategory = retryCategory;
+        AccessesOnlyDeclaredKeys = accessesOnlyDeclaredKeys;
     }
 
     /// <summary>The Lua source text.</summary>
@@ -55,6 +57,10 @@ public sealed class RespireScript
     {
         get;
     }
+
+    // Audited to touch only KEYS, so the client-side cache fences those keys instead of
+    // flushing every entry. User scripts can reach any key and never set this.
+    internal bool AccessesOnlyDeclaredKeys { get; }
 
     /// <summary>
     /// The caller-declared retry risk of one complete execution. Defaults to
@@ -83,7 +89,7 @@ public sealed class RespireScript
             throw new ArgumentOutOfRangeException(nameof(category));
         }
 
-        return new RespireScript(Source, Sha1, IsReadOnly, IsCacheReadOnly, category);
+        return new RespireScript(Source, Sha1, IsReadOnly, IsCacheReadOnly, category, AccessesOnlyDeclaredKeys);
     }
 
     internal string EvalOperation => IsReadOnly ? "EVAL_RO" : "EVAL";
@@ -101,12 +107,13 @@ public sealed class RespireScript
     public static RespireScript Create(string source, bool readOnly)
         => Create(source, readOnly, cacheReadOnly: readOnly);
 
-    internal static RespireScript Create(string source, bool readOnly, bool cacheReadOnly)
+    internal static RespireScript Create(string source, bool readOnly, bool cacheReadOnly,
+        bool accessesOnlyDeclaredKeys = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
         var byteCount = Encoding.UTF8.GetByteCount(source);
         byte[]? rented = null;
-        // stackalloc-audit[11684c5fb1348cd7]: init: Ascii.FromUtf16 or Encoding.UTF8.GetBytes encodes all byteCount bytes;
+        // stackalloc-audit[32367b0885942e00]: init: Ascii.FromUtf16 or Encoding.UTF8.GetBytes encodes all byteCount bytes;
         // read: SHA1 hashes utf8[..byteCount], the encoded bytes; failure: an encoder throw exits through finally
         // before hashing, and the rented array is cleared on return.
         var utf8 = byteCount <= StackallocThreshold
@@ -124,12 +131,12 @@ public sealed class RespireScript
                 Encoding.UTF8.GetBytes(source, utf8);
             }
 
-            // stackalloc-audit[11684c5fb1348cd7]: init: SHA1.HashData writes the full 20-byte digest;
+            // stackalloc-audit[32367b0885942e00]: init: SHA1.HashData writes the full 20-byte digest;
             // read: the loop reads hash[0..20) after it is written; failure: a hashing exception propagates before the loop.
             Span<byte> hash = stackalloc byte[SHA1.HashSizeInBytes];
             SHA1.HashData(utf8[..byteCount], hash);
 
-            // stackalloc-audit[11684c5fb1348cd7]: init: the loop writes both hex characters for each of the 20 hash bytes, all 40 chars;
+            // stackalloc-audit[32367b0885942e00]: init: the loop writes both hex characters for each of the 20 hash bytes, all 40 chars;
             // read: new string(hex) reads the 40 written chars; failure: nothing between the writes and the read can throw.
             Span<char> hex = stackalloc char[SHA1.HashSizeInBytes * 2];
 
@@ -139,7 +146,8 @@ public sealed class RespireScript
                 hex[i * 2 + 1] = HexDigits[hash[i] & 0xF];
             }
 
-            return new RespireScript(source, new string(hex), readOnly, cacheReadOnly);
+            return new RespireScript(source, new string(hex), readOnly, cacheReadOnly,
+                accessesOnlyDeclaredKeys: accessesOnlyDeclaredKeys);
         }
         finally
         {

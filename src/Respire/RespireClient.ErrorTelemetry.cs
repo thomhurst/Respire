@@ -20,7 +20,7 @@ public sealed partial class RespireClient
 
         var tail = BuildScriptTail(keys, args);
         var cache = _core.ClientCache;
-        var fence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
+        var fence = cache is null || script.IsCacheReadOnly ? default : BeginScriptMutation(cache, script, keys);
         var response = ExecuteScriptWithRetriesAsync(script, tail, cancellationToken, fence, observation);
         return fence.IsRequired ? CompleteMutationAsync(response, cache!, fence) : response;
     }
