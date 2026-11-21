@@ -293,6 +293,16 @@ internal sealed partial class RespireConnection
                 var consumed = !firstChunk.IsEmpty ? firstChunk : payloadReader?.ConsumedPrefix ?? default;
                 if (!consumed.IsEmpty) command.RestoreSourcePrefixForRetry(consumed.Span);
             }
+            // The caller sees a translated exception, not the source's, so snapshot onto it here,
+            // before the abort below changes the connection. An open frame is still being written.
+            if (phase is StreamedSetPhase.HeaderQueued or StreamedSetPhase.ResponseQueued
+                && translated is OperationCanceledException callerCancellation
+                && cancellationToken.IsCancellationRequested
+                && RespireTelemetry.Source.HasListeners())
+            {
+                RespireTelemetry.AttachCancellationDiagnostics(
+                    callerCancellation, this, 0, 0, RespireCommandStage.Writing);
+            }
             // One failure path for every phase: each exception type only decides what the caller
             // sees, while the abort-versus-reclaim decision depends on the phase alone.
             await FailStreamedSetAsync(source, phase, failure, translated is RespireTimeoutException)

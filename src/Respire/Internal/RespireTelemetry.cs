@@ -763,9 +763,9 @@ internal static partial class RespireTelemetry
     /// <summary>Records the command stage observed when caller cancellation won a submitted command.</summary>
     /// <remarks>Runs inside the canceller's <c>Cancel</c> call, so it must never throw.</remarks>
     internal static void AttachCancellationDiagnostics(OperationCanceledException error,
-        RespireConnection connection, long writeStart, long writeEnd)
+        RespireConnection connection, long writeStart, long writeEnd, RespireCommandStage stage = RespireCommandStage.Unknown)
     {
-        try { CancellationDiagnostics.AddOrUpdate(error, connection.CaptureTimeoutDiagnostics(writeStart, writeEnd)); }
+        try { CancellationDiagnostics.AddOrUpdate(error, connection.CaptureTimeoutDiagnostics(writeStart, writeEnd, stage)); }
         catch { /* Diagnostics must not change cancellation. */ }
     }
 

@@ -111,8 +111,9 @@ the command was at that moment:
 | `respire.connection.pending_write_bytes` | Serialized bytes not yet written to the socket |
 | `respire.connection.last_read_ms`, `respire.connection.last_write_ms` | Time since the last socket read and write |
 
-`AwaitingReply` means the whole command was written and the reply had not arrived, so look
-at the server or the network. `Buffered` or `Writing` means the write side was behind.
+`AwaitingReply` means the whole command was written to the socket but its reply had not been
+processed yet. The wait can be in the server or the network, or in the client receiving and
+parsing the reply. `Buffered` or `Writing` means the write side was behind.
 
 - The caller still gets an `OperationCanceledException` carrying its own token. Nothing is
   attached to the exception.

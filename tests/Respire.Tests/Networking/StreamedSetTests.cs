@@ -954,6 +954,46 @@ public sealed class StreamedSetTests
     }
 
     [Test]
+    // The listener sees every Respire span in the process.
+    [NotInParallel]
+    public async Task CallerCancellationDuringPayloadWriteTagsSpanWithWritingStage()
+    {
+        var stopped = new ConcurrentQueue<System.Diagnostics.Activity>();
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = static source => source.Name == "Respire",
+            Sample = static (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _)
+                => System.Diagnostics.ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = stopped.Enqueue,
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+        await using var server = new CountingSetServer();
+#pragma warning disable RESP010 // This test owns the client and paused source to observe the cancelled upload's span.
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+#pragma warning restore RESP010
+
+        using var cancellation = new CancellationTokenSource();
+        var source = new PausedStream(prefix: RespireConnection.StreamChunkSize);
+        var set = client.Strings.SetAsync("cancel-traced", source, source.Length, cancellationToken: cancellation.Token).AsTask();
+        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        var error = await Assert.That(async () => await set).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+
+        var span = stopped.Single(activity => activity.GetTagItem("respire.command.stage") is not null);
+        await Assert.That(span.Status).IsEqualTo(System.Diagnostics.ActivityStatusCode.Error);
+        await Assert.That(span.GetTagItem("respire.command.stage")).IsEqualTo("Writing");
+        await Assert.That(span.GetTagItem("respire.connection.id")).IsNotNull();
+    }
+
+    [Test]
     // This test deliberately holds a ThreadPool worker inside a source read. Keep other
     // blocking tests from starving the continuations that verify cancellation and cleanup.
     [NotInParallel]
