@@ -97,6 +97,24 @@ Settings live under `Aspire:Respire`, with per-client overrides under
 | `DisableTracing` | `false` | Skips adding the `Respire` activity source. |
 | `DisableMetrics` | `false` | Skips adding the `Respire` meter. |
 | `DisableLogging` | `false` | Gives the client a null logger factory. |
+| `DeferConfiguration` | `false` | Reads the connection string and `Options` sections when the client is first resolved. |
+
+### Deferred configuration
+
+By default the connection string and `Options` sections are read when you call
+`AddRespireClient`. A test host that adds its own Redis endpoint after the application registers
+its services would still get the original endpoint. Set `DeferConfiguration` to read them when
+the client is first resolved instead:
+
+```csharp
+builder.AddRespireClient("cache", settings => settings.DeferConfiguration = true);
+```
+
+The precedence above still applies. A connection string assigned in `configureSettings` still wins,
+even when it matches the configured value or is `null`.
+The other integration settings, including `DeferConfiguration` itself, are read at registration.
+A missing endpoint or an invalid value is reported when the client is first resolved, not at
+registration.
 
 ### Options section
 

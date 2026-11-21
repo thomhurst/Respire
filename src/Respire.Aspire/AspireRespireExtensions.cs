@@ -45,25 +45,29 @@ public static class AspireRespireExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionName);
-        var root = builder.Configuration.GetSection("Aspire:Respire");
-        var named = root.GetSection(connectionName);
-        var settings = new RespireClientSettings();
-        root.Bind(settings);
-        named.Bind(settings);
-        if (builder.Configuration.GetConnectionString(connectionName) is { } connectionString)
-            settings.ConnectionString = connectionString;
+        var settings = ReadSettings(builder.Configuration, connectionName);
+        settings.ConnectionStringAssigned = false;
         configureSettings?.Invoke(settings);
-
-        var options = string.IsNullOrWhiteSpace(settings.ConnectionString)
-            ? new RespireOptions() : RespireOptions.Parse(settings.ConnectionString);
-        options = RespireConfiguration.Apply(root.GetSection("Options"), options);
-        options = RespireConfiguration.Apply(named.GetSection("Options"), options);
+        var callbackAssignedConnectionString = settings.ConnectionStringAssigned;
+        var callbackConnectionString = settings.ConnectionString;
         var disableLogging = settings.DisableLogging;
-        if (configureOptions is null) ValidateEndpoints(options, connectionName);
+        RespireOptions? options = null;
+        if (!settings.DeferConfiguration)
+        {
+            options = BuildOptions(builder.Configuration, connectionName, settings.ConnectionString);
+            if (configureOptions is null) ValidateEndpoints(options, connectionName);
+        }
 
         RespireOptions ResolveOptions(IServiceProvider provider)
         {
-            var resolved = configureOptions is null ? options : configureOptions(provider, options)
+            var configured = options;
+            if (configured is null)
+            {
+                var configuration = provider.GetService<IConfiguration>() ?? builder.Configuration;
+                configured = BuildOptions(configuration, connectionName,
+                    callbackAssignedConnectionString ? callbackConnectionString : ReadSettings(configuration, connectionName).ConnectionString);
+            }
+            var resolved = configureOptions is null ? configured : configureOptions(provider, configured)
                 ?? throw new InvalidOperationException("The Respire options callback returned null.");
             ValidateEndpoints(resolved, connectionName);
             return disableLogging ? resolved with { LoggerFactory = NullLoggerFactory.Instance } : resolved;
@@ -78,6 +82,27 @@ public static class AspireRespireExtensions
         if (!settings.DisableTracing || !settings.DisableMetrics)
             AddTelemetry(builder.Services, settings);
         return clientBuilder;
+    }
+
+    /// <summary>Binds global then named integration settings, then applies the named connection string.</summary>
+    private static RespireClientSettings ReadSettings(IConfiguration configuration, string connectionName)
+    {
+        var settings = new RespireClientSettings();
+        var root = configuration.GetSection("Aspire:Respire");
+        root.Bind(settings);
+        root.GetSection(connectionName).Bind(settings);
+        if (configuration.GetConnectionString(connectionName) is { } connectionString)
+            settings.ConnectionString = connectionString;
+        return settings;
+    }
+
+    /// <summary>Parses the connection string, then applies global and named option sections.</summary>
+    private static RespireOptions BuildOptions(IConfiguration configuration, string connectionName, string? connectionString)
+    {
+        var root = configuration.GetSection("Aspire:Respire");
+        var options = string.IsNullOrWhiteSpace(connectionString) ? new RespireOptions() : RespireOptions.Parse(connectionString);
+        options = RespireConfiguration.Apply(root.GetSection("Options"), options);
+        return RespireConfiguration.Apply(root.GetSection(connectionName).GetSection("Options"), options);
     }
 
     /// <summary>Registers one builder per host and adds each signal when first enabled by a client.</summary>
