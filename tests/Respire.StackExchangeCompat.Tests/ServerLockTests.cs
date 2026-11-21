@@ -19,23 +19,33 @@ public class ServerLockTests(RedisTestContainer fixture)
     [Arguments(3)]
     public async Task PinnedHangfireStorageConstructsDiscoversServerAndAcquiresLock(int protocol)
     {
-        await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
+        // Build the options once so every client below targets the same leased database.
+        var options = Options(protocol);
+        var database = options.Database;
+        await using var connection = RespireConnectionMultiplexer.Create(options);
         var storage = new Hangfire.Redis.StackExchange.RedisStorage(connection,
-            new Hangfire.Redis.StackExchange.RedisStorageOptions { Db = fixture.IsolatedDatabase, UseTransactions = false });
+            new Hangfire.Redis.StackExchange.RedisStorageOptions { Db = database, UseTransactions = false });
         using var storageConnection = storage.GetConnection();
         Assert.InRange(((Hangfire.Storage.JobStorageConnection)storageConnection).GetUtcDateTime(), DateTime.UtcNow.AddSeconds(-5), DateTime.UtcNow.AddSeconds(5));
-        // Both protocol cases run in parallel against the same database, so each needs its own lock key. Hangfire also
-        // tracks held locks per thread by key alone. Releasing after an await leaves the key marked held on
-        // the acquiring thread, so a later case reusing the name there would skip LOCK TAKE. Use a unique name.
+        // Hangfire records held keys per thread and skips the SET for a key the thread already holds.
+        // Its Dispose can run on another thread after an await and leave the key recorded, so use a fresh key.
         var resource = $"adapter-lock-{Guid.NewGuid():N}";
+        var key = $"{{hangfire}}:{resource}";
         using (storageConnection.AcquireDistributedLock(resource, TimeSpan.FromSeconds(1)))
         {
-            await using var control = await RespireClient.ConnectAsync(Options(protocol));
-            using var token = await control.ExecuteAsync(RespireCommands.String.GET, "{hangfire}:" + resource);
-            Assert.False(token.IsNull);
+            await using var control = await RespireClient.ConnectAsync(options);
+            using var token = await control.ExecuteAsync(RespireCommands.String.GET, key);
+            if (token.IsNull)
+            {
+                // Tell a missing lock apart from a control client reading another database.
+                using var clientInfo = await control.ExecuteAsync("CLIENT", "INFO");
+                var adapterSees = await connection.GetDatabase().KeyExistsAsync(key);
+                Assert.Fail($"Lock key {key} missing in database {database}; adapter sees it: {adapterSees}; " +
+                    $"leased database now: {fixture.IsolatedDatabase}; control client: {clientInfo.AsString()}");
+            }
         }
-        await using var after = await RespireClient.ConnectAsync(Options(protocol));
-        using var released = await after.ExecuteAsync(RespireCommands.String.GET, "{hangfire}:" + resource);
+        await using var after = await RespireClient.ConnectAsync(options);
+        using var released = await after.ExecuteAsync(RespireCommands.String.GET, key);
         Assert.True(released.IsNull);
     }
 
