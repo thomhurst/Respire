@@ -10,6 +10,7 @@ namespace Respire.Analyzers.Tests;
 /// <summary>
 /// Runtime async ignores <c>[AsyncMethodBuilder]</c>, so a pooling-builder method without
 /// <c>[RuntimeAsyncMethodGeneration(false)]</c> silently allocates on every suspension on net11.0.
+/// Dropping both attributes allocates too; docs/RUNTIME_ASYNC_POOLING.md has the measurements.
 /// </summary>
 public class RuntimeAsyncOptOutTests
 {
