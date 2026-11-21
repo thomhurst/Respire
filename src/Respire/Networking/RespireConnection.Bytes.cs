@@ -49,7 +49,7 @@ internal sealed partial class RespireConnection
         }
         if (enqueued)
         {
-            source.RegisterCancellation(cancellationToken);
+            source.RegisterCancellation(cancellationToken, this);
             ScheduleFlush(startedBatch);
             return source.Task;
         }
@@ -85,7 +85,7 @@ internal sealed partial class RespireConnection
             if (observation.IsEmpty) RespireTelemetry.RecordError(error, internallyHandled: false, errorAttempts, endpoint: new(Host, Port));
             throw;
         }
-        source.RegisterCancellation(cancellationToken);
+        source.RegisterCancellation(cancellationToken, this);
         ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }

@@ -53,7 +53,7 @@ internal sealed partial class RespireConnection
                     pinToConnection, rerouted, skipTracking: true, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
             }
         }
-        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
+        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken), this);
         ScheduleFlush(startedBatch);
         return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, deadline);
     }

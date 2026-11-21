@@ -204,7 +204,7 @@ public class PendingResponseLifetimeTests
             var source = pool.Rent();
             var pending = source.Task;
             using var cancellation = new CancellationTokenSource();
-            source.RegisterCancellation(cancellation.Token);
+            source.RegisterCancellation(cancellation.Token, connection: null);
             var observedState = source.State;
             var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             pending.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() => ready.TrySetResult());

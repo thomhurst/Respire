@@ -19,6 +19,8 @@ namespace Respire.Networking;
 internal abstract partial class PendingResponse
 {
     private CancellationTokenRegistration _cancellationRegistration;
+    // Set only with a cancellable registration; read only by the cancellation callback.
+    private RespireConnection? _cancellationConnection;
 
     // Low bit: completed. Upper bits: reuse epoch, bumped every time the source goes back to
     // its pool. Completion is a CAS on the whole word so the deadline sweep — which peeks
@@ -137,7 +139,11 @@ internal abstract partial class PendingResponse
             return false;
         }
 
-        DispatchException(new OperationCanceledException(cancellationToken));
+        var cancelled = new OperationCanceledException(cancellationToken);
+        // Tracing is opt-in: without a listener, ordinary cancellation samples nothing.
+        if (_cancellationConnection is { } connection && RespireTelemetry.Source.HasListeners())
+            RespireTelemetry.AttachCancellationDiagnostics(cancelled, connection, WriteStart, WriteEnd);
+        DispatchException(cancelled);
         return true;
     }
 
@@ -189,13 +195,14 @@ internal abstract partial class PendingResponse
     protected virtual Exception PrepareException(Exception exception) => exception;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal void RegisterCancellation(CancellationToken cancellationToken)
+    internal void RegisterCancellation(CancellationToken cancellationToken, RespireConnection? connection)
     {
         if (!cancellationToken.CanBeCanceled)
         {
             return;
         }
 
+        _cancellationConnection = connection;
         _cancellationRegistration = cancellationToken.UnsafeRegister(
             static (state, token) => ((PendingResponse)state!).TrySetCanceled(token),
             this);
@@ -203,8 +210,10 @@ internal abstract partial class PendingResponse
 
     protected void ReleaseCallerRef()
     {
+        // Dispose waits for a running callback, so it no longer reads the connection.
         _cancellationRegistration.Dispose();
         _cancellationRegistration = default;
+        _cancellationConnection = null;
         ReleaseRef();
     }
 

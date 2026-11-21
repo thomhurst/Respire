@@ -48,7 +48,7 @@ internal sealed partial class RespireConnection
             ReclaimUnpublished(source);
             return false;
         }
-        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
+        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken), this);
         ScheduleFlush(startedBatch);
         return true;
     }

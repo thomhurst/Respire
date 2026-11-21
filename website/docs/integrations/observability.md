@@ -97,6 +97,31 @@ RespireTracing.Configure(new RespireTracingOptions
   `Respire.Streaming` source are unaffected. It does not remove the listener-dependent
   dispatch overhead; detach trace listeners when tracing is completely disabled.
 
+### Cancelled commands
+
+When your cancellation token cancels a command that was already handed to a connection,
+for example a health check deadline shorter than `CommandTimeout`, the span records where
+the command was at that moment:
+
+| Attribute | Value |
+| --- | --- |
+| `respire.command.stage` | `Buffered`, `Writing`, `AwaitingReply`, or `Unknown`; same meaning as `RespireTimeoutDiagnostics.Stage` |
+| `respire.connection.id` | Process-local connection identity |
+| `respire.connection.inflight` | Replies still owed on that connection |
+| `respire.connection.pending_write_bytes` | Serialized bytes not yet written to the socket |
+| `respire.connection.last_read_ms`, `respire.connection.last_write_ms` | Time since the last socket read and write |
+
+`AwaitingReply` means the whole command was written and the reply had not arrived, so look
+at the server or the network. `Buffered` or `Writing` means the write side was behind.
+
+- The caller still gets an `OperationCanceledException` carrying its own token. Nothing is
+  attached to the exception.
+- The snapshot is taken only while the `Respire` source has listeners. Without tracing,
+  cancellation samples nothing.
+- Cancellation before the command reaches a connection, for example while waiting for a
+  connection, adds no attributes. Neither does a `RespireTimeoutException`; read its
+  `Diagnostics` property instead.
+
 ## Metric selection
 
 One process-wide selection applies to every client and prefix view. For narrower collection,

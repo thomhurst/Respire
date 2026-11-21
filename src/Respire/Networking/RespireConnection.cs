@@ -1234,7 +1234,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     pinToConnection, rerouted, skipTracking, armCommandDeadline).ConfigureAwait(false);
             }
         }
-        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
+        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken), this);
         ScheduleFlush(startedBatch);
         return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, deadline);
     }
@@ -1403,7 +1403,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (enqueued)
         {
-            source.RegisterCancellation(cancellationToken);
+            source.RegisterCancellation(cancellationToken, this);
             ScheduleFlush(startedBatch);
             return source.Task;
         }
@@ -1487,7 +1487,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (enqueued)
         {
-            source.RegisterCancellation(cancellationToken);
+            source.RegisterCancellation(cancellationToken, this);
             ScheduleFlush(startedBatch);
             return source.Task;
         }
@@ -1592,7 +1592,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (enqueued)
         {
-            source.RegisterCancellation(cancellationToken);
+            source.RegisterCancellation(cancellationToken, this);
             ScheduleFlush(startedBatch);
             return source.Task;
         }
@@ -1651,7 +1651,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 errorAttempts + 1, pinToConnection).ConfigureAwait(false);
         }
 
-        source.RegisterCancellation(cancellationToken);
+        source.RegisterCancellation(cancellationToken, this);
         ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }
@@ -1687,7 +1687,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw;
         }
 
-        source.RegisterCancellation(cancellationToken);
+        source.RegisterCancellation(cancellationToken, this);
         ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }
@@ -1907,7 +1907,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 observation, errorAttempts, writeObservation, armCommandDeadline);
         }
 
-        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
+        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken), this);
         if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
         ScheduleFlush(startedBatch);
         return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
@@ -1971,7 +1971,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         if (enqueued)
         {
-            source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
+            source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken), this);
             if (!deferFlush) ScheduleFlush(startedBatch);
             return ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline);
         }
@@ -2492,7 +2492,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 observation: observation, errorAttempts: errorAttempts + 1, writeObservation: writeObservation).ConfigureAwait(false);
         }
 
-        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
+        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken), this);
         ScheduleFlush(startedBatch);
         return await ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
     }
@@ -2557,7 +2557,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw;
         }
 
-        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken));
+        source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken), this);
         if (command is TransactionCommand transactionCommand) transactionCommand.RecordConnection(this);
         ScheduleFlush(startedBatch);
         return await ObserveScriptingReply(source.Task, in command, commandName, cancellationToken, commandDeadline).ConfigureAwait(false);
@@ -2600,7 +2600,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             throw;
         }
 
-        source.RegisterCancellation(cancellationToken);
+        source.RegisterCancellation(cancellationToken, this);
         ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }

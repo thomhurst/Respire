@@ -227,7 +227,7 @@ internal sealed partial class RespireConnection
 
             var finalWrite = AppendStreamingEnd(command, source, requestWriteStart, out startedBatch);
             phase = StreamedSetPhase.ResponseQueued;
-            source.RegisterCancellation(cancellationToken);
+            source.RegisterCancellation(cancellationToken, this);
             ScheduleFlush(startedBatch);
             await WaitForFinalFrameWriteAsync(finalWrite, effectiveCancellation).ConfigureAwait(false);
             phase = StreamedSetPhase.FrameWritten;
@@ -364,7 +364,7 @@ internal sealed partial class RespireConnection
             throw;
         }
 
-        source.RegisterCancellation(cancellationToken);
+        source.RegisterCancellation(cancellationToken, this);
         ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }

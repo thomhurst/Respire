@@ -151,7 +151,9 @@ pool does not apply to v3 or to Respire.
 `ConnectTimeout` separately bounds connection setup. Intentionally blocking calls
 such as `BLPOP` use their own blocking semantics rather than the ordinary command
 cap. Caller cancellation normally surfaces as `OperationCanceledException` and does
-not undo a command already submitted.
+not undo a command already submitted. That exception carries no diagnostics, but with
+tracing on, the command's span records the stage at cancellation; see
+[cancelled commands](../integrations/observability.md#cancelled-commands).
 
 Raise a command budget only when the observed latency is acceptable for the application.
 It does not repair starvation or drain a backed-up queue. For detecting a stalled
