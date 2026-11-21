@@ -216,6 +216,6 @@ builder.AddRespireClient("cache", configureOptions: (services, options) => optio
 });
 ```
 
-The hosting reference supplies the endpoint and TLS (Aspire 13.6 emits `host:10000,ssl=true`,
-which Respire accepts). The provider refreshes Entra credentials; you own the credential. See
+The hosting reference supplies the endpoint and TLS (a connection string such as
+`host:10000,ssl=true`, which Respire accepts). The provider refreshes Entra credentials; you own the credential. See
 [Azure Managed Redis](../guides/azure-managed-redis.md).

@@ -28,10 +28,12 @@ From the repository root:
 
 ```powershell
 dotnet dev-certs https --trust
+dotnet build samples/Respire.Samples.Aspire.Api -c Release -f net11.0
 dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net11.0
 ```
 
-Building the AppHost also builds the HTTP service.
+The AppHost registers the HTTP service by project path, so building the AppHost does not build
+the service. Build both, as above, or build the repository solution.
 
 The AppHost sets `AspireUseCliBundle=true`, so orchestration (DCP) and the dashboard come from
 the Aspire CLI bundle. The SDK can prepare the bundle during the first build; without a compatible

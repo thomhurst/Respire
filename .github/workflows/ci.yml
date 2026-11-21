@@ -351,6 +351,7 @@ jobs:
       - uses: ./.github/actions/setup-dotnet
       - name: Build .NET 11 Aspire sample and test host
         run: |
+          dotnet build samples/Respire.Samples.Aspire.Api -c Release -f net11.0
           dotnet build samples/Respire.Samples.Aspire.AppHost -c Release -f net11.0 -warnaserror:ASPIRE010
           dotnet build tests/Respire.Aspire.IntegrationTests -c Release -f net11.0 -warnaserror:ASPIRE010
       - name: Verify injected clients and HTTP caches
