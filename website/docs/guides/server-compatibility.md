@@ -37,6 +37,9 @@ for its new commands.
     `--lua-transaction-mode`, Garnet does not run a script atomically: two scripts on the same keys
     can interleave. Respire's locks and cache-aside leases rely on atomic scripts; without the flag,
     for example, a `GetOrSetAsync` factory can run twice for one expiry.
+  - With `--lua-transaction-mode`, Garnet 2.2.12 never replies to a transaction that runs a script
+    with keys, and those keys stay locked for every connection. Do not queue scripts that take keys
+    on a transaction against Garnet.
   - Garnet 2.2.12 does not support `CLIENT TRACKING`, so leave `ClientSideCache` disabled.
   - Garnet 2.2.12 has no native compare-and-delete or `SET ... IFEQ`, so `client.Locks` uses its Lua
     scripts there. Start Garnet with `--lua --lua-transaction-mode` to use locks.

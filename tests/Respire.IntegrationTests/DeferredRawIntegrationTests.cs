@@ -13,6 +13,7 @@ public class DeferredRawIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, true)]
     public async Task RawCommandsPreserveOrderPrefixesBinaryAndAggregateReplies(int protocol, bool transactional)
     {
+        Skip.When(RedisTestContainer.GarnetSelected && transactional, "Garnet 2.2.12 with --lua-transaction-mode never replies to EXEC when MULTI queues a keyed EVAL (microsoft/garnet#2420).");
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.IsolatedConnectionString) with { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("raw:");
