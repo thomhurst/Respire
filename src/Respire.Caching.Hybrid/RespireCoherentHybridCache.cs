@@ -517,6 +517,10 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
 
                 _retirementDrains.Claim();
             }
+            // Callers can cancel their wait or fail tracking before reaching tag replay.
+            // The observation owns both tasks, including faults that arrive after retirement.
+            _ = ObserveRetiredWorkAsync(observation.Tracking);
+            _ = ObserveRetiredWorkAsync(observation.TagReplay);
             // No external memory-cache or subscription cleanup runs under the bridge gate.
             Exception? cleanupFailure = null;
 
@@ -541,6 +545,9 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             failure = CombineFailures(failure, cleanupFailure);
         }
     }
+
+    private static async Task ObserveRetiredWorkAsync(Task work)
+        => await work.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     private void CompleteRetirementDrain(Exception? failure)
     {
