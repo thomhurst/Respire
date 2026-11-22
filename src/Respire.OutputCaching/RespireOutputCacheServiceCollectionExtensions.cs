@@ -18,7 +18,10 @@ public static class RespireOutputCacheServiceCollectionExtensions
         => services.AddRespireOutputCache(configure, static provider => provider.GetRequiredService<IRespireClient>());
 
     /// <summary>Registers output caching on an existing client selected by the factory, including a keyed client.</summary>
-    /// <remarks>The store does not own the selected client. Both arguments are required to preserve existing overload resolution.</remarks>
+    /// <remarks>
+    /// The selected client's registration owns its lifetime. Both arguments are required to preserve existing overload resolution.
+    /// Repeated registrations use the last client factory and apply options callbacks in registration order.
+    /// </remarks>
     public static IServiceCollection AddRespireOutputCache(this IServiceCollection services,
         Action<RespireOutputCacheOptions>? configure, Func<IServiceProvider, IRespireClient> clientFactory)
     {
@@ -39,9 +42,9 @@ public static class RespireOutputCacheServiceCollectionExtensions
             services.Configure(configure);
         }
 
-        services.TryAddSingleton(provider => new RespireOutputCacheStore(
+        services.Replace(ServiceDescriptor.Singleton(provider => new RespireOutputCacheStore(
             clientFactory(provider), provider.GetRequiredService<IOptions<RespireOutputCacheOptions>>().Value,
-            provider.GetRequiredService<ILogger<RespireOutputCacheStore>>()));
+            provider.GetRequiredService<ILogger<RespireOutputCacheStore>>())));
         services.Replace(ServiceDescriptor.Singleton<IOutputCacheStore>(provider => provider.GetRequiredService<RespireOutputCacheStore>()));
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, OutputCacheCleanupService>());
         return services;
