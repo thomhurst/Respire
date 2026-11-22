@@ -182,6 +182,17 @@ public class RespireResultTests
     }
 
     [Test]
+    [Arguments("inf", double.PositiveInfinity)]
+    [Arguments("+inf", double.PositiveInfinity)]
+    [Arguments("-inf", double.NegativeInfinity)]
+    public async Task AsDouble_ParsesRedisInfinityText(string reply, double expected)
+    {
+        using var result = new RespireResult(RespValue.BulkString(reply));
+
+        await Assert.That(result.AsDouble()).IsEqualTo(expected);
+    }
+
+    [Test]
     public async Task AsDouble_ParsesIntegerReplies()
     {
         using var result = new RespireResult(RespValue.Integer(7));
@@ -192,6 +203,7 @@ public class RespireResultTests
     [Test]
     [Arguments("not-a-number")]
     [Arguments("1,5")]
+    [Arguments("inf-extra")]
     [Arguments("")]
     public async Task AsDouble_ThrowsWhenTheReplyIsNotANumber(string reply)
     {
