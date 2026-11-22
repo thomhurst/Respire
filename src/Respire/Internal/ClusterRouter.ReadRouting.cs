@@ -406,9 +406,15 @@ internal sealed partial class ClusterRouter
     {
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
-            var budget = _options.ConnectTimeout + (_options.CommandTimeout ?? _options.ConnectTimeout);
-            timeout.CancelAfter(budget);
+            TimeSpan connectTimeout = _options.ConnectTimeout;
+            TimeSpan commandTimeout = _options.CommandTimeout ?? connectTimeout;
+            // Both timeouts are positive. Sum in unsigned ticks so even a maximum
+            // CommandTimeout fits before converting to the deadline's milliseconds.
+            ulong budgetTicks = (ulong)connectTimeout.Ticks + (ulong)commandTimeout.Ticks;
+            long budgetMilliseconds = (long)(budgetTicks / TimeSpan.TicksPerMillisecond);
+            using var timeout = new DeadlineCancellation(_stopDiscovery.Token);
+            timeout.Arm(CommandDeadline.After(Math.Max(1L, budgetMilliseconds)));
+
             var (snapshot, version) = CaptureReplicaRefreshTopology();
             var replicas = snapshot[slot].Replicas?.Nodes ?? [];
 

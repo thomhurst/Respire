@@ -116,7 +116,7 @@ public sealed partial class RespireClient
     {
         var published = false;
         // Reuse the safe deadline timer: throwing factory callbacks must not escape a timer thread.
-        using var lease = new DedicatedAcquisitionCancellation(cancellationToken);
+        using var lease = new DeadlineCancellation(cancellationToken);
 
         if (options.DistributedSingleFlight)
         {

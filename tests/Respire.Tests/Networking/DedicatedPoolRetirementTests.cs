@@ -13,7 +13,7 @@ public class DedicatedPoolRetirementTests
     [Test]
     public async Task AcquisitionDeadlineDisposalDoesNotWaitForCancellationCallbacks()
     {
-        using var source = new DedicatedAcquisitionCancellation(CancellationToken.None);
+        using var source = new DeadlineCancellation(CancellationToken.None);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();

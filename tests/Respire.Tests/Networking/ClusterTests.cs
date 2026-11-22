@@ -2420,7 +2420,10 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task ReadFrom_RevalidatesAgedReplicaRoutesInBackground()
+    [Arguments(10 * TimeSpan.TicksPerSecond, 10 * TimeSpan.TicksPerSecond)]
+    [Arguments(49 * TimeSpan.TicksPerDay, TimeSpan.TicksPerDay)]
+    [Arguments(49 * TimeSpan.TicksPerDay, null)]
+    public async Task ReadFrom_RevalidatesAgedReplicaRoutesInBackground(long connectTimeoutTicks, long? commandTimeoutTicks)
     {
         var key = "{revalidated}:key";
         await using var oldReplica = new FakeRespServer(2)
@@ -2448,6 +2451,9 @@ public class ClusterTests
         {
             Protocol = RespireProtocol.Resp2,
             UseCluster = true,
+            ConnectTimeout = TimeSpan.FromTicks(connectTimeoutTicks),
+            CommandTimeout = commandTimeoutTicks is long ticks ? TimeSpan.FromTicks(ticks) : null,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", primary.Port) },
             ReplicaRouteRevalidationInterval = TimeSpan.FromMinutes(1),
         });

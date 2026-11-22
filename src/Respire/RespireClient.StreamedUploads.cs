@@ -21,7 +21,7 @@ public sealed partial class RespireClient
             : CommandDeadline.None;
 
     private static CancellationToken ArmDedicatedAcquisition(
-        DedicatedAcquisitionCancellation? source, CommandDeadline deadline, CancellationToken callerToken)
+        DeadlineCancellation? source, CommandDeadline deadline, CancellationToken callerToken)
     {
         if (source is null)
         {
@@ -33,7 +33,7 @@ public sealed partial class RespireClient
     }
 
     private Exception? TranslateDedicatedAcquisitionCancellation(
-        Exception error, DedicatedAcquisitionCancellation? source, CancellationToken callerToken, string operation,
+        Exception error, DeadlineCancellation? source, CancellationToken callerToken, string operation,
         CommandDeadline deadline)
     {
         if (source is null || error is not OperationCanceledException cancelled
@@ -105,7 +105,7 @@ public sealed partial class RespireClient
             var returned = false;
             var commandDeadline = CreateUploadDeadline();
             using var acquisitionCancellation = commandDeadline.IsSet
-                ? new DedicatedAcquisitionCancellation(cancellationToken) : null;
+                ? new DeadlineCancellation(cancellationToken) : null;
 
             try
             {
@@ -249,7 +249,7 @@ public sealed partial class RespireClient
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var commandDeadline = CreateUploadDeadline();
         using var acquisitionCancellation = commandDeadline.IsSet
-            ? new DedicatedAcquisitionCancellation(cancellationToken) : null;
+            ? new DeadlineCancellation(cancellationToken) : null;
         var acquisitionToken = ArmDedicatedAcquisition(acquisitionCancellation, commandDeadline, cancellationToken);
         DedicatedConnectionPool pool;
         ClusterRouter.StreamRouteVersion routeVersion;
