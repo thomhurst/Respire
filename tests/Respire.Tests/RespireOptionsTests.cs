@@ -290,6 +290,44 @@ public class RespireOptionsTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConnectTimeout_RejectsValuesAboveTimerLimit(bool connectEagerly)
+    {
+        RespireOptions options = ValidOptions() with
+        {
+            ConnectTimeout = TimeSpan.FromMilliseconds(4_294_967_295L),
+        };
+
+#pragma warning disable RESP010 // This test owns and disposes any client returned by the creation path.
+        await Assert.That(async () =>
+        {
+            await using RespireClient client = connectEagerly
+                ? await RespireClient.ConnectAsync(options)
+                : RespireClient.Create(options);
+        }).ThrowsExactly<RespireConfigurationException>().WithMessageContaining("RespireOptions.ConnectTimeout");
+#pragma warning restore RESP010
+    }
+
+    [Test]
+    [Arguments(0L)]
+    [Arguments(TimeSpan.TicksPerMillisecond - 1)]
+    public async Task ConnectTimeout_AcceptsTimerLimit(long fractionalTicks)
+    {
+        TimeSpan timeout = TimeSpan.FromMilliseconds(4_294_967_294L) + TimeSpan.FromTicks(fractionalTicks);
+        RespireOptions options = ValidOptions() with
+        {
+            ConnectTimeout = timeout,
+        };
+
+#pragma warning disable RESP010 // This test owns and disposes the client to isolate configuration.
+        await using var client = RespireClient.Create(options);
+#pragma warning restore RESP010
+
+        await Assert.That(client.Core.Options.ConnectTimeout).IsEqualTo(timeout);
+    }
+
+    [Test]
     [Arguments("localhost:notaport")]
     [Arguments("localhost:")]
     [Arguments("localhost:0")]

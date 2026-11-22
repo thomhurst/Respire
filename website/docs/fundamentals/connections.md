@@ -174,7 +174,7 @@ await using var redis = await RespireClient.ConnectAsync(options);
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `ConnectTimeout` | 10 s | Bounds each TCP/TLS connection attempt. |
+| `ConnectTimeout` | 10 s | Bounds each TCP/TLS connection attempt. Must be positive, with a timer limit of 4,294,967,294 whole milliseconds (about 49.7 days). |
 | `CommandTimeout` | 10 s | Reply budget; `null` disables it. Blocking commands use their own wait. |
 | `Connections` | 1 | Multiplexed connections (at least 1). Raise only when profiling shows one socket is saturated. |
 | `DedicatedPool` | Unlimited total, four idle | Limits and idle retention for dedicated leases; see below. |

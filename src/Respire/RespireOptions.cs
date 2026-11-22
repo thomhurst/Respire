@@ -536,6 +536,7 @@ public sealed record RespireOptions
     }
 
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
+    /// <remarks>Must be positive, with a timer limit of 4,294,967,294 whole milliseconds.</remarks>
     public TimeSpan ConnectTimeout
     {
         get; init;
@@ -1002,7 +1003,12 @@ public sealed record RespireOptions
             nameof(MaintenanceWindowTimeout), "must be between one millisecond and one day");
         Require(Connections >= 1, nameof(Connections), "must be at least one");
         Require(Database >= 0, nameof(Database), "cannot be negative");
+
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
+        // The timer truncates fractional milliseconds before checking its limit.
+        Require((long)ConnectTimeout.TotalMilliseconds <= uint.MaxValue - 1L,
+            nameof(ConnectTimeout), "must not exceed the timer limit of 4,294,967,294 milliseconds");
+
         Require(Enum.IsDefined(ContinuationDispatch), nameof(ContinuationDispatch), "must be Adaptive, Inline, or ThreadPool");
         Require(StalledDeliveryThreshold >= TimeSpan.FromMilliseconds(1)
             && StalledDeliveryThreshold.TotalMilliseconds <= uint.MaxValue - 1d,
