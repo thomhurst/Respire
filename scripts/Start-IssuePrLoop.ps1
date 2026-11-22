@@ -549,7 +549,6 @@ function Get-Candidates {
     $surveyStats['issues'] = $issues.Count
     $openIssues = @{}
     foreach ($issue in $issues) { $openIssues[[int]$issue.number] = $issue }
-    $script:lastIssues = $issues
     # Every open PR is another chance of a conflict, so finish existing work before
     # starting more once enough PRs are in flight.
     $atPrLimit = $MaxOpenPrs -gt 0 -and $inFlight -ge $MaxOpenPrs
@@ -565,6 +564,7 @@ function Get-Candidates {
         $candidates.Add((New-Candidate 'stranded' $number 4 (Get-StrandedFingerprint $s.Branch $s.Issue) $false $hint $s.Branch))
     }
 
+    $queueableCount = 0
     $ranked = foreach ($issue in $issues) {
         $number = [int]$issue.number
         if ($stranded.ContainsKey($number)) { continue }
@@ -604,12 +604,17 @@ function Get-Candidates {
             New-Candidate 'issue' $number 5 $fingerprint $true $hint
             continue
         }
+        # Count fresh work even when the current PR limit stops us from starting it.
+        $queueableCount++
         if ($atPrLimit) { $surveyStats['issue-wip']++; continue }
         $candidate = New-Candidate 'issue' $number 6 $fingerprint $false
         $candidate.Blocking = [int]$issue.issueDependenciesSummary.blocking
         $candidate.Comments = [int]$issue.comments.totalCount
         $candidate
     }
+    $script:lastIssues = $issues
+    $script:queueableCount = $queueableCount
+
     # Unblock the most other issues first, then prefer less discussion: such issues are
     # usually smaller and clearer.
     foreach ($c in @($ranked | Sort-Object Rank, @{ Expression = 'Blocking'; Descending = $true }, Comments, Number)) { $candidates.Add($c) }
@@ -778,15 +783,8 @@ function Get-TriageItem {
         Fingerprint = $null
         Light       = $true
         Items       = $due
-        Queueable   = Get-QueueableCount
+        Queueable   = $script:queueableCount
     }
-}
-
-# Issues that a unit can claim now: not parked, claimed, blocked, or already on a PR.
-function Get-QueueableCount {
-    @($script:lastIssues | Where-Object {
-            -not (Test-HasLabel $_ ($excludedIssueLabels + 'in-progress')) -and $_.issueDependenciesSummary.blockedBy -eq 0 -and -not (Test-HasOpenPr $_)
-        }).Count
 }
 
 # Builds a discovery unit, which files new claimable issues, when the last one ran more
@@ -805,7 +803,7 @@ function Get-DiscoveryItem {
         Rank        = 9
         Fingerprint = $null
         Light       = $false
-        Queueable   = Get-QueueableCount
+        Queueable   = $script:queueableCount
     }
 }
 

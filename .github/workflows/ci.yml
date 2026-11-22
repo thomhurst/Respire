@@ -307,6 +307,10 @@ jobs:
         shell: pwsh
         run: ./scripts/Test-FocusedTests.ps1
 
+      - name: Verify issue loop queue counts
+        shell: pwsh
+        run: ./scripts/Test-IssuePrLoopQueueCount.ps1
+
       - name: Verify worktree cleanup safety
         shell: pwsh
         run: |
