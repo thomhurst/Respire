@@ -53,7 +53,8 @@ public partial class CacheErrorMetricsTests
                 return await send().ConfigureAwait(false);
             });
             await using var cache = new RespireDistributedCache(decorator);
-            using var errors = new CacheErrorCapture();
+            // The endpoint tag can identify this fixture when a measurement arrives outside the test's context.
+            using var errors = new CacheErrorCapture(server.Port);
             var failure = await Assert.That(async () =>
             {
                 switch (route)
@@ -244,7 +245,7 @@ public partial class CacheErrorMetricsTests
             get;
         } = new();
 
-        internal CacheErrorCapture()
+        internal CacheErrorCapture(int? serverPort = null)
         {
             _listener.InstrumentPublished = (instrument, observer) =>
             {
@@ -255,12 +256,21 @@ public partial class CacheErrorMetricsTests
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
-                if (!_scope.Value)
+                bool inScope = _scope.Value;
+
+                if (!inScope && serverPort is null)
                 {
                     return;
                 }
 
-                Items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+                Dictionary<string, object?> item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
+
+                if (!inScope && !Equals(item.GetValueOrDefault("server.port"), serverPort))
+                {
+                    return;
+                }
+
+                Items.Enqueue(item);
                 throw new InvalidOperationException("Listener must not replace the caller failure.");
             });
             _listener.Start();
