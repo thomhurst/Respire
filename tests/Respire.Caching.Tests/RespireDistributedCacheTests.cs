@@ -548,6 +548,67 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             RespireDistributedCache.GetAndRefreshScript, [key], ["0", staleNowTicks])).Dispose();
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DelayedGet_CrossingAbsoluteDeadline_ExpiresOnlyItsOwnReArm(bool replace)
+    {
+        const string Key = "delayed-get";
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
+        var sliding = TimeSpan.FromSeconds(30);
+        await Cache.SetAsync(Key, [1], new DistributedCacheEntryOptions
+        {
+            AbsoluteExpiration = deadline,
+            SlidingExpiration = sliding,
+        });
+
+        var delayedClient = new ScriptInterceptingClient(Client, async (call, send) =>
+        {
+            if (call != 1)
+            {
+                return await send();
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            var reply = await send();
+
+            try
+            {
+                var untilDeadline = deadline - DateTimeOffset.UtcNow;
+                await Assert.That(await PttlAsync(Key)).IsGreaterThan((long)untilDeadline.TotalMilliseconds + 500);
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(0, untilDeadline.TotalMilliseconds) + 100));
+
+                if (replace)
+                {
+                    // An offset-written replacement can share the raw metadata while having
+                    // a different live Redis expiration.
+                    await RunDelayedSetAsync(Key, deadline.UtcTicks, staleTtlMs: 30_000, sldexp: sliding.Ticks);
+                }
+
+                return reply;
+            }
+            catch
+            {
+                reply.Dispose();
+                throw;
+            }
+        });
+        await using var delayedCache = new RespireDistributedCache(delayedClient);
+
+        await Assert.That(await delayedCache.GetAsync(Key)).IsEquivalentTo(new byte[] { 1 });
+        var freshRead = await Cache.GetAsync(Key);
+
+        if (replace)
+        {
+            await Assert.That(freshRead).IsEquivalentTo(new byte[] { 1 });
+        }
+        else
+        {
+            await Assert.That(freshRead).IsNull();
+            await Assert.That(await PttlAsync(Key)).IsEqualTo(-2L);
+        }
+    }
+
+    [Test]
     public async Task GetScript_FlagsOnlyAbsoluteCappedSlidingReArms()
     {
         // Only a sliding re-arm with an absolute deadline in play can be over-extended by a
