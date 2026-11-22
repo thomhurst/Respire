@@ -93,9 +93,15 @@ public sealed class RespireReliableTopic<T>
 
     internal static string TimestampCursor(DateTimeOffset timestamp)
     {
-        var milliseconds = timestamp.ToUnixTimeMilliseconds();
+        long milliseconds = timestamp.ToUnixTimeMilliseconds();
         ArgumentOutOfRangeException.ThrowIfNegative(milliseconds, nameof(timestamp));
-        // Group reads are exclusive. The previous millisecond includes every entry at the requested time.
+
+        if (timestamp.UtcTicks % TimeSpan.TicksPerMillisecond != 0)
+        {
+            milliseconds++;
+        }
+
+        // Group reads are exclusive. Stop at the last sequence before the first eligible millisecond.
         return milliseconds == 0 ? "0-0" : (milliseconds - 1).ToString(CultureInfo.InvariantCulture) + "-18446744073709551615";
     }
 }

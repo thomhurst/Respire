@@ -149,6 +149,28 @@ public class ReliableTopicIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
+    [Arguments(2, 0L)]
+    [Arguments(3, 2000L)]
+    public async Task ReplayByFractionalTimestampSkipsEarlierMillisecond(int protocol, long milliseconds)
+    {
+        await using RespireClient client = await Connect(protocol);
+        RespireReliableTopic<string> topic = Topic(client);
+        var before = new RespireStreamAddOptions { Id = FormattableString.Invariant($"{milliseconds}-1") };
+        var after = new RespireStreamAddOptions { Id = FormattableString.Invariant($"{milliseconds + 1}-0") };
+        await client.Streams.AddAsync(topic.StreamKey, before, ("payload", "before"));
+        await client.Streams.AddAsync(topic.StreamKey, after, ("payload", "after"));
+
+        RespireTopicSubscription<string> subscription = await topic.SubscribeAsync("replay");
+        DateTimeOffset timestamp = DateTimeOffset.FromUnixTimeMilliseconds(milliseconds)
+            .AddTicks(1).ToOffset(TimeSpan.FromHours(1));
+        await subscription.SeekAsync(timestamp);
+
+        RespireTopicMessage<string>[] messages = await subscription.ReceiveAsync(Visibility, max: 2);
+        await Assert.That(messages.Length).IsEqualTo(1);
+        await Assert.That(messages[0].Payload).IsEqualTo("after");
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task LengthRetentionCleansTrimmedPendingEntriesAndKeepsNewest(int protocol)
