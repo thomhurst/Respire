@@ -49,10 +49,17 @@ public sealed partial class RespireClient
         var lockKey = CreateCacheAsideLockKey(key);
         var token = Guid.NewGuid().ToString("N");
         var started = Stopwatch.GetTimestamp();
+        bool retrying = false;
 
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (retrying && Stopwatch.GetElapsedTime(started) >= options.WaitTimeout)
+            {
+                break;
+            }
+
             using var entry = await RunCacheAsideScriptAsync(ProtectedCacheRead, key, lockKey, [],
                 cancellationToken, observation).ConfigureAwait(false);
             var found = !entry[0].IsNull;
@@ -62,6 +69,21 @@ public sealed partial class RespireClient
                     options.EarlyRefreshBeta, Random.Shared.NextDouble()))
             {
                 return entry[0].As<T>();
+            }
+
+            bool canUseCachedValue = fresh || (found && options.StaleWhileRevalidate > TimeSpan.Zero);
+
+            // A retry read can finish after the wait expires. Use a value it found when allowed.
+            if (retrying && Stopwatch.GetElapsedTime(started) >= options.WaitTimeout)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (canUseCachedValue)
+                {
+                    return entry[0].As<T>();
+                }
+
+                break;
             }
 
             // An expired payload can retain its generation while a refresh is in flight.
@@ -90,7 +112,7 @@ public sealed partial class RespireClient
             }
 
             // A refresh contender can use the value it just read. Missing values never bypass the lease.
-            if (fresh || (found && options.StaleWhileRevalidate > TimeSpan.Zero))
+            if (canUseCachedValue)
             {
                 return entry[0].As<T>();
             }
@@ -99,12 +121,15 @@ public sealed partial class RespireClient
 
             if (remaining <= TimeSpan.Zero)
             {
-                throw new TimeoutException("Timed out waiting for the cache-aside factory lease.");
+                break;
             }
 
+            retrying = true;
             await Task.Delay(remaining < options.RetryDelay ? remaining : options.RetryDelay, cancellationToken)
                 .ConfigureAwait(false);
         }
+
+        throw new TimeoutException("Timed out waiting for the cache-aside factory lease.");
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
