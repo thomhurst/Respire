@@ -602,14 +602,10 @@ internal static partial class RespireTelemetry
                 return;
             }
 
-            try
-            {
-                var seconds = completed == 0 ? Stopwatch.GetElapsedTime(timestamp).TotalSeconds
-                    : Stopwatch.GetElapsedTime(timestamp, completed).TotalSeconds;
-                RecordOperationDuration(seconds, operation!,
-                    connection.Host, connection.Port, connection.OperationMetricDatabase, error, connection, null);
-            }
-            catch { /* A metrics listener must not replace the command outcome. */ }
+            double seconds = completed == 0 ? Stopwatch.GetElapsedTime(timestamp).TotalSeconds
+                : Stopwatch.GetElapsedTime(timestamp, completed).TotalSeconds;
+            RecordOperationDuration(seconds, operation!,
+                connection.Host, connection.Port, connection.OperationMetricDatabase, error, connection, null);
         }
     }
 
@@ -1157,6 +1153,13 @@ internal static partial class RespireTelemetry
             }
         }
 
-        OperationDuration.Record(seconds, tags);
+        try
+        {
+            OperationDuration.Record(seconds, tags);
+        }
+        catch
+        {
+            // A metrics listener must not replace the command outcome.
+        }
     }
 }
