@@ -1,8 +1,25 @@
 namespace Respire.Internal;
 
-/// <summary>Preserves every bulk cleanup failure across an async owner's await boundary.</summary>
+/// <summary>Observes cleanup faults and preserves failures across async ownership boundaries.</summary>
 internal static class CleanupTasks
 {
+    internal static void ObserveFault(Task task)
+    {
+        if (task.IsCompleted)
+        {
+            _ = task.Exception;
+
+            return;
+        }
+
+        _ = task.ContinueWith(static completed =>
+        {
+            _ = completed.Exception;
+        },
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
     internal static async Task WhenAllAsync(IEnumerable<Task> tasks)
     {
         var completion = Task.WhenAll(tasks);

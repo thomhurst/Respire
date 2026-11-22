@@ -86,7 +86,7 @@ internal sealed partial class DedicatedConnectionPool
         {
             foreach (var entry in closing)
             {
-                _ = CloseAsync(entry);
+                StartClose(entry);
             }
         }
     }
