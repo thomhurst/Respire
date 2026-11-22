@@ -8,6 +8,19 @@ namespace Respire.StackExchangeCompat.Tests;
 public class FakeConnectionTests
 {
     [Test]
+    public async Task PreferReplicaReadsFallBackToStandalonePrimary()
+    {
+        await using var fixture = new RespireFakeConnection();
+        var database = fixture.Database;
+        await database.StringIncrementAsync("counter");
+        await database.HashSetAsync("hash", "field", "value");
+
+        Assert.Equal("1", (string?)await database.StringGetAsync("counter", CommandFlags.PreferReplica));
+        Assert.Equal("value", (string?)await database.HashGetAsync("hash", "field", CommandFlags.PreferReplica));
+        Assert.Throws<InvalidOperationException>(() => database.StringGet("counter", CommandFlags.DemandReplica));
+    }
+
+    [Test]
     public async Task CompatibilityCallsUseRealTransportAndBinaryValues()
     {
         await using var fixture = new RespireFakeConnection();

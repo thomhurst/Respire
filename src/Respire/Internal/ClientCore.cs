@@ -103,6 +103,9 @@ internal sealed class ClientCore : IAsyncDisposable
     public readonly ClusterRouter? Cluster;
     public readonly ClientSideCacheCoordinator? ClientCache;
     public volatile bool Disposed;
+
+    internal bool SupportsReplicaReads => Cluster is not null || Sentinel is not null || Options.ReplicaEndpoints.Count != 0;
+
     // Canceled once by disposal and never disposed, so linking to its token cannot throw.
     private readonly CancellationTokenSource _lifetime = new();
 
