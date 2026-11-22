@@ -304,6 +304,63 @@ public class RespireOptionsTests
     }
 
     [Test]
+    [Arguments("[]")]
+    [Arguments("[]:6379")]
+    [Arguments("[ \t]:6379")]
+    [Arguments("[]:6379,ssl=false")]
+    public async Task ConnectionString_RejectsBlankTcpHost(string connectionString)
+    {
+        RespireConfigurationException exception = Assert.Throws<RespireConfigurationException>(() => RespireOptions.Parse(connectionString));
+
+        await Assert.That(exception.Message).Contains("RespireOptions.Endpoints");
+        await Assert.That(exception.Message).Contains("TCP host");
+    }
+
+    [Test]
+    [Arguments(null, nameof(RespireOptions.Endpoints))]
+    [Arguments("", nameof(RespireOptions.Endpoints))]
+    [Arguments(" \t", nameof(RespireOptions.Endpoints))]
+    [Arguments(null, nameof(RespireOptions.ReplicaEndpoints))]
+    [Arguments("", nameof(RespireOptions.ReplicaEndpoints))]
+    [Arguments(" \t", nameof(RespireOptions.ReplicaEndpoints))]
+    public async Task Create_RejectsBlankTcpHost(string? host, string optionName)
+    {
+        var endpoint = new RespireEndpoint(host!, 6379);
+        RespireOptions options = optionName == nameof(RespireOptions.Endpoints)
+            ? ValidOptions() with
+            {
+                Endpoints = [endpoint],
+            }
+            : ValidOptions() with
+            {
+                ReplicaEndpoints = [endpoint],
+            };
+
+        RespireConfigurationException? exception = await Assert.That(async () =>
+        {
+            await using var client = RespireClient.Create(options);
+        }).ThrowsExactly<RespireConfigurationException>();
+
+        await Assert.That(exception!.Message).Contains($"RespireOptions.{optionName}");
+        await Assert.That(exception.Message).Contains("TCP host");
+    }
+
+    [Test]
+    [Arguments("cache.example:6380", "cache.example", 6380)]
+    [Arguments("127.0.0.1:6380", "127.0.0.1", 6380)]
+    [Arguments("[::1]:6380", "::1", 6380)]
+    [Arguments("unix:///tmp/redis.sock", "/tmp/redis.sock", 0)]
+    public async Task ParseAndCreate_AcceptValidEndpoints(string connectionString, string host, int port)
+    {
+        var endpoint = new RespireEndpoint(host, port);
+        var options = RespireOptions.Parse(connectionString);
+        await Assert.That(options.Endpoints.Single()).IsEqualTo(endpoint);
+
+        await using var client = RespireClient.Create(new RespireOptions { Endpoints = [endpoint] });
+        await Assert.That(client.Endpoint).IsEqualTo(endpoint);
+    }
+
+    [Test]
     [Arguments(0)]
     [Arguments(65536)]
     public async Task Create_RejectsEndpointPortOutsideTcpRange(int port)
