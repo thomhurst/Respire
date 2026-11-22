@@ -282,19 +282,42 @@ public class BinaryPrefixTests
     [Test]
     public async Task TextPrefixesKeepSplitSurrogateScanSemantics()
     {
-        var physical = Encoding.UTF8.GetBytes("\uD800\uDC00key");
-        await using var server = new FakeRespServer([.. "*2\r\n$1\r\n0\r\n*1\r\n"u8, .. Bulk(physical)]);
-        await using var root = await FakeRespServer.ConnectClientAsync(server.Port);
-        var view = root.WithKeyPrefix((RespireKey)"\uD800");
-        var keys = new List<string>();
-
-        await foreach (var key in view.Keys.ScanAsync("\uDC00*"))
+        const string Prefix = "tenant:*:\uD83D";
+        const string Selected = "\uDE00:key";
+        const string Other = "\uDE01:other";
+        byte[] physical = Encoding.UTF8.GetBytes(Prefix + Selected);
+        byte[] otherPhysical = Encoding.UTF8.GetBytes(Prefix + Other);
+        byte[] unrelated = Encoding.UTF8.GetBytes("tenant:*:\U00020000:key");
+        byte[] response = [.. "*2\r\n$1\r\n0\r\n*3\r\n"u8, .. Bulk(physical), .. Bulk(otherPhysical), .. Bulk(unrelated)];
+        const string UnfilteredCommand = "SCAN 0 COUNT 7 TYPE string";
+        const string ExplicitSurrogateCommand = "SCAN 0 MATCH tenant:\\*:\U0001F600:* COUNT 7 TYPE string";
+        byte[] explicitResponse = [.. "*2\r\n$1\r\n0\r\n*1\r\n"u8, .. Bulk(physical)];
+        await using var server = new FakeRespServer(response)
         {
-            keys.Add(key);
+            ReplyOverride = (_, command) => command switch
+            {
+                UnfilteredCommand => null,
+                ExplicitSurrogateCommand => explicitResponse,
+                _ => "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray(),
+            },
+        };
+        await using RespireClient root = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using IRespireClient view = root.WithKeyPrefix((RespireKey)Prefix);
+
+        foreach (string? match in new[] { null, "*", "*:k[ae]y", "\uDE00:*" })
+        {
+            var keys = new List<string>();
+
+            await foreach (string key in view.Keys.ScanAsync(match, RespireKeyType.String, countHint: 7))
+            {
+                keys.Add(key);
+            }
+
+            await Assert.That(keys).IsEquivalentTo(match is null or "*" ? [Selected, Other] : new[] { Selected });
+            await Assert.That(view.ResolveKey(keys.Single(key => key == Selected)).ToBytes().SequenceEqual(physical)).IsTrue();
         }
 
-        await Assert.That(keys).IsEquivalentTo(["\uDC00key"]);
-        await Assert.That(view.ResolveKey(keys[0]).ToBytes().SequenceEqual(physical)).IsTrue();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([UnfilteredCommand, UnfilteredCommand, UnfilteredCommand, ExplicitSurrogateCommand]);
     }
 
     [Test]

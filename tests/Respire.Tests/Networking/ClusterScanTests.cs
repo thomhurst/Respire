@@ -442,6 +442,44 @@ public class ClusterScanTests
     }
 
     [Test]
+    public async Task NumericScanFindsSplitSurrogateKeysAcrossPrimaries()
+    {
+        await using var cluster = new ScanCluster();
+        const string Prefix = "tenant:\uD83D";
+        const string UnfilteredCommand = "SCAN 0 COUNT 9 TYPE string";
+        const string ExplicitSurrogateCommand = "SCAN 0 MATCH tenant:\U0001F600:* COUNT 9 TYPE string";
+        string selected = $"\uDE00:key:{{{TagInSlot(0)}}}";
+        string other = $"\uDE01:other:{{{TagInSlot(8192)}}}";
+        cluster.First.Scan = command => command switch
+        {
+            UnfilteredCommand => Page("0", Prefix + selected, "tenant:\U00020000:key"),
+            ExplicitSurrogateCommand => Page("0", Prefix + selected),
+            _ => Page("0"),
+        };
+        cluster.Second.Scan = command => command == UnfilteredCommand ? Page("0", Prefix + other) : Page("0");
+        await using RespireClient client = await cluster.ConnectAsync();
+        await using IRespireClient view = client.WithKeyPrefix(Prefix);
+
+        foreach (string? match in new[] { null, "*", "*:key:*", "\uDE00:*" })
+        {
+            var keys = new List<string>();
+
+            await foreach (string key in view.Keys.ScanAsync(match, RespireKeyType.String, countHint: 9))
+            {
+                keys.Add(key);
+            }
+
+            await Assert.That(keys).IsEquivalentTo(match is null or "*" ? [selected, other] : new[] { selected });
+        }
+
+        foreach (Node node in new[] { cluster.First, cluster.Second })
+        {
+            await Assert.That(node.Server.ReceivedCommands.Where(command => command.StartsWith("SCAN ")))
+                .IsEquivalentTo([UnfilteredCommand, UnfilteredCommand, UnfilteredCommand, ExplicitSurrogateCommand]);
+        }
+    }
+
+    [Test]
     public async Task ErrorsAndCancellationLeavePublishedCursorUnchanged()
     {
         await using var cluster = new ScanCluster();

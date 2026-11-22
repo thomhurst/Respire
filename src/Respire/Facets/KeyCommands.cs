@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -634,6 +635,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
     {
         string? typeToken;
         RespireValue? effectiveMatch;
+        byte[]? localPattern;
         var prefix = client.KeyPrefix;
 
         try
@@ -642,6 +644,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             typeToken = FormatKeyType(type);
             // A prefixed scan matches the literal prefix and returns keys that round-trip through this view.
             effectiveMatch = ScanMatch(prefix, match);
+            localPattern = ScanLocalPattern(prefix, match, effectiveMatch);
         }
         catch (Exception error)
         {
@@ -721,14 +724,15 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
                     _ => [cursor, "MATCH", effectiveMatch!.Value, "COUNT", countHint, "TYPE", typeToken],
                 };
                 var command = new CmdN(Verbs.Scan, args);
-                var result = await client.ConvertCursorPageAsync("SCAN", command, affinity, token, prefix,
-                    static (KeyPrefix? prefix, in RespValue reply) =>
+                (string Cursor, string[] Page, int Count) result = await client.ConvertCursorPageAsync(
+                    "SCAN", command, affinity, token, (Prefix: prefix, Pattern: localPattern),
+                    static ((KeyPrefix? Prefix, byte[]? Pattern) state, in RespValue reply) =>
                     {
                         var elements = CollectionScan.ParsePage(in reply, "SCAN", out _);
                         string[] page;
                         int pageCount;
 
-                        if (prefix is null)
+                        if (state.Prefix is null)
                         {
                             page = ResponseReader.StringArray(in elements[1]);
                             pageCount = page.Length;
@@ -741,7 +745,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
 
                             foreach (ref readonly var value in values)
                             {
-                                if (ScanKey(in value, prefix) is { } key)
+                                if (ScanKey(in value, state.Prefix, state.Pattern) is { } key)
                                 {
                                     page[pageCount++] = key;
                                 }
@@ -800,10 +804,17 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
 
         if (prefix.Text is { } text)
         {
+            // A leading literal low surrogate can join the prefix before encoding.
+            // Otherwise Redis cannot match the prefix independently of the key suffix.
+            if (prefix.HasSurrogateBoundary && !(match is { Length: > 0 } && char.IsLowSurrogate(match[0])))
+            {
+                return null;
+            }
+
             return new RespireValue(EscapeGlob(text) + (match ?? "*"));
         }
 
-        var suffix = System.Text.Encoding.UTF8.GetBytes(match ?? "*");
+        byte[] suffix = Encoding.UTF8.GetBytes(match ?? "*");
         var escapedLength = prefix.Bytes.Length;
 
         foreach (var value in prefix.Bytes)
@@ -831,13 +842,27 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         return new RespireValue(pattern);
     }
 
-    private static string? ScanKey(in RespValue value, KeyPrefix prefix)
+    private static byte[]? ScanLocalPattern(KeyPrefix? prefix, string? match, RespireValue? serverMatch)
+    {
+        return serverMatch is null && prefix is { HasSurrogateBoundary: true } && match is not null and not "*"
+            ? Encoding.UTF8.GetBytes(match) : null;
+    }
+
+    private static string? ScanKey(in RespValue value, KeyPrefix prefix, byte[]? localPattern)
     {
         if (prefix.Text is { } text)
         {
             // Preserve text-prefix behavior, including UTF-16 pairs split at the prefix boundary.
-            var key = value.AsString();
-            return key.StartsWith(text, StringComparison.Ordinal) ? key[text.Length..] : null;
+            string key = value.AsString();
+
+            if (!key.StartsWith(text, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            string suffix = key[text.Length..];
+            return localPattern is null || ByteGlob.IsMatch(Encoding.UTF8.GetBytes(suffix), localPattern)
+                ? suffix : null;
         }
 
         var bytes = value.AsSpan();
@@ -852,7 +877,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
             return value;
         }
 
-        var builder = new System.Text.StringBuilder(value.Length + 4);
+        var builder = new StringBuilder(value.Length + 4);
 
         foreach (var c in value)
         {
