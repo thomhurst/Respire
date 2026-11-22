@@ -179,7 +179,18 @@ internal sealed partial class KeyCommands
             throw new NotSupportedException("SORT external patterns cannot be used with a key prefix containing *, ->, or NUL.");
         }
 
-        byte[] resolved = prefix.IsEmpty ? bytes : [.. prefix, .. bytes];
+        byte[] resolved;
+
+        if (client.KeyPrefix is { HasSurrogateBoundary: true } encoded && pattern.Text is not null)
+        {
+            // A prefix ending in a high surrogate pairs with a pattern starting with a low surrogate.
+            // Encode the joined text so the external key matches the one ordinary writes address.
+            resolved = encoded.Materialize(pattern.Text, default);
+        }
+        else
+        {
+            resolved = prefix.IsEmpty ? bytes : [.. prefix, .. bytes];
+        }
 
         if (client.Core.Cluster is not null)
         {

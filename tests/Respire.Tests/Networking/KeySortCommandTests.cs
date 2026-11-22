@@ -90,6 +90,23 @@ public class KeySortCommandTests
     }
 
     [Test]
+    public async Task ExternalPatterns_JoinPrefixSurrogatePairBeforeEncoding()
+    {
+        await using var server = new FakeRespServer(["*0\r\n"u8.ToArray()]);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var view = client.WithKeyPrefix("audit:\uD83D");
+        _ = await view.Keys.SortAsync("\uDE00:ids", new RespireSortOptions
+        {
+            By = "\uDE00:weight:*",
+            Get = new RespireKey[] { "#", "\uDE00:name:*" },
+            ReadOnly = true,
+        });
+
+        await Assert.That(server.ReceivedCommands)
+            .IsEquivalentTo(["SORT_RO audit:😀:ids BY audit:😀:weight:* GET # GET audit:😀:name:* ASC"]);
+    }
+
+    [Test]
     [Arguments("tenant-", "{sort}:items", ">{sort}:weight:*")]
     [Arguments("tenant:{", "sort}:items", "sort}:weight:*")]
     public async Task ClusterPatternValidationUsesCompletePrefixJoin(string prefix, string key, string pattern)
