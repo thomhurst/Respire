@@ -188,6 +188,39 @@ public class LifetimeWireTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AbandonedQueuedCommandsDoNotRetainCallerContext(bool transaction)
+    {
+        await using var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse("127.0.0.1:1"));
+        var payload = QueueWithCallerContext(connection.GetDatabase(), transaction);
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        Assert.False(payload.IsAlive);
+        GC.KeepAlive(connection);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference QueueWithCallerContext(IDatabase database, bool transaction)
+    {
+        var callerContext = new AsyncLocal<object?>();
+        var payload = new object();
+        callerContext.Value = payload;
+
+        try
+        {
+            IBatch batch = transaction ? database.CreateTransaction() : database.CreateBatch();
+            _ = batch.HashSetAsync("abandoned", "field", "value");
+            return new WeakReference(payload);
+        }
+        finally
+        {
+            callerContext.Value = null;
+        }
+    }
+
+    [Test]
     public async Task CloseCancelsRetainedTaskAfterBatchIsCollected()
     {
         await using var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse("127.0.0.1:1"));

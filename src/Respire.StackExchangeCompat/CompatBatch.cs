@@ -116,7 +116,9 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
             _convert = convert;
             // A retained task keeps its command alive, but the connection must not root an abandoned batch's buffers.
             RetainedTasks.Add(_completion.Task, this);
-            _registration = shutdown.Register(static (state, token) =>
+
+            // The callback only needs its explicit state and token. Capturing context would retain caller AsyncLocals.
+            _registration = shutdown.UnsafeRegister(static (state, token) =>
             {
                 if (((WeakReference<QueuedCommand<T>>)state!).TryGetTarget(out var queued))
                 {
