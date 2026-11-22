@@ -342,9 +342,9 @@ public sealed class RespireJsonClient
 
     /// <summary>Gets one path from several keys. All keys must share a Cluster slot.</summary>
     /// <returns>
-    /// One entry per key, in order. An entry is null when its key does not exist. Otherwise it holds the
-    /// values matched by <paramref name="path"/>: one value for a legacy path, and every match (possibly
-    /// none) for a JSONPath.
+    /// One entry per key, in order. A missing key or missing legacy path yields a <c>null</c> entry.
+    /// A matching legacy path yields an array with one value. A JSONPath on an existing JSON document
+    /// yields an array of matches, which can be empty.
     /// </returns>
     public ValueTask<RespireJsonGetResult<T>[]?[]> MultiGetAsync<T>(
         IReadOnlyList<RespireKey> keys,

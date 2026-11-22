@@ -51,8 +51,8 @@ internal sealed record Customer(string Name, string Email);
 - `RespireJsonGetResult<T>.Found` is false when the key is missing or a JSONPath matches nothing.
 - A stored JSON `null` returns `Found = true` with a default `Value`, even for a non-nullable
   reference type.
-- With a legacy path, a missing path inside an existing document is a server error. Use a `$` path
-  to get `Found = false` instead.
+- In `GetAsync`, a missing legacy path inside an existing document is a server error. A `$` path
+  with no matches returns `Found = false`.
 
 ## Reading and writing
 
@@ -65,7 +65,9 @@ internal sealed record Customer(string Name, string Email);
 - `SetAsync` serializes typed values straight to UTF-8. `SetJsonAsync` takes pre-serialized JSON as
   a string or UTF-8 bytes. Both return `false` when `RespireJsonSetCondition.Nx` or `Xx` rejects the
   write.
-- `MultiGetAsync` returns one entry per key: `null` for a missing key, otherwise the matched values.
+- `MultiGetAsync` returns one entry per key in input order. A missing key or missing legacy
+  path yields `null`. A matching legacy path yields a one-element array. With a `$` path, an
+  existing JSON document with no matches yields an empty array.
 - `MultiSetAsync` writes every entry atomically with `JSON.MSET`. It serializes everything first, so
   a serialization failure writes nothing.
 - `GetMemoryUsageAsync` runs `JSON.DEBUG MEMORY`.
