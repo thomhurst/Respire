@@ -43,6 +43,21 @@ public class UnixSocketOptionsTests
     }
 
     [Test]
+    [Arguments("unix", "/tmp/link/../redis.sock", "/tmp/link/../redis.sock")]
+    [Arguments("REDIS+UNIX", "/tmp/link/.%2E/./redis%2523.sock", "/tmp/link/.././redis%23.sock")]
+    public async Task UriLeavesDotSegmentsForFilesystemResolution(string scheme, string uriPath, string socketPath)
+    {
+        string uri = $"{scheme}://{uriPath}";
+        var expected = RespireEndpoint.UnixSocket(socketPath);
+
+        await Assert.That(RespireEndpoint.Parse(uri)).IsEqualTo(expected);
+
+        var options = RespireOptions.Parse($"{uri}?db=4");
+        await Assert.That(options.Endpoints.Single()).IsEqualTo(expected);
+        await Assert.That(options.Database).IsEqualTo(4);
+    }
+
+    [Test]
     public async Task StackExchangeSyntaxKeepsAuthenticationAndTimeouts()
     {
         var options = RespireOptions.Parse("!/tmp/redis.sock ,user=app,password=secret,defaultDatabase=2,connectTimeout=1234");

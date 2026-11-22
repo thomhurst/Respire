@@ -48,12 +48,19 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
 
     internal static RespireEndpoint FromUnixUri(Uri uri)
     {
-        if (uri.Host.Length != 0 || uri.UserInfo.Length != 0 || uri.Port != -1 || uri.Fragment.Length != 0)
+        // The filesystem resolves dot segments after following symlinks.
+        string original = uri.OriginalString;
+        ReadOnlySpan<char> suffix = original.AsSpan(original.IndexOf(':'));
+
+        if (!suffix.StartsWith(":///", StringComparison.Ordinal) || uri.Host.Length != 0 || uri.UserInfo.Length != 0
+            || uri.Port != -1 || uri.Fragment.Length != 0)
         {
             throw new ArgumentException("A Unix socket URI must have a local path without authority or fragment.", nameof(uri));
         }
 
-        return UnixSocket(Uri.UnescapeDataString(uri.AbsolutePath));
+        ReadOnlySpan<char> path = suffix[3..].TrimEnd(" \t\r\n");
+        int queryStart = path.IndexOf('?');
+        return UnixSocket(Uri.UnescapeDataString(queryStart < 0 ? path : path[..queryStart]));
     }
 
     /// <summary>Parses a TCP endpoint, a unix:/// or redis+unix:/// URI, or a StackExchange.Redis !path socket endpoint.</summary>
@@ -1327,9 +1334,9 @@ public sealed record RespireOptions
         }
 
         var database = 0;
-        var path = uri.AbsolutePath.Trim('/');
+        string path = useUnixSocket ? string.Empty : uri.AbsolutePath.Trim('/');
 
-        if (!useUnixSocket && path.Length > 0)
+        if (path.Length > 0)
         {
             database = ParseNonNegativeIntegerOption("database", path);
         }
