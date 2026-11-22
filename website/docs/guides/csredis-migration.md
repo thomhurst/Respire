@@ -19,7 +19,7 @@ Here `redis` is a Respire client or a view with the old application's key prefix
 | CSRedisCore | Respire | Migration detail |
 | --- | --- | --- |
 | `new CSRedisClient(connectionString)` and `RedisHelper.Initialization(client)` | `await RespireClient.ConnectAsync(options)` | Share the client; there is no required global initialization. |
-| `defaultDatabase=13` | `RespireOptions.Database = 13` | Use a separate client for each database; Cluster uses database 0. |
+| `defaultDatabase=13` | `RespireOptions.Database = 13` | Use a separate client for each database. Redis Cluster and Valkey Cluster before 9.0 support only database `0`. For Valkey Cluster 9.0 or later, [configure `cluster-databases` on every node](../fundamentals/connections.md#non-zero-databases-in-valkey-cluster) to use a nonzero database. |
 | `prefix=my_` | `client.WithKeyPrefix("my_")` | Preserve the exact prefix and pass unprefixed logical keys. |
 | `RedisHelper.Set("key", "value", 60)` | `await redis.Strings.SetAsync("key", "value", expiry: TimeSpan.FromSeconds(60))` | Convert the seconds argument to an explicit duration. |
 | `RedisHelper.Get(key)` | `await redis.Strings.GetStringAsync(key)` | Returns `null` for missing keys. |
