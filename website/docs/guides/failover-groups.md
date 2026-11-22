@@ -42,7 +42,7 @@ The example values are the defaults.
 Requirements:
 
 - Candidates must use an unlimited reconnect policy (`MaxAttempts = null`, the default). A finite budget can permanently disable a client after a long outage, so later probes cannot recover it.
-- `ProbeInterval` and `ProbeTimeout` must fit the runtime timer limit of about 49.7 days.
+- `ProbeInterval` must be at least 1 ms. Both `ProbeInterval` and `ProbeTimeout` have an upper limit of about 49.7 days.
 - Client-side caching is rejected.
 
 ## Health probes and failback
