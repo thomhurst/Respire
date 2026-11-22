@@ -14,7 +14,9 @@ New-Item -ItemType Directory -Path $primaryRoot | Out-Null
 New-Item -ItemType Directory -Path $isolatedRoot | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $primaryRoot '.git') | Out-Null
 Set-Content -LiteralPath (Join-Path $isolatedRoot '.git') -Value 'gitdir: /tmp/fake-worktree'
-if (-not $IsWindows) {
+# The case-only fixture needs a filesystem that allows both spellings.
+$caseSensitiveFileSystem = -not $IsWindows -and -not (Test-Path -LiteralPath (Join-Path $testRoot 'PRIMARY'))
+if ($caseSensitiveFileSystem) {
     New-Item -ItemType Directory -Path (Join-Path $casePrimaryRoot '.git') | Out-Null
     New-Item -ItemType Directory -Path $caseIsolatedRoot | Out-Null
     Set-Content -LiteralPath (Join-Path $caseIsolatedRoot '.git') -Value 'gitdir: /tmp/fake-case-worktree'
@@ -154,7 +156,7 @@ try {
         throw 'Unattended cleanup removed the isolated checkout.'
     }
 
-    if (-not $IsWindows) {
+    if ($caseSensitiveFileSystem) {
         $script:gitCalled = $false
         Clear-CompletedWorktreeArtifacts -Repo $casePrimaryRoot -Worktree $caseIsolatedRoot -ExpectedHead 'completed-head' -Label '#case'
 

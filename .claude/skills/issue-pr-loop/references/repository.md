@@ -13,6 +13,13 @@ Read [AGENTS.md](../../../../AGENTS.md) first. The mechanics this loop defers to
 | Pending CI, reviews, benchmarks | `AGENTS.md` § Never wait on results |
 | Validation and shipping | [Validation](#validation) and [Shipping](#shipping) below |
 
+## Lock commands
+
+Use the platform's command below for every lock verb in the shared skill. Use the shared checkout's absolute path, including when working in a linked worktree.
+
+- Unix uses `sh "$repo/scripts/Invoke-AgentLocks.sh" <verb> ...`. The launcher creates a private PowerShell startup cache for the command and removes it on exit.
+- Windows uses `pwsh -NoProfile -File "$repo/scripts/AgentLocks.ps1" <verb> ...`.
+
 Lock owner variable: `RESPIRE_AGENT_LOCK_OWNER_ID` (read by `scripts/AgentLocks.ps1` after `-OwnerId`, before `CODEX_THREAD_ID`).
 
 ## Owner-reserved decisions

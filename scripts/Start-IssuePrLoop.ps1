@@ -183,6 +183,7 @@ $stopFile = Join-Path (Resolve-Path (git -C $repo rev-parse --git-common-dir)) '
 $selected = Resolve-Agent $Agent
 $agentLocks = Join-Path $repo 'scripts/AgentLocks.ps1'
 $sweepScript = Join-Path $repo 'scripts/Remove-MergedWorktrees.ps1'
+. (Join-Path $PSScriptRoot 'Invoke-IsolatedPowerShell.ps1')
 
 # Each repository's lock script names its own owner variable (for example RESPIRE_AGENT_LOCK_OWNER_ID).
 $ownerVariable = Select-String -LiteralPath $agentLocks -CaseSensitive -Pattern '\b([A-Z][A-Z0-9_]*_AGENT_LOCK_OWNER_ID)\b' |
@@ -209,20 +210,8 @@ $repoSlug = $repoSlug.Trim()
 
 function Invoke-Locks([string[]]$Arguments, [int]$TimeoutSeconds = 120) {
     # Docker Desktop can hang `docker` calls indefinitely, so bound every lock call.
-    $ownerValue = [Environment]::GetEnvironmentVariable($ownerVariable)
-    $job = Start-Job -ScriptBlock {
-        param($Script, $LockArgs, $OwnerName, $OwnerValue)
-        if ($OwnerName) { Set-Item -Path "Env:$OwnerName" -Value $OwnerValue }
-        $out = @(& pwsh -NoProfile -File $Script @LockArgs 2>&1 | ForEach-Object { $_.ToString() })
-        [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($out -join "`n").Trim() }
-    } -ArgumentList $agentLocks, $Arguments, $ownerVariable, $ownerValue
-    try {
-        if (-not (Wait-Job $job -Timeout $TimeoutSeconds)) {
-            return [pscustomobject]@{ ExitCode = 124; Output = "timed out after $TimeoutSeconds s" }
-        }
-        return Receive-Job $job
-    }
-    finally { Remove-Job $job -Force }
+    $result = Invoke-IsolatedPowerShell -ScriptPath $agentLocks -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+    [pscustomobject]@{ ExitCode = $result.ExitCode; Output = ($result.StdOut + $result.StdErr).Trim() }
 }
 
 function Get-Hash([string]$Text) {
@@ -983,7 +972,8 @@ while (-not (Test-Path -LiteralPath $stopFile)) {
         continue
     }
 
-    $sweep = @(& pwsh -NoProfile -WorkingDirectory $repo -File $sweepScript 2>&1 | ForEach-Object { $_.ToString() })
+    $sweepResult = Invoke-IsolatedPowerShell -ScriptPath $sweepScript -WorkingDirectory $repo
+    $sweep = @(($sweepResult.StdOut + $sweepResult.StdErr).TrimEnd() -split '\r?\n')
     $sweep | Set-Content -LiteralPath (Join-Path $LogDirectory "$runId.sweep.log")
 
     try {
