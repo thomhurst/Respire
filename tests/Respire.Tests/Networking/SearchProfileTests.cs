@@ -38,7 +38,7 @@ public class SearchProfileTests
                 Stages = [RespireSearchAggregateStage.Load("@title with spaces"), RespireSearchAggregateStage.Limit(2, 4)],
                 Dialect = 3,
             };
-            var hybrid = new RespireHybridSearchQuery(All, "embedding", new byte[] { 0, 255, 13, 10 }, 2)
+            var hybrid = new RespireHybridSearchQuery(All, "embedding-v2", new byte[] { 0, 255, 13, 10 }, 2)
             { LoadFields = ["title with spaces"], RrfWindow = 3, TimeoutMilliseconds = 100 };
 
             if (mode == "SEARCH")
@@ -52,6 +52,8 @@ public class SearchProfileTests
             else
             {
                 await search.HybridSearchAsync("index ü", hybrid);
+                await Assert.That(server.ReceivedArguments.Last().Skip(4).Take(2).Select(Encoding.UTF8.GetString).ToArray())
+                    .IsEquivalentTo(["VSIM", "@embedding-v2"], CollectionOrdering.Matching);
             }
 
             var normal = server.ReceivedArguments.Last();
