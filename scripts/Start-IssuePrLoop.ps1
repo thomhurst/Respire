@@ -766,11 +766,16 @@ function Get-TriageItem {
         foreach ($pr in $prs) { [pscustomobject]@{ Number = [int]$pr.number; Kind = 'pr'; Order = 0 } }
     )
     if ($pool.Count -eq 0) { return $null }
-    $audited = @{}
-    $r = Invoke-Locks @('deferred', '-LockName', (($pool | ForEach-Object { "audit-$($_.Number)" }) -join ','))
+    $excluded = @{}
+    $keys = foreach ($entry in $pool) {
+        "audit-$($entry.Number)"
+        "triage-retry-$($entry.Number)"
+    }
+    $r = Invoke-Locks @('deferred', '-LockName', ($keys -join ','))
     if ($r.ExitCode -ne 0) { return $null }
-    foreach ($line in ($r.Output -split "`n")) { if ($line.Trim()) { $audited[($line.Trim() -split '=', 2)[0]] = $true } }
-    $due = @($pool | Where-Object { -not $audited["audit-$($_.Number)"] } | Sort-Object Order, Number | Select-Object -First $TriageBatch)
+    foreach ($line in ($r.Output -split "`n")) { if ($line.Trim()) { $excluded[($line.Trim() -split '=', 2)[0]] = $true } }
+    $due = @($pool | Where-Object { -not ($excluded["audit-$($_.Number)"] -or $excluded["triage-retry-$($_.Number)"]) } |
+            Sort-Object Order, Number | Select-Object -First $TriageBatch)
     if ($due.Count -eq 0) { return $null }
     $r = Invoke-Locks @('acquire', '-LockName', 'triage')
     if ($r.ExitCode -ne 0) { return $null }
@@ -784,6 +789,33 @@ function Get-TriageItem {
         Light       = $true
         Items       = $due
         Queueable   = $script:queueableCount
+    }
+}
+
+function Write-TriageResult([object[]]$Items, [string]$Result) {
+    if (-not $Result) { return } # The driver already backs off after a crash.
+    # The summary can mention related items. Only its explicit audit list counts.
+    $auditedNumbers = if ($Result -match '^triaged: .+; audited: (?<items>none|#[1-9][0-9]*(?:, *#[1-9][0-9]*)*)$') {
+        $Matches['items'] -split ', *'
+    }
+    $completed = @($Items | Where-Object { "#$($_.Number)" -in $auditedNumbers })
+    $timestamp = [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    if ($completed.Count -eq 0) {
+        if ($auditedNumbers -notcontains 'none') {
+            Write-Host 'issue-pr-loop: triage result did not report a valid audit list for this batch'
+        }
+        # A batch of locked items can otherwise launch another agent on every survey.
+        # Delay only these items so the driver can still pick up other due work.
+        foreach ($entry in $Items) {
+            $null = Invoke-Locks @('defer', '-LockName', "triage-retry-$($entry.Number)", '-Fingerprint', $timestamp, '-DeferSeconds', 60)
+        }
+        return
+    }
+    foreach ($audited in $completed) {
+        # Parked items come back sooner: their condition often clears without a GitHub change.
+        $auditSeconds = if ($audited.Order -eq 0) { $ParkedAuditHours * 3600 } else { $AuditDays * 86400 }
+        $null = Invoke-Locks @('defer', '-LockName', "audit-$($audited.Number)", '-Fingerprint', $timestamp,
+            '-DeferSeconds', $auditSeconds)
     }
 }
 
@@ -849,7 +881,7 @@ function Get-Prompt($Item) {
         }
         'triage' {
             $list = ($Item.Items | ForEach-Object { if ($_.Kind -eq 'pr') { "PR #$($_.Number)" } else { "#$($_.Number)" } }) -join ', '
-            return "$head This is a triage unit. The loop driver holds lock triage for you through `$env:$ownerVariable. Skip the sweep and the survey. Follow the triage procedure in the skill for these items: $list. The queue has $($Item.Queueable) issue(s) that a unit can claim now. Release every lock and print the RESULT line."
+            return "$head This is a triage unit. The loop driver holds lock triage for you through `$env:$ownerVariable. Skip the sweep and the survey. Follow the triage procedure in the skill for these items: $list. The queue has $($Item.Queueable) issue(s) that a unit can claim now. Release every lock and print the RESULT line with the audited-item suffix specified in the triage procedure."
         }
         'issue' {
             $hint = if ($Item.Hint) { " $($Item.Hint)" } else { '' }
@@ -982,7 +1014,7 @@ while (-not (Test-Path -LiteralPath $stopFile)) {
         if (-not $item) { $item = Get-RecoveryItem $sweep }
         # Idle time goes to triage instead of sleep.
         if (-not $item) { $item = Get-TriageItem }
-        # With every item audited, look for new work before sleeping.
+        # When no audit is due, look for new work before sleeping.
         if (-not $item) { $item = Get-DiscoveryItem }
     }
     catch {
@@ -1022,15 +1054,8 @@ while (-not (Test-Path -LiteralPath $stopFile)) {
         if ($status.Output -eq 'HELD-BY-ME') { $null = Invoke-Locks @('release', '-LockName', $item.LockName) }
     }
 
-    # A triage unit audits its batch whatever it changed, so the next triage takes new items.
-    if ($item.Kind -eq 'triage' -and $result) {
-        foreach ($audited in $item.Items) {
-            # Parked items come back sooner: their condition often clears without a GitHub change.
-            $auditSeconds = if ($audited.Order -eq 0) { $ParkedAuditHours * 3600 } else { $AuditDays * 86400 }
-            $null = Invoke-Locks @('defer', '-LockName', "audit-$($audited.Number)", '-Fingerprint', [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds(),
-                '-DeferSeconds', $auditSeconds)
-        }
-    }
+    if ($item.Kind -eq 'triage') { Write-TriageResult $item.Items $result }
+
     # A discovery unit ran, whatever it found; the next one waits -DiscoveryHours. A crash
     # still waits an hour, so a broken unit cannot spin.
     if ($item.Kind -eq 'discovery') {
