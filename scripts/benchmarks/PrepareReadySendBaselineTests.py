@@ -34,6 +34,45 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
     def test_pre_redirect_control_preserves_primary_backlog_helpers(self):
         self.assert_current_production_control(before_redirect=True)
 
+    def test_uses_the_baselines_own_control_when_candidate_format_differs(self):
+        client = 'src/Respire/RespireClient.cs'
+        strategy = 'src/Respire/RespireClient.ReadySend.cs'
+        patch_path = 'scripts/benchmarks/ReadySendStrategy.patch'
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory) / 'baseline'
+            (checkout / client).parent.mkdir(parents=True)
+            (checkout / patch_path).parent.mkdir(parents=True)
+
+            def git(*arguments):
+                return subprocess.check_output(
+                    ['git', '-C', str(checkout), *arguments], env=git_environment())
+
+            def commit(message):
+                git('-c', 'user.name=Control test', '-c', 'user.email=control@example.invalid',
+                    'commit', '--quiet', '-m', message)
+
+            git('init', '--quiet')
+            (checkout / client).write_text('class Client { }\n')
+            (checkout / strategy).write_text('class ReadySend { }\n')
+            git('add', '.')
+            commit('Baseline strategy')
+            (checkout / client).write_text('class Client { /* Direct dispatch */ }\n')
+            (checkout / strategy).unlink()
+            control = git('diff', '--binary', '-R', '--', client, strategy)
+            git('restore', '--', client, strategy)
+            (checkout / patch_path).write_bytes(control)
+            git('add', patch_path)
+            commit('Baseline control')
+
+            evidence = Path(directory) / 'control.json'
+            prepare(checkout, evidence)
+
+            recorded = json.loads(evidence.read_text())
+            self.assertEqual(recorded['patch_source'], 'baseline')
+            self.assertEqual(recorded['patch_sha256'], hashlib.sha256(control).hexdigest())
+            self.assertEqual((checkout / client).read_text(), 'class Client { /* Direct dispatch */ }\n')
+            self.assertFalse((checkout / strategy).exists())
+
     def test_unknown_strategy_drift_fails_without_changing_production(self):
         self.assert_current_production_control(drift=True)
 
@@ -88,6 +127,7 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                           'ReadySendStrategy.BeforeReplicaRedirects.patch' if before_redirect else
                           'ReadySendStrategy.BeforeOptOut.patch' if before_optout else 'ReadySendStrategy.patch')
             self.assertEqual(recorded['patch_file'], patch_name)
+            self.assertEqual(recorded['patch_source'], 'candidate')
             self.assertEqual(recorded['patch_sha256'], hashlib.sha256(
                 (repository / 'scripts/benchmarks' / patch_name).read_bytes()).hexdigest())
             self.assertEqual(recorded['after_sha256'][paths[0]], hashlib.sha256(
