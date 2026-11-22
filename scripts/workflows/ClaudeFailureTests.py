@@ -68,18 +68,28 @@ class ClaudeFailureTests(unittest.TestCase):
                 self.assertIn("action log", summary)
                 self.assertNotIn("secret", summary)
 
-    def test_tool_denial_only_classifies_a_failed_result(self):
+    def test_tool_denial_classifies_a_failed_result(self):
         summary = self.report([
             {"type": "result", "subtype": "success", "is_error": True,
              "permission_denials": [{"tool_input": {"command": "secret"}}]},
         ])
         self.assertIn("Tool permission denied", summary)
         self.assertNotIn("secret", summary)
+
+    def test_denied_tool_names_are_reported_even_after_a_successful_result(self):
         summary = self.report([
             {"type": "result", "subtype": "success", "is_error": False,
-             "permission_denials": [{"tool_input": {"command": "secret"}}]},
+             "permission_denials": [
+                 {"tool_name": "Bash", "tool_input": {"command": "secret-command"}},
+                 {"tool_name": "Bash"},
+                 {"tool_name": "Read", "tool_use_id": "secret-id"},
+                 {"tool_name": "untrusted-secret-tool-name"},
+                 {"tool_name": ["secret"]},
+                 "secret",
+             ]},
         ])
-        self.assertIn("Action failed after Claude completed", summary)
+        self.assertIn("job failed after Claude completed", summary)
+        self.assertIn("Denied tools: Bash (2), Read (1), unknown tool (3).", summary)
         self.assertNotIn("secret", summary)
 
 
