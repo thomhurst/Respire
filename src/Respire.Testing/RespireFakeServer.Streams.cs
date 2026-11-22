@@ -21,6 +21,7 @@ public sealed partial class RespireFakeServer
             get;
         } = new(BinaryKeyComparer.Instance);
         internal RespireStreamId Last = new("0-0");
+        internal RespireStreamId MaxDeletedId = RespireStreamId.Beginning;
         internal long EntriesAdded;
         internal int Duration = 100;
         internal int MaxSize = 100;
@@ -29,6 +30,21 @@ public sealed partial class RespireFakeServer
         {
             get;
         } = new(BinaryKeyComparer.Instance);
+
+        internal bool Delete(RespireStreamId id)
+        {
+            if (!Entries.Remove(id))
+            {
+                return false;
+            }
+
+            if (id > MaxDeletedId)
+            {
+                MaxDeletedId = id;
+            }
+
+            return true;
+        }
     }
 
     private sealed record StreamIdentity(byte[] Identity, string Id, ulong Milliseconds);
@@ -483,17 +499,7 @@ public sealed partial class RespireFakeServer
 
                 if (group is not null && !history)
                 {
-                    group.Last = id;
-
-                    if (group.EntriesRead.HasValue)
-                    {
-                        group.EntriesRead++;
-                    }
-                    else
-                    {
-                        group.EntriesRead = EstimateStreamEntriesRead(stream, id);
-                    }
-
+                    AdvanceStreamGroup(stream, group, id);
                     group.Pending[id] = new(request.Consumer!, Now);
                 }
                 else if (group is not null && fields is not null)
@@ -628,31 +634,45 @@ public sealed partial class RespireFakeServer
         return (StreamId(Encoding.UTF8.GetBytes(text)), exclusive);
     }
 
+    private static void AdvanceStreamGroup(FakeStream stream, FakeStreamGroup group, RespireStreamId id)
+    {
+        // A deletion at or beyond the previous cursor can leave a gap in the logical read count.
+        group.EntriesRead = group.Last > stream.MaxDeletedId && group.EntriesRead is { } entriesRead
+            ? entriesRead + 1
+            : EstimateStreamEntriesRead(stream, id);
+        group.Last = id;
+    }
+
     private static long? EstimateStreamEntriesRead(FakeStream stream, RespireStreamId id)
     {
-        if (stream.EntriesAdded == 0)
-        {
-            return 0;
-        }
-
         if (id == stream.Last)
         {
             return stream.EntriesAdded;
         }
 
-        if (stream.Entries.Count == 0 || stream.EntriesAdded != stream.Entries.Count)
-        {
-            return null;
-        }
+        RespireStreamId first = stream.Entries.First().Key;
+        return id == first && stream.MaxDeletedId < first
+            ? stream.EntriesAdded - stream.Entries.Count + 1
+            : null;
+    }
 
-        var first = stream.Entries.First().Key;
-
-        if (id < first)
+    private static long? GetStreamGroupLag(FakeStream stream, FakeStreamGroup group)
+    {
+        if (stream.Entries.Count == 0)
         {
             return 0;
         }
 
-        return id == first ? 1 : null;
+        RespireStreamId first = stream.Entries.First().Key;
+
+        if (group.Last < first && stream.MaxDeletedId < first)
+        {
+            return stream.Entries.Count;
+        }
+
+        long? entriesRead = group.Last > stream.MaxDeletedId ? group.EntriesRead : null;
+        entriesRead ??= EstimateStreamEntriesRead(stream, group.Last);
+        return stream.EntriesAdded - entriesRead;
     }
 
     private FakeReply StreamGroupInfo(Connection connection, byte[][] args)
@@ -672,15 +692,13 @@ public sealed partial class RespireFakeServer
         return FakeReply.Array(stream.Groups.Select(pair =>
         {
             var group = pair.Value;
-            // Lag may be independently knowable without assigning EntriesRead.
-            var entriesRead = group.EntriesRead ?? EstimateStreamEntriesRead(stream, group.Last);
+            long? lag = GetStreamGroupLag(stream, group);
             FakeReply[] fields = [FakeReply.Text("name"), FakeReply.Bulk(pair.Key),
                 FakeReply.Text("consumers"), FakeReply.Integer(group.Consumers.Count),
                 FakeReply.Text("pending"), FakeReply.Integer(group.Pending.Count),
                 FakeReply.Text("last-delivered-id"), FakeReply.Text(group.Last.ToString()),
                 FakeReply.Text("entries-read"), group.EntriesRead is { } read ? FakeReply.Integer(read) : FakeReply.Null,
-                FakeReply.Text("lag"), entriesRead is { } logicalCount
-                    ? FakeReply.Integer(stream.EntriesAdded - logicalCount) : FakeReply.Null];
+                FakeReply.Text("lag"), lag is { } remaining ? FakeReply.Integer(remaining) : FakeReply.Null];
             return connection.Resp3 ? FakeReply.Map(fields) : FakeReply.Array(fields);
         }).ToArray());
     }
