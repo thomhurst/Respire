@@ -195,10 +195,7 @@ public sealed partial class RespireFakeServer
     {
         // A source mutation can satisfy a blocked move or change its type. Reads and
         // mutations of other keys must not make blocked connections execute again.
-        if (_listMoveWaiters.Remove(key, out var waiting))
-        {
-            waiting.Changed.TrySetResult();
-        }
+        MarkListMoveSourceChangedLocked(key);
 
         if (!_watchers.TryGetValue(key, out var watchers))
         {

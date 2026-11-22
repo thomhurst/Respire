@@ -247,10 +247,9 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     }
 
     private Outbound? ExecuteLocked(Connection connection, byte[][] arguments, RespireFakeFaultScope? scope,
-        out ListMoveWaiters? listMoveChanged, ListMoveWaitMode listMoveWaitMode = ListMoveWaitMode.None,
-        FakeReply? expectedReply = null)
+        out LinkedListNode<ListMoveWaiter>? listMoveWaiter, long? listMoveStarted = null, FakeReply? expectedReply = null)
     {
-        listMoveChanged = null;
+        listMoveWaiter = null;
         // Keep synchronous state protection outside the async receive state machine,
         // including exceptional command execution and clock callbacks.
         lock (_gate)
@@ -268,20 +267,11 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 // EXEC and all its commands share one server-time sample.
                 _commandTimestamp = _clock.GetUtcNow();
                 _commandTime = _commandTimestamp.ToUnixTimeMilliseconds();
-                // A move that has already blocked waits for a list to become ready at the source key.
-                bool waitingForList = listMoveWaitMode == ListMoveWaitMode.Resuming
-                    && Find(arguments[1])?.Data is not List<byte[]>;
-                var result = waitingForList ? FakeReply.NullArray : Execute(connection, arguments, expectedReply);
+                var result = Execute(connection, arguments, expectedReply);
 
-                if (listMoveWaitMode != ListMoveWaitMode.None && ReferenceEquals(result, FakeReply.NullArray))
+                if (listMoveStarted is { } started && ReferenceEquals(result, FakeReply.NullArray))
                 {
-                    if (!_listMoveWaiters.TryGetValue(arguments[1], out listMoveChanged))
-                    {
-                        listMoveChanged = new ListMoveWaiters();
-                        _listMoveWaiters.Add(arguments[1], listMoveChanged);
-                    }
-
-                    listMoveChanged.Count++;
+                    listMoveWaiter = RegisterListMoveLocked(connection, arguments, started);
                     return null;
                 }
 
@@ -299,6 +289,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             {
                 connection.ExecutingReply = false;
                 FlushDeferredPushesLocked(connection);
+                ServeReadyListMovesLocked();
             }
         }
     }
