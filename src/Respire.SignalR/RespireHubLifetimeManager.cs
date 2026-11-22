@@ -725,7 +725,8 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
             {
                 var invocation = RedisProtocol.ReadInvocation(channelMessage.Message);
 
-                var tasks = new List<Task>(groupConnections.Count);
+                // Finish selecting recipients before a write can let another connection join the group.
+                var recipients = new List<HubConnectionContext>(groupConnections.Count);
 
                 foreach (var groupConnection in groupConnections)
                 {
@@ -734,7 +735,14 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
                         continue;
                     }
 
-                    tasks.Add(groupConnection.WriteAsync(invocation.Message, channelMessage.Stopping).AsTask());
+                    recipients.Add(groupConnection);
+                }
+
+                var tasks = new Task[recipients.Count];
+
+                for (int i = 0; i < tasks.Length; i++)
+                {
+                    tasks[i] = recipients[i].WriteAsync(invocation.Message, channelMessage.Stopping).AsTask();
                 }
 
                 await Task.WhenAll(tasks).ConfigureAwait(false);

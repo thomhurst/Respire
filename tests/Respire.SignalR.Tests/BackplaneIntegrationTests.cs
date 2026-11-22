@@ -3,6 +3,7 @@
 
 using System.Collections;
 using System.Reflection;
+using System.Text;
 using System.Threading.Channels;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Connections;
@@ -361,6 +362,59 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
             await Assert.That(async () => await pending).ThrowsExactly<HubException>();
         }
         finally { release.TrySetResult(1); }
+    }
+
+    [Test]
+    public async Task GroupSendExcludesConnectionAddedDuringFirstWrite()
+    {
+        await using var host = await BackplaneHost.StartAsync(fixture.ConnectionString, Guid.NewGuid().ToString("N"), false, false);
+        var manager = host.Manager;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lateMessages = Channel.CreateUnbounded<SerializedHubMessage>();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var first = new GroupWriteConnection("connection-1", _ =>
+        {
+            if (!started.TrySetResult())
+            {
+                return;
+            }
+
+            // Hold the virtual write call itself so fan-out cannot advance its enumeration.
+            resume.Task.WaitAsync(deadline.Token).GetAwaiter().GetResult();
+        });
+        var late = new GroupWriteConnection("connection-2", message => lateMessages.Writer.TryWrite(message));
+
+        await manager.OnConnectedAsync(first);
+        await manager.OnConnectedAsync(late);
+        await manager.AddToGroupAsync(first.ConnectionId, "group", deadline.Token);
+
+        try
+        {
+            await manager.SendGroupAsync("group", "message", ["before-join"], deadline.Token);
+            await started.Task.WaitAsync(deadline.Token);
+            await manager.AddToGroupAsync(late.ConnectionId, "group", deadline.Token);
+        }
+        finally
+        {
+            resume.TrySetResult();
+        }
+
+        // The next message is processed on the same group subscription.
+        await manager.SendGroupAsync("group", "message", ["after-join"], deadline.Token);
+        var received = await lateMessages.Reader.ReadAsync(deadline.Token);
+        var payload = Encoding.UTF8.GetString(received.GetSerializedMessage(new JsonHubProtocol()).Span);
+        await Assert.That(payload).Contains("after-join");
+    }
+
+    private sealed class GroupWriteConnection(string id, Action<SerializedHubMessage> receive)
+        : HubConnectionContext(new DefaultConnectionContext(id), new(), NullLoggerFactory.Instance)
+    {
+        public override ValueTask WriteAsync(SerializedHubMessage message, CancellationToken cancellationToken = default)
+        {
+            receive(message);
+            return ValueTask.CompletedTask;
+        }
     }
 
     [Test]
