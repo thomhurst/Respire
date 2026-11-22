@@ -68,6 +68,7 @@ public class FakeListMoveManyTests
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var cancelled = client.Lists.MoveManyAsync("same", "destination", waitFor: Timeout.InfiniteTimeSpan,
             cancellationToken: cancel.Token).AsTask();
+        await WaitForWaiterCount(server, 1, deadline.Token);
         var survivor = client.Lists.MoveManyAsync("same", "destination", waitFor: Timeout.InfiniteTimeSpan,
             cancellationToken: deadline.Token).AsTask();
         await WaitForWaiterCount(server, 2, deadline.Token);
@@ -129,7 +130,7 @@ public class FakeListMoveManyTests
     }
 
     [Test]
-    public async Task CompetingWaitersKeepTheNextGenerationRegisteredForBinaryKeys()
+    public async Task CompetingWaitersMoveItemsInArrivalOrderForBinaryKeys()
     {
         await using var server = new RespireFakeServer();
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
@@ -137,18 +138,67 @@ public class FakeListMoveManyTests
 #pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         byte[] key = [0, 255, 128];
-        var first = client.Lists.MoveManyAsync(key, "destination", waitFor: Timeout.InfiniteTimeSpan,
+        var first = client.Lists.MoveManyAsync(key, "first-destination", waitFor: TimeSpan.FromSeconds(10),
             cancellationToken: deadline.Token).AsTask();
-        var second = client.Lists.MoveManyAsync(key.ToArray(), "destination", waitFor: Timeout.InfiniteTimeSpan,
+        await WaitForWaiterCount(server, 1, deadline.Token);
+        var second = client.Lists.MoveManyAsync(key.ToArray(), "second-destination", waitFor: TimeSpan.FromSeconds(10),
             cancellationToken: deadline.Token).AsTask();
         await WaitForWaiterCount(server, 2, deadline.Token);
-        await client.Lists.RightPushAsync(key.ToArray(), "first");
-        var completed = await Task.WhenAny(first, second).WaitAsync(deadline.Token);
-        await Assert.That((await completed)!).IsEquivalentTo(["first"]);
+        await client.Lists.RightPushAsync(key.ToArray(), ["first", "second"], deadline.Token);
+        await Assert.That((await first.WaitAsync(deadline.Token))!).IsEquivalentTo(["first"]);
+        await Assert.That((await second.WaitAsync(deadline.Token))!).IsEquivalentTo(["second"]);
+        await WaitForWaiterCount(server, 0, deadline.Token);
+    }
+
+    [Test]
+    public async Task IneligibleExactMoveKeepsItsPlaceWhenTransactionGrowsSource()
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var exact = client.Lists.MoveManyAsync("source", "exact", count: 2, countMode: RespireListMoveCountMode.Exactly,
+            waitFor: Timeout.InfiniteTimeSpan, cancellationToken: deadline.Token).AsTask();
         await WaitForWaiterCount(server, 1, deadline.Token);
-        await client.Lists.RightPushAsync(key.ToArray(), "second");
-        var remaining = ReferenceEquals(completed, first) ? second : first;
-        await Assert.That((await remaining.WaitAsync(deadline.Token))!).IsEquivalentTo(["second"]);
+        var single = client.Lists.MoveManyAsync("source", "single", waitFor: Timeout.InfiniteTimeSpan,
+            cancellationToken: deadline.Token).AsTask();
+        await WaitForWaiterCount(server, 2, deadline.Token);
+        await client.Lists.RightPushAsync("source", ["a"], deadline.Token);
+        await Assert.That((await single.WaitAsync(deadline.Token))!).IsEquivalentTo(["a"]);
+
+        var next = client.Lists.MoveManyAsync("source", "next", waitFor: Timeout.InfiniteTimeSpan,
+            cancellationToken: deadline.Token).AsTask();
+        await WaitForWaiterCount(server, 2, deadline.Token);
+        await using var transaction = client.CreateTransaction();
+        _ = transaction.Lists.RightPush("source", "b");
+        _ = transaction.Lists.RightPush("source", "c");
+        await transaction.CommitAsync(deadline.Token);
+
+        await Assert.That((await exact.WaitAsync(deadline.Token))!).IsEquivalentTo(["b", "c"], CollectionOrdering.Matching);
+        await client.Lists.RightPushAsync("source", ["d"], deadline.Token);
+        await Assert.That((await next.WaitAsync(deadline.Token))!).IsEquivalentTo(["d"]);
+        await WaitForWaiterCount(server, 0, deadline.Token);
+    }
+
+    [Test]
+    public async Task ABlockedMoveCanSatisfyAWaiterOnItsDestination()
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var downstream = client.Lists.MoveManyAsync("middle", "destination", waitFor: Timeout.InfiniteTimeSpan,
+            cancellationToken: deadline.Token).AsTask();
+        await WaitForWaiterCount(server, 1, deadline.Token);
+        var upstream = client.Lists.MoveManyAsync("source", "middle", waitFor: Timeout.InfiniteTimeSpan,
+            cancellationToken: deadline.Token).AsTask();
+        await WaitForWaiterCount(server, 2, deadline.Token);
+
+        await client.Lists.RightPushAsync("source", ["value"], deadline.Token);
+        await Assert.That((await upstream.WaitAsync(deadline.Token))!).IsEquivalentTo(["value"]);
+        await Assert.That((await downstream.WaitAsync(deadline.Token))!).IsEquivalentTo(["value"]);
         await WaitForWaiterCount(server, 0, deadline.Token);
     }
 
@@ -162,7 +212,7 @@ public class FakeListMoveManyTests
         {
             lock (gate)
             {
-                var count = groups.Values.Cast<object>().Sum(group => (int)group.GetType().GetField("Count", flags)!.GetValue(group)!);
+                var count = groups.Values.Cast<System.Collections.ICollection>().Sum(group => group.Count);
 
                 if (count == expected && (expected != 0 || groups.Count == 0))
                 {
