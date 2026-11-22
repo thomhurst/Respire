@@ -1,7 +1,9 @@
 #!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'WorktreeCleanup.ps1')
-$tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+# Exercise the /var alias even when the macOS runner has a canonical TMPDIR.
+$tempBase = if ($IsMacOS) { '/var/tmp/' } else { [IO.Path]::GetTempPath() }
+$tempBase = [IO.Path]::GetFullPath($tempBase)
 $testRoot = [IO.Path]::GetFullPath((Join-Path $tempBase "workflow-cleanup-$([Guid]::NewGuid().ToString('N'))"))
 if (-not $testRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe fixture path.' }
 $repo = Join-Path $testRoot 'repo'
@@ -81,6 +83,15 @@ try {
         Set-Content -LiteralPath $path -Value 'generated output'
     }
     $removeMerged = @{ Repo = $repo; Worktree = $worktree; ExpectedHead = $head }
+    if ($IsMacOS) {
+        $harness = Join-Path $repo '.worktrees/harness'
+        git -C $repo worktree add --quiet --detach $harness
+        $physicalRepo = git -C $repo rev-parse --show-toplevel
+        Assert-True ($physicalRepo -clike '/private/var/*') 'Git did not report the physical path for the /var fixture.'
+        $output = Remove-MergedWorktree -Repo $physicalRepo -Worktree $harness -ExpectedHead $head 6>&1
+        Assert-True (($output -join "`n") -match 'main checkout or harness-managed worktree') 'Cleanup did not recognize the harness path through /var.'
+        Assert-True (Test-Path -LiteralPath (Join-Path $harness '.git')) 'Harness-managed worktree was removed.'
+    }
     foreach ($case in @(
             @{ Name = 'untracked source'; Path = 'NewFeature.cs' },
             @{ Name = 'unknown ignored file'; Path = '.env' },
@@ -101,7 +112,7 @@ try {
     Assert-True ((Remove-MergedWorktree @removeMerged -WhatIf) -eq 'preview' -and (Test-Path -LiteralPath $worktree)) 'Dry run removed a merged worktree.'
     Assert-True ((Remove-MergedWorktree @removeMerged) -eq $true) 'Clean merged worktree with generated output was not removed.'
     Assert-True (-not (Test-Path -LiteralPath $worktree)) 'Merged worktree directory survived removal.'
-    Assert-True (@(git -C $repo worktree list --porcelain) -notcontains "worktree $($worktree -replace '\\', '/')") 'Merged worktree registration survived removal.'
+    Assert-True (@(git -C $repo worktree list --porcelain) -notcontains 'branch refs/heads/merged') 'Merged worktree registration survived removal.'
     git -C $repo show-ref --verify --quiet refs/heads/merged
     Assert-True ($LASTEXITCODE -eq 0) 'Removal without -DeleteBranch deleted the local branch.'
     Write-Host 'OK workflow artifact cleanup tests passed.'

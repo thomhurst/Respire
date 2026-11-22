@@ -130,6 +130,18 @@ function Test-IsLinkedWorktree {
     return $firstLine -match '^gitdir:\s*\S+'
 }
 
+function Get-NativeWorktreePath([string]$Path) {
+    $fullPath = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Path))
+    # Git reports physical paths below macOS's system directory aliases. Resolve
+    # only the system link itself, leaving links within either checkout untouched.
+    if ($IsMacOS -and $fullPath -cmatch '^/(?:var|tmp|etc)(?=/|$)') {
+        $alias = $Matches[0]
+        $directory = [IO.Directory]::ResolveLinkTarget($alias, $true)
+        if ($directory) { return $directory.FullName + $fullPath.Substring($alias.Length) }
+    }
+    return $fullPath
+}
+
 function Test-SameNativePath {
     param(
         [Parameter(Mandatory)][string]$Left,
@@ -137,8 +149,8 @@ function Test-SameNativePath {
     )
 
     try {
-        $leftPath = [IO.Path]::GetFullPath($Left).TrimEnd([char[]]@('/', '\'))
-        $rightPath = [IO.Path]::GetFullPath($Right).TrimEnd([char[]]@('/', '\'))
+        $leftPath = Get-NativeWorktreePath $Left
+        $rightPath = Get-NativeWorktreePath $Right
         $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
         return [string]::Equals($leftPath, $rightPath, $comparison)
     }
@@ -196,10 +208,11 @@ function Test-IsDescendantPath {
     )
 
     try {
-        $pathValue = [IO.Path]::GetFullPath($Path).TrimEnd([char[]]@('/', '\'))
-        $parentValue = [IO.Path]::GetFullPath($Parent).TrimEnd([char[]]@('/', '\'))
+        $pathValue = Get-NativeWorktreePath $Path
+        $parentValue = Get-NativeWorktreePath $Parent
+        $prefix = $parentValue.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
         $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
-        return $pathValue.StartsWith($parentValue + [IO.Path]::DirectorySeparatorChar, $comparison)
+        return $pathValue.Length -gt $prefix.Length -and $pathValue.StartsWith($prefix, $comparison)
     }
     catch {
         return $false
@@ -223,10 +236,6 @@ function Select-MergeCleanupWorktree {
     return $null
 }
 
-function ConvertTo-LockMarkerPath([string]$Path) {
-    return [IO.Path]::GetFullPath($Path.Trim()).TrimEnd('\', '/')
-}
-
 # Returns the agent.lockName marker that AgentLocks.ps1 wrote for this worktree, or $null.
 # `git worktree add` copies the source checkout's config.worktree into the new worktree,
 # so a marker counts only when its agent.lockWorktree names this worktree's own path.
@@ -246,7 +255,7 @@ function Get-WorktreeLockMarker {
     if (-not $markerOwner) { return $null }
     $top = git -C $Worktree rev-parse --show-toplevel 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $top) { throw 'could not inspect worktree root' }
-    if ((ConvertTo-LockMarkerPath $markerOwner) -ne (ConvertTo-LockMarkerPath $top)) { return $null }
+    if (-not (Test-SameNativePath -Left $markerOwner -Right $top)) { return $null }
     return $marker.Trim()
 }
 
@@ -617,15 +626,15 @@ function Remove-MergedWorktree {
     $commonOk = $LASTEXITCODE -eq 0 -and $common
     $targetCommon = git -C $Worktree rev-parse --path-format=absolute --git-common-dir 2>$null
     if (-not $commonOk -or $LASTEXITCODE -ne 0 -or -not $targetCommon -or
-        -not (Test-SameNativePath -Left $common.Trim() -Right $targetCommon.Trim())) {
+        -not (Test-SameNativePath -Left $common -Right $targetCommon)) {
         return & $keep 'belongs to another repository or could not be inspected'
     }
     $top = git -C $Worktree rev-parse --show-toplevel 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $top -or -not (Test-SameNativePath -Left $top.Trim() -Right $Worktree)) {
+    if ($LASTEXITCODE -ne 0 -or -not $top -or -not (Test-SameNativePath -Left $top -Right $Worktree)) {
         return & $keep 'not a worktree root'
     }
     $gitDirectory = git -C $Worktree rev-parse --absolute-git-dir 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $gitDirectory -or (Test-SameNativePath -Left $gitDirectory.Trim() -Right $common.Trim())) {
+    if ($LASTEXITCODE -ne 0 -or -not $gitDirectory -or (Test-SameNativePath -Left $gitDirectory -Right $common)) {
         return & $keep 'could not inspect Git worktree registration'
     }
     $gitDirectory = $gitDirectory.Trim()
