@@ -7,6 +7,7 @@ $captureScript = Join-Path $testRoot 'Capture-Invocation.ps1'
 $timeoutScript = Join-Path $testRoot 'Spawn-Child.ps1'
 $boundedTimeoutScript = Join-Path $testRoot 'Bounded-Timeout.ps1'
 $boundedCompletionPath = Join-Path $testRoot 'bounded-completed'
+$boundedErrorPath = Join-Path $testRoot 'bounded-stderr'
 $orphanParentScript = Join-Path $testRoot 'Spawn-OrphanParent.ps1'
 $orphanIntermediateScript = Join-Path $testRoot 'Spawn-OrphanIntermediate.ps1'
 $capturePath = Join-Path $testRoot 'capture.json'
@@ -274,14 +275,27 @@ Start-Sleep -Seconds 5
             -TimeoutSeconds 1 `
             -MemoryLimitMb 512 `
             -PollIntervalMilliseconds 10000 `
-            -Arguments @('-NoProfile', '-File', $boundedTimeoutScript, $boundedCompletionPath)
+            -Arguments @('-NoProfile', '-File', $boundedTimeoutScript, $boundedCompletionPath) 2> $boundedErrorPath
     }
     finally {
         $env:RESPIRE_AGENT_CLEANUP_DIAGNOSTICS = $savedCleanupDiagnostics
     }
 
+    $boundedError = Get-Content -LiteralPath $boundedErrorPath -Raw
+    if ($boundedError) {
+        [Console]::Error.WriteLine($boundedError.TrimEnd())
+    }
     if ($guardExitCode -ne 124) {
         throw "Bounded timeout returned $guardExitCode instead of 124."
+    }
+
+    # Stop-ProcessTree flushes these records after attempting containment and
+    # fallback cleanup. The first timeout warning must follow that flush even
+    # when the stderr writer returns immediately.
+    $cleanupRecord = ([string]$boundedError).IndexOf('guard-cleanup ', [StringComparison]::Ordinal)
+    $warning = ([string]$boundedError).IndexOf('Agent dotnet command exceeded 1s timeout.', [StringComparison]::Ordinal)
+    if ($cleanupRecord -lt 0 -or $warning -le $cleanupRecord) {
+        throw 'Bounded timeout warning did not follow process-tree cleanup evidence.'
     }
 
     if (Test-Path -LiteralPath $boundedCompletionPath) {
