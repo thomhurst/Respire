@@ -152,7 +152,12 @@ public sealed partial class RespireFakeServer
 
     private static RespireStreamId StreamId(byte[] bytes)
     {
-        var id = new RespireStreamId(Encoding.UTF8.GetString(bytes));
+        return StreamId(Encoding.UTF8.GetString(bytes), defaultSequence: 0);
+    }
+
+    private static RespireStreamId StreamId(string text, ulong defaultSequence)
+    {
+        var id = new RespireStreamId(text);
 
         if (id == RespireStreamId.Min || id == RespireStreamId.Max || id == RespireStreamId.New)
         {
@@ -162,7 +167,7 @@ public sealed partial class RespireFakeServer
         _ = id.CompareTo(RespireStreamId.Beginning);
         var parts = id.ToString().Split('-');
         var milliseconds = ulong.Parse(parts[0], CultureInfo.InvariantCulture);
-        var sequence = parts.Length == 2 ? ulong.Parse(parts[1], CultureInfo.InvariantCulture) : 0;
+        ulong sequence = parts.Length == 2 ? ulong.Parse(parts[1], CultureInfo.InvariantCulture) : defaultSequence;
         return new RespireStreamId($"{milliseconds.ToString(CultureInfo.InvariantCulture)}-{sequence.ToString(CultureInfo.InvariantCulture)}");
     }
 
@@ -589,8 +594,8 @@ public sealed partial class RespireFakeServer
             return WrongArity("XPENDING");
         }
 
-        var start = PendingBound(args[index++]);
-        var end = PendingBound(args[index++]);
+        (RespireStreamId Id, bool Exclusive) start = PendingBound(args[index++], defaultSequence: 0);
+        (RespireStreamId Id, bool Exclusive) end = PendingBound(args[index++], defaultSequence: ulong.MaxValue);
         var count = Integer(args[index++]);
 
         if (count <= 0)
@@ -610,7 +615,7 @@ public sealed partial class RespireFakeServer
             .ToArray());
     }
 
-    private static (RespireStreamId Id, bool Exclusive) PendingBound(byte[] bytes)
+    private static (RespireStreamId Id, bool Exclusive) PendingBound(byte[] bytes, ulong defaultSequence)
     {
         var text = Encoding.UTF8.GetString(bytes);
         var exclusive = text.StartsWith('(');
@@ -625,7 +630,7 @@ public sealed partial class RespireFakeServer
             return (new(text), exclusive);
         }
 
-        return (StreamId(Encoding.UTF8.GetBytes(text)), exclusive);
+        return (StreamId(text, defaultSequence), exclusive);
     }
 
     private static long? EstimateStreamEntriesRead(FakeStream stream, RespireStreamId id)

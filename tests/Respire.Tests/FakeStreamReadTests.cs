@@ -1,6 +1,7 @@
 using Respire.Protocol;
 using Respire.Testing;
 using TUnit.Assertions;
+using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
@@ -102,6 +103,40 @@ public class FakeStreamReadTests
         await Assert.That(next[0].Id).IsEqualTo((RespireStreamId)"1000-1");
         await Assert.That(next[0].GetString("f")).IsEqualTo("live");
         await Assert.That(await client.Streams.AcknowledgeAsync("events", "g", "1000-0")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task PendingRangeUsesMillisecondBoundsInclusively(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using RespireClient client = await RespireClient.ConnectAsync(server.CreateOptions() with
+        {
+            Protocol = (RespireProtocol)protocol,
+        });
+#pragma warning restore RESP010
+
+        string[] ids = ["999-0", "1000-0", "1000-1", "1000-18446744073709551615", "1001-0"];
+
+        foreach (string id in ids)
+        {
+            await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = id }, ("f", "value"));
+        }
+
+        await client.Streams.CreateGroupAsync("events", "g", RespireStreamId.Beginning);
+        await client.Streams.ReadGroupAsync([("events", ">")], "g", "c");
+
+        RespireStreamPendingEntry[] byMillisecond = await client.Streams.PendingAsync("events", "g", "1000", "1000");
+        await Assert.That(byMillisecond.Select(entry => entry.Id.ToString()))
+            .IsEquivalentTo(["1000-0", "1000-1", "1000-18446744073709551615"], CollectionOrdering.Matching);
+
+        RespireStreamPendingEntry[] exclusive = await client.Streams.PendingAsync("events", "g", "(1000", "(1000");
+        await Assert.That(exclusive.Single().Id).IsEqualTo(new RespireStreamId("1000-1"));
+
+        RespireStreamPendingEntry[] byFullId = await client.Streams.PendingAsync("events", "g", "1000", "1000-0");
+        await Assert.That(byFullId.Single().Id).IsEqualTo(new RespireStreamId("1000-0"));
     }
 
     [Test]
