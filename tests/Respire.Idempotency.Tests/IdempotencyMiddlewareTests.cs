@@ -146,6 +146,34 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task SingleRangeFileReplayPreservesContentRange(bool kestrel)
+    {
+        await using RespireClient client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        int executions = 0;
+        RequestDelegate endpoint = context =>
+        {
+            Interlocked.Increment(ref executions);
+            return Results.File("abcdef"u8.ToArray(), enableRangeProcessing: true).ExecuteAsync(context);
+        };
+        using TestApplication server = CreateServer(client, endpoint, kestrel: kestrel,
+            routes: routes => routes.MapGet("/file", endpoint).WithRespireIdempotency("file"));
+        using HttpClient http = server.CreateClient();
+        http.DefaultRequestHeaders.Range = new(1, 2);
+        using HttpResponseMessage first = await SendAsync(http, "/file", method: HttpMethod.Get);
+        using HttpResponseMessage replay = await SendAsync(http, "/file", method: HttpMethod.Get);
+        await Assert.That(executions).IsEqualTo(1);
+
+        foreach (HttpResponseMessage response in new[] { first, replay })
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.PartialContent);
+            await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("bc");
+            await Assert.That(response.Content.Headers.ContentRange?.ToString()).IsEqualTo("bytes 1-2/6");
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task SeparateServersReplayBinaryStatusAndSafeHeadersOnlyOnce(bool kestrel)
     {
         await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);

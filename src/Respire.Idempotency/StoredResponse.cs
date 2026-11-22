@@ -7,8 +7,11 @@ namespace Respire.Idempotency;
 internal sealed record StoredResponse(int Status, Dictionary<string, string[]> Headers, byte[] Body)
 {
     private const int HeaderLimit = 16 * 1024;
-    private static readonly string[] SafeHeaders =
-        ["Content-Type", "Content-Language", "Content-Encoding", "Location", "ETag", "Last-Modified", "Content-Length"];
+    private static readonly string[] s_safeHeaders =
+        [
+            "Content-Type", "Content-Language", "Content-Encoding", "Content-Range",
+            "Location", "ETag", "Last-Modified", "Content-Length",
+        ];
 
     internal static byte[]? Encode(HttpResponse response, BoundedResponseStream body)
     {
@@ -18,7 +21,7 @@ internal sealed record StoredResponse(int Status, Dictionary<string, string[]> H
         writer.Write(response.StatusCode);
         // Connection can nominate even otherwise safe headers as hop-by-hop.
         var connectionHeaders = response.Headers.Connection.ToString().Split(',', StringSplitOptions.TrimEntries);
-        var headers = SafeHeaders.Where(h => response.Headers.ContainsKey(h)
+        var headers = s_safeHeaders.Where(h => response.Headers.ContainsKey(h)
             && (h != "Content-Length" || HttpMethods.IsHead(response.HttpContext.Request.Method))
             && !connectionHeaders.Contains(h, StringComparer.OrdinalIgnoreCase)).ToArray();
         writer.Write(headers.Length);
@@ -73,7 +76,7 @@ internal sealed record StoredResponse(int Status, Dictionary<string, string[]> H
         var status = reader.ReadInt32();
         var count = reader.ReadInt32();
 
-        if (status is < 200 or > 599 || count < 0 || count > SafeHeaders.Length)
+        if (status is < 200 or > 599 || count < 0 || count > s_safeHeaders.Length)
         {
             throw new InvalidDataException("Invalid stored response.");
         }
@@ -85,7 +88,7 @@ internal sealed record StoredResponse(int Status, Dictionary<string, string[]> H
             var name = reader.ReadString();
             var valueCount = reader.ReadInt32();
 
-            if (!SafeHeaders.Contains(name, StringComparer.OrdinalIgnoreCase) || valueCount is < 0 or > HeaderLimit)
+            if (!s_safeHeaders.Contains(name, StringComparer.OrdinalIgnoreCase) || valueCount is < 0 or > HeaderLimit)
             {
                 throw new InvalidDataException("Invalid stored headers.");
             }

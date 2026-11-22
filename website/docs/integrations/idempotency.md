@@ -137,7 +137,9 @@ choose a suitable limit before enabling the endpoint. Explicit `DisableBuffering
 WebSockets, or gRPC. Response trailers are not replayed.
 
 The stored header allowlist is `Content-Type`, `Content-Language`, `Content-Encoding`,
-`Location`, `ETag`, and `Last-Modified`. Headers nominated by `Connection` are excluded.
+`Content-Range`, `Location`, `ETag`, and `Last-Modified`. A replayed single-range
+**206 Partial Content** response includes the original `Content-Range`, which identifies
+where the returned bytes belong in the file. Headers nominated by `Connection` are excluded.
 Cookies, authentication challenges, connection-specific headers, and arbitrary application
 headers are not stored. Replay computes Content-Length from the body, except for HEAD,
 which preserves the original representation's declared Content-Length. Safe-header storage
