@@ -98,7 +98,7 @@ internal abstract partial class CompatDatabaseAsync : IDatabaseAsync
             arguments[2 + i * 2] = Value(hashFields[i].Value);
         }
 
-        return Send(RespireCommands.Hash.HSET, arguments, flags, static result => (long)result);
+        return Send(RespireCommands.Hash.HMSET, arguments, flags, static result => (string?)result);
     }
 
     public Task<bool> HashSetAsync(RedisKey key, RedisValue hashField, RedisValue value, When when, CommandFlags flags)
@@ -173,7 +173,20 @@ internal abstract partial class CompatDatabaseAsync : IDatabaseAsync
             return Send(RespireCommands.Key.PERSIST, [Key(key)], flags, static result => (long)result != 0);
         }
 
-        RedisValue[] args = [Key(key), milliseconds.Value];
+        long expiryValue = milliseconds.Value;
+        RespireCommand command;
+
+        if (expiryValue % TimeSpan.MillisecondsPerSecond == 0)
+        {
+            command = absolute ? RespireCommands.Key.EXPIREAT : RespireCommands.Key.EXPIRE;
+            expiryValue /= TimeSpan.MillisecondsPerSecond;
+        }
+        else
+        {
+            command = absolute ? RespireCommands.Key.PEXPIREAT : RespireCommands.Key.PEXPIRE;
+        }
+
+        RedisValue redisKey = Key(key);
         var condition = when switch
         {
             RedisExpireWhen.Always => null,
@@ -184,12 +197,8 @@ internal abstract partial class CompatDatabaseAsync : IDatabaseAsync
             _ => throw new ArgumentOutOfRangeException(nameof(when)),
         };
 
-        if (condition is not null)
-        {
-            args = [.. args, condition];
-        }
-
-        return Send(absolute ? RespireCommands.Key.PEXPIREAT : RespireCommands.Key.PEXPIRE, args, flags, static result => (long)result != 0);
+        RedisValue[] args = condition is null ? [redisKey, expiryValue] : [redisKey, expiryValue, condition];
+        return Send(command, args, flags, static result => (long)result != 0);
     }
 
     public Task<RedisValue[]> ListRangeAsync(RedisKey key, long start, long stop, CommandFlags flags)
