@@ -17,6 +17,8 @@
 #     item once it is closed and no registered worktree uses it, under a temporary Redis
 #     lease, and any other entry once its newest write is older than the retention window.
 
+. (Join-Path $PSScriptRoot 'Invoke-IsolatedPowerShell.ps1')
+
 # A named branch whose tip is already on main has no commits of its own: it was just
 # cut from main, or never got work. Its tip is main's tip, so commit association and
 # rebase-merged PR heads point at whichever PR produced main's tip. Only the branch
@@ -257,8 +259,8 @@ function Get-AgentLockBlocker {
     # Do not cache FREE across checks: another agent may acquire ownership during a sweep.
     $agentLocks = Join-Path $Repo 'scripts/AgentLocks.ps1'
     if (-not (Test-Path -LiteralPath $agentLocks -PathType Leaf)) { return 'canonical lock script is unavailable' }
-    $state = @(& pwsh -NoProfile -File $agentLocks status -LockName $LockName -OwnerId worktree-cleanup-observer 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $state.Count -ne 1 -or $state[0] -ne 'FREE') {
+    $result = Invoke-IsolatedPowerShell -ScriptPath $agentLocks -Arguments @('status', '-LockName', $LockName, '-OwnerId', 'worktree-cleanup-observer')
+    if ($result.ExitCode -ne 0 -or $result.StdOut -notmatch '\AFREE(?:\r?\n)?\z') {
         return "Redis lock '$LockName' is held or could not be checked"
     }
     return $null
@@ -510,8 +512,8 @@ function Invoke-WithWorktreeCleanupLocks {
                 continue
             }
             # Acquire prints a token. Never forward it.
-            $null = @(& pwsh -NoProfile -File $reservationScript acquire -LockName $reservationName -OwnerId $reservationOwner 2>&1)
-            if ($LASTEXITCODE -ne 0) {
+            $result = Invoke-IsolatedPowerShell -ScriptPath $reservationScript -Arguments @('acquire', '-LockName', $reservationName, '-OwnerId', $reservationOwner)
+            if ($result.ExitCode -ne 0) {
                 Write-Host "Preserving worktree: Redis lock '$reservationName' is held or could not be reserved: $Worktree"
                 return
             }
@@ -521,8 +523,8 @@ function Invoke-WithWorktreeCleanupLocks {
     }
     finally {
         for ($index = $reserved.Count - 1; $index -ge 0; $index--) {
-            $null = @(& pwsh -NoProfile -File $reservationScript release -LockName $reserved[$index] -OwnerId $reservationOwner 2>&1)
-            if ($LASTEXITCODE -ne 0) { Write-Host "WARNING: could not release cleanup reservation $($reserved[$index])." }
+            $result = Invoke-IsolatedPowerShell -ScriptPath $reservationScript -Arguments @('release', '-LockName', $reserved[$index], '-OwnerId', $reservationOwner)
+            if ($result.ExitCode -ne 0) { Write-Host "WARNING: could not release cleanup reservation $($reserved[$index])." }
         }
     }
 }
@@ -794,13 +796,13 @@ function Remove-FinishedAgentEvidence {
 
         $owner = "evidence-cleanup-$([Guid]::NewGuid().ToString('N'))"
         if ($WhatIf) {
-            $state = @(& pwsh -NoProfile -File $AgentLocks status -LockName $name -OwnerId $owner 2>$null)
-            $leased = $LASTEXITCODE -eq 0 -and $state.Count -eq 1 -and $state[0] -eq 'FREE'
+            $result = Invoke-IsolatedPowerShell -ScriptPath $AgentLocks -Arguments @('status', '-LockName', $name, '-OwnerId', $owner)
+            $leased = $result.ExitCode -eq 0 -and $result.StdOut -match '\AFREE(?:\r?\n)?\z'
         }
         else {
             # Acquire prints a token. Never forward it.
-            $null = @(& pwsh -NoProfile -File $AgentLocks acquire -LockName $name -OwnerId $owner 2>&1)
-            $leased = $LASTEXITCODE -eq 0
+            $result = Invoke-IsolatedPowerShell -ScriptPath $AgentLocks -Arguments @('acquire', '-LockName', $name, '-OwnerId', $owner)
+            $leased = $result.ExitCode -eq 0
         }
         if (-not $leased) {
             Write-Host "sweep: keeping evidence of $name (Redis lock '$name' is held or could not be reserved)"
@@ -811,8 +813,8 @@ function Remove-FinishedAgentEvidence {
         }
         finally {
             if (-not $WhatIf) {
-                $null = @(& pwsh -NoProfile -File $AgentLocks release -LockName $name -OwnerId $owner 2>&1)
-                if ($LASTEXITCODE -ne 0) { Write-Host "WARNING: could not release evidence cleanup reservation $name." }
+                $result = Invoke-IsolatedPowerShell -ScriptPath $AgentLocks -Arguments @('release', '-LockName', $name, '-OwnerId', $owner)
+                if ($result.ExitCode -ne 0) { Write-Host "WARNING: could not release evidence cleanup reservation $name." }
             }
         }
     }

@@ -62,7 +62,7 @@
 # For PR locks either pass -LockName to release, or write the marker once via
 # `renew -Worktree` (or `acquire -Worktree` if the worktree already exists).
 #
-# Usage:
+# Usage (Windows; on Unix use scripts/Invoke-AgentLocks.sh to isolate the startup cache):
 #   $token = pwsh scripts/AgentLocks.ps1 acquire -LockName pr-1234
 #   if ($LASTEXITCODE -ne 0) { <skip this item> }
 #   ... do the unit of work — NO periodic refresh ...
@@ -222,7 +222,11 @@ function Ensure-AgentRedis {
     }
 }
 
-function Redis { (& docker exec $redisContainer redis-cli @args | Out-String).Trim() }
+function Redis {
+    $reply = & docker exec $redisContainer redis-cli -e @args
+    if ($LASTEXITCODE -ne 0) { Die 1 "redis $($args[0]) failed on $redisContainer (exit $LASTEXITCODE)" }
+    return ($reply | Out-String).Trim()
+}
 
 function New-Meta([string]$Token) {
     @{

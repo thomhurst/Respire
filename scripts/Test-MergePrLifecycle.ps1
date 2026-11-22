@@ -16,7 +16,7 @@ function Assert([bool]$Condition, [string]$Message) {
 }
 try {
     New-Item -ItemType Directory -Path $fixtureScripts -Force | Out-Null
-    foreach ($name in @('Merge-Pr', 'MergedBranchCleanup', 'WorktreeCleanup')) {
+    foreach ($name in @('Merge-Pr', 'MergedBranchCleanup', 'WorktreeCleanup', 'Invoke-IsolatedPowerShell')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot "$name.ps1") -Destination $fixtureScripts
     }
     Set-Content -LiteralPath (Join-Path $fixtureScripts 'Assert-PrGreen.ps1') -Value 'exit 0'
