@@ -115,15 +115,20 @@ public partial class TopologyCommandRetryTests
     }
 
     [Test]
-    [Arguments(false, 1)]
-    [Arguments(true, 2)]
-    public async Task ScriptsRetryOnlyWithDeclaredCategory(bool declared, int expectedSends)
+    [Arguments(false, 1, false)]
+    [Arguments(true, 2, false)]
+    [Arguments(true, 2, true)]
+    public async Task ScriptsRetryOnlyWithDeclaredCategory(bool declared, int expectedSends, bool longTimeout)
     {
         var sends = 0;
         await using var server = Standalone((command, _) => command.StartsWith("EVALSHA ", StringComparison.Ordinal)
             ? Interlocked.Increment(ref sends) == 1 ? TryAgain : ":7\r\n"u8.ToArray() : null);
 #pragma warning disable RESP010 // Test-owned client isolates scripted failures, topology changes, and retry policy for this scenario.
-        await using var client = await RespireClient.ConnectAsync(StandaloneOptions(server));
+        RespireOptions options = StandaloneOptions(server);
+        await using var client = await RespireClient.ConnectAsync(options with
+        {
+            CommandTimeout = longTimeout ? TimeSpan.FromDays(50) : options.CommandTimeout,
+        });
 #pragma warning restore RESP010
         var script = RespireScript.Create("return 7", readOnly: false);
 

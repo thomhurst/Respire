@@ -13,7 +13,8 @@ namespace Respire.Internal;
 internal struct CommandAcquisitionScope(
     CancellationToken callerToken, CommandDeadline deadline, TimeSpan? timeout) : IDisposable
 {
-    private CancellationTokenSource? _source;
+    private IDisposable? _source;
+    private CancellationToken _token;
 
     internal readonly CancellationToken CallerToken => callerToken;
 
@@ -28,17 +29,20 @@ internal struct CommandAcquisitionScope(
                 return callerToken;
             }
 
-            _source ??= CommandTimeoutCancellation.Create(callerToken,
-                TimeSpan.FromMilliseconds(Math.Max(1L, deadline.RemainingMilliseconds)));
-            return _source.Token;
+            if (_source is null)
+            {
+                _source = CommandTimeoutCancellation.CreateForDeadline(callerToken, deadline, out _token);
+            }
+
+            return _token;
         }
     }
 
     internal readonly bool IsDeadlineCancellation(OperationCanceledException error)
-        => _source is not null && RespireConnection.IsDeadlineCancellation(error, _source.Token, callerToken);
+        => _source is not null && RespireConnection.IsDeadlineCancellation(error, _token, callerToken);
 
     internal readonly bool IsCallerCancellation(OperationCanceledException error)
-        => _source is not null && CommandTimeoutCancellation.IsFromLinkedToken(error, callerToken, _source.Token);
+        => _source is not null && CommandTimeoutCancellation.IsFromLinkedToken(error, callerToken, _token);
 
     internal readonly void CheckDeadline(string operation, ClientCore core, RespireConnection? pinnedConnection = null)
     {
@@ -72,5 +76,6 @@ internal struct CommandAcquisitionScope(
     {
         _source?.Dispose();
         _source = null;
+        _token = default;
     }
 }

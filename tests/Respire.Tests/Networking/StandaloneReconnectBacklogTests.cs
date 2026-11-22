@@ -545,13 +545,17 @@ public class StandaloneReconnectBacklogTests
     }
 
     [Test]
-    public async Task EnabledCommandRetriesRemainInsideTheQueuedOperation()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EnabledCommandRetriesRemainInsideTheQueuedOperation(bool longTimeout)
     {
-        await using var fixture = await Fixture.CreateAsync(retryPolicy: new()
-        {
-            InitialBackoff = TimeSpan.Zero,
-            MaxAttempts = 2,
-        });
+        await using var fixture = await Fixture.CreateAsync(
+            commandTimeout: longTimeout ? TimeSpan.FromDays(50) : null,
+            retryPolicy: new()
+            {
+                InitialBackoff = TimeSpan.Zero,
+                MaxAttempts = 2,
+            });
         var firstAttempts = 0;
         fixture.Server.ReplyOverride = (_, command) => command switch
         {
