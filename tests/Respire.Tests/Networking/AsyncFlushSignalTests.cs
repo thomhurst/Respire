@@ -590,6 +590,10 @@ public class AsyncFlushSignalTests
         var ordinary = new WakeTrace(Wakes);
         var control = new WakeTrace(Wakes);
 
+        // A delayed wake can make SpinWait call Thread.Sleep(0), which lazily initializes
+        // per-thread wait state on Unix. Fast warmup wakes may never take that path.
+        Thread.Sleep(0);
+
         for (var i = 0; i < 20; i++)
         {
             Measure(waiter, false, ordinary);

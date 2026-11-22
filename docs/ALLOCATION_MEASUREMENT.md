@@ -143,6 +143,7 @@ report.
 | Surrounding allocations inside the JIT's measurement boundary ([dotnet/runtime#96836](https://github.com/dotnet/runtime/issues/96836)) | Varies | Measure in a no-inline method. |
 | .NET 8 cast cache table (`CastHelpers.s_table`) reallocated after the region's full GC flushes it | 24,624, 49,200 or 98,352 (grows with distinct cast pairs seen by the process) | `WithoutConcurrentGc` calls `GC.WaitForPendingFinalizers()`, then a failing `object is object[]` cast, before `measure`. |
 | Thread-pool worker start on the queuing thread | 136 per worker on x64 | Child process with a fixed two-worker pool. |
+| First `Thread.Sleep(0)` on a Unix thread, reached through `SpinWait` when a dispatched wake is delayed | 192 on .NET 11 Linux x64 | Warm `Thread.Sleep(0)` on each measuring producer before measuring. |
 | Tier-0 boxing through default interface methods | 136 per call for `IncrementCommand` | Child process with `DOTNET_TieredCompilation=0`. |
 | `ArrayPool.Shared` miss (per-thread slot and per-core stacks can be trimmed by gen-2 GCs) | Array size | Rent and return on the measuring thread before measuring. |
 | First command serialized on a thread (thread-static 4 KiB scratch buffer) | 4,216 | Create it on the measuring thread before measuring. |
