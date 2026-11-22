@@ -54,7 +54,7 @@ unix:///tmp/redis%2Cblue.sock?db=2
 - `IsUnixSocket` identifies a socket endpoint, including in connection events.
 - `ToString()` returns the `!path` form. Passing that string to `RespireEndpoint.Parse` preserves the full socket path, including trailing spaces.
 - Public `RespireEndpoint` equality (including default dictionary and set lookups) uses ordinal, case-sensitive comparison for `Host`, whether it holds a TCP host name or a Unix socket path. `Port` must also match.
-- When Respire matches endpoints internally for routing, it compares TCP host names case-insensitively and Unix socket paths case-sensitively.
+- For read routing with explicitly configured replicas, Respire matches TCP host names case-insensitively and Unix socket paths case-sensitively.
 - Credential providers receive only a cancellation token, not the endpoint.
 
 ## Behavior
