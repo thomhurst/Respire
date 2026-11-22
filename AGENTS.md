@@ -64,7 +64,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-command-retry-jit.yml` | `run-command-retry-jit-benchmarks` |
 | `benchmark-command-retry-synchronization.yml` | `run-command-retry-synchronization-benchmarks` |
 | `benchmark-command-retry-profile.yml` | `run-command-retry-profile-benchmarks` |
-| `benchmark-connection-contention.yml` | `run-connection-contention-benchmarks` |
+| `benchmark-connection-contention.yml` | `run-connection-contention-benchmarks`, `run-connection-contention-improvement-benchmarks`, `run-connection-contention-original-benchmarks` |
 | `benchmark-connection-establishment.yml` | `run-connection-establishment-benchmarks` |
 | `benchmark-dedicated-pool.yml` | `run-dedicated-pool-benchmarks` |
 | `benchmark-fair-locks.yml` | `run-fair-lock-benchmarks` |
@@ -74,6 +74,7 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-idle-read-watchdog.yml` | `run-idle-read-watchdog-benchmarks` |
 | `benchmark-inflight.yml` | `run-inflight-benchmarks` |
 | `benchmark-import-health-hooks.yml` | `run-import-health-hook-benchmarks` |
+| `benchmark-job-metrics.yml` | `run-job-metrics-benchmarks` |
 | `benchmark-job-queue.yml` | `run-job-queue-benchmarks` |
 | `benchmark-key-prefix.yml` | `run-key-prefix-benchmarks` |
 | `benchmark-large-command-serialization.yml` | `run-large-command-serialization-benchmarks`, `run-large-command-original-benchmarks` |
@@ -102,6 +103,10 @@ Benchmark concurrency groups must include `github.event.label.name` alongside th
 | `benchmark-valkey-glide.yml` | `run-valkey-glide-benchmarks` |
 | `benchmark-value-codecs.yml` | `benchmark-value-codecs` |
 | `benchmark-vector.yml` | `run-vector-benchmarks` |
+
+`run-connection-contention-improvement-benchmarks` requires the candidate's timing confidence interval to sit below both control intervals for each of the two GET workloads. `run-connection-contention-original-benchmarks` applies the same gate using the pinned original control commit.
+
+`run-job-metrics-benchmarks` compares terminal job completion with metrics enabled and disabled on the same pull request build. `run-job-queue-benchmarks` compares enqueue and durable completion between the base and candidate builds.
 
 `benchmark-comparison.yml`, `benchmark-redis-throughput.yml` and `benchmark-redis-container.yml` are not pull request comparisons. `benchmark-valkey-glide.yml` is not a base-versus-head comparison either: its label measures the pull request head against Valkey GLIDE, and it also supports `gh workflow run`. `benchmark-compare.yml` is a reusable workflow that the label-triggered workflows call; do not run it directly. Start them with `gh workflow run <file>`. `benchmark-comparison.yml` and `benchmark-redis-throughput.yml` also run weekly on a schedule; the weekly comparison run refreshes the published performance docs.
 
