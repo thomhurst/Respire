@@ -34,6 +34,42 @@ public class ConnectionFactoryTests
     }
 
     [Test]
+    public async Task FailedClientStartupDisposesAllOpenedFactoryStreams()
+    {
+        await using var server = new FakeRespServer(maxConnections: 2, FakeRespServer.OkReply);
+        using var cancellation = new CancellationTokenSource(Limit);
+        using var firstSocket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+        using var secondSocket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+        await firstSocket.ConnectAsync(IPAddress.Loopback, server.Port, cancellation.Token);
+        await secondSocket.ConnectAsync(IPAddress.Loopback, server.Port, cancellation.Token);
+
+        var first = new DisposalTrackingNetworkStream(firstSocket, disposalFails: true);
+        var second = new DisposalTrackingNetworkStream(secondSocket, disposalFails: false);
+        var startupError = new IOException("Opening the third connection failed.");
+        int calls = 0;
+        var options = new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 3,
+            Protocol = RespireProtocol.Resp2,
+            ClientName = "startup-cleanup",
+            ConnectionFactory = (_, _) => Interlocked.Increment(ref calls) switch
+            {
+                1 => ValueTask.FromResult<Stream>(first),
+                2 => ValueTask.FromResult<Stream>(second),
+                _ => throw startupError,
+            },
+        };
+
+        IOException? error = await Assert.That(async () => await RespireClient.ConnectAsync(options, cancellation.Token))
+            .Throws<IOException>();
+
+        await Assert.That(first.DisposeAsyncCalls).IsEqualTo(1);
+        await Assert.That(second.DisposeAsyncCalls).IsEqualTo(1);
+        await Assert.That(error).IsSameReferenceAs(startupError);
+    }
+
+    [Test]
     public async Task WriteThroughFactoryStreamSendsSetupAndCommandsWithoutFlushing()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
@@ -82,6 +118,25 @@ public class ConnectionFactoryTests
         public override async ValueTask DisposeAsync()
         {
             DisposedAsync = true;
+            await base.DisposeAsync();
+
+            if (disposalFails)
+            {
+                throw new IOException("Stream cleanup failed.");
+            }
+        }
+    }
+
+    private sealed class DisposalTrackingNetworkStream(Socket socket, bool disposalFails) : NetworkStream(socket, ownsSocket: true)
+    {
+        public int DisposeAsyncCalls
+        {
+            get; private set;
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            DisposeAsyncCalls++;
             await base.DisposeAsync();
 
             if (disposalFails)
