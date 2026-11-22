@@ -99,7 +99,7 @@ public sealed partial class RespireClient
         ImmediateRetryState state, CancellationToken callerToken, CommandDeadline deadline,
         RespireTelemetry.ErrorObservation observation, bool track, RespireConnection? backlogConnection) where TCommand : struct, IRespCommand
     {
-        CancellationTokenSource? timeout = null;
+        IDisposable? timeout = null;
         var token = callerToken;
         RespireConnection? connection = null;
         RespireTelemetry.OperationScope telemetry = default;
@@ -117,12 +117,7 @@ public sealed partial class RespireClient
 
         try
         {
-            if (deadline.IsSet)
-            {
-                timeout = CommandTimeoutCancellation.Create(callerToken,
-                    TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)));
-                token = timeout.Token;
-            }
+            timeout = CommandTimeoutCancellation.CreateForDeadline(callerToken, deadline, out token);
 
             for (var attempt = 1; ; attempt++)
             {
@@ -220,7 +215,7 @@ public sealed partial class RespireClient
             finalError = new OperationCanceledException(error.Message, error, callerToken);
             throw finalError;
         }
-        catch (OperationCanceledException error) when (timeout is not null && timeout.IsCancellationRequested
+        catch (OperationCanceledException error) when (timeout is not null && token.IsCancellationRequested
             && error.CancellationToken == token)
         {
             finalError = new RespireTimeoutException(operation, _core.Options.CommandTimeout!.Value, error);
@@ -256,7 +251,7 @@ public sealed partial class RespireClient
         Action? onTrackingReady, bool retainTracking, bool cacheRead,
         ClientSideCacheCoordinator.QueryRequest? trackingRead) where TCommand : struct, IRespCommand
     {
-        CancellationTokenSource? timeout = null;
+        IDisposable? timeout = null;
         var token = callerToken;
         RespireConnection? connection = null;
         var telemetryEndpoint = _core.Endpoint;
@@ -275,12 +270,7 @@ public sealed partial class RespireClient
 
         try
         {
-            if (deadline.IsSet)
-            {
-                timeout = CommandTimeoutCancellation.Create(callerToken,
-                    TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)));
-                token = timeout.Token;
-            }
+            timeout = CommandTimeoutCancellation.CreateForDeadline(callerToken, deadline, out token);
 
             for (var attempt = 1; ; attempt++)
             {
@@ -384,11 +374,8 @@ public sealed partial class RespireClient
                             connection = replacement;
                             deadline = rerouted;
                             timeout?.Dispose();
-                            timeout = deadline.IsSet
-                                ? CommandTimeoutCancellation.Create(callerToken,
-                                    TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
-                                : null;
-                            token = timeout?.Token ?? callerToken;
+                            timeout = null;
+                            timeout = CommandTimeoutCancellation.CreateForDeadline(callerToken, deadline, out token);
                             telemetryEndpoint = new(connection.Host, connection.Port);
                             observation.UseEndpoint(telemetryEndpoint, token);
                             telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
@@ -417,11 +404,8 @@ public sealed partial class RespireClient
                         // later sends. IsRelaxed prevents a second hop extending it again.
                         deadline = connection.GetReroutedCommandDeadline(deadline);
                         timeout?.Dispose();
-                        timeout = deadline.IsSet
-                            ? CommandTimeoutCancellation.Create(callerToken,
-                                TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
-                            : null;
-                        token = timeout?.Token ?? callerToken;
+                        timeout = null;
+                        timeout = CommandTimeoutCancellation.CreateForDeadline(callerToken, deadline, out token);
                         // REDIRECT proves this hop did not execute the command. The next hop owns
                         // fresh write evidence, including an unwritten connection/handshake failure.
                         outcome = CommandWriteOutcome.DefinitelyUnwritten;
@@ -556,7 +540,7 @@ public sealed partial class RespireClient
             finalError = new OperationCanceledException(error.Message, error, callerToken);
             throw finalError;
         }
-        catch (OperationCanceledException error) when (timeout is not null && timeout.IsCancellationRequested
+        catch (OperationCanceledException error) when (timeout is not null && token.IsCancellationRequested
             && error.CancellationToken == token)
         {
             finalError = new RespireTimeoutException(operation, _core.Options.CommandTimeout!.Value, error);

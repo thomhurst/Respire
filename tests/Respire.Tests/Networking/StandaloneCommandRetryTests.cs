@@ -81,6 +81,53 @@ public class StandaloneCommandRetryTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "RESP010", Justification = "Each wire case owns its server and retry policy.")]
+    public async Task LongCommandTimeoutAllowsStandaloneDispatch(bool retries, bool redirects)
+    {
+        int sends = 0;
+        await using var server = Server();
+        await using FakeRespServer? replica = redirects ? Server() : null;
+        byte[]? redirect = null;
+
+        if (replica is not null)
+        {
+            replica.ReplyOverride = (_, command) => command == "EXISTS key" ? ":0\r\n"u8.ToArray() : Setup(command);
+            redirect = System.Text.Encoding.ASCII.GetBytes($"-REDIRECT 127.0.0.1:{replica.Port}\r\n");
+        }
+
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command != "EXISTS key")
+            {
+                return Setup(command);
+            }
+
+            int attempt = Interlocked.Increment(ref sends);
+            return retries && attempt == 1 ? "-TRYAGAIN busy\r\n"u8.ToArray() : redirect ?? ":0\r\n"u8.ToArray();
+        };
+
+        RespireOptions options = Options(server);
+        await using var client = await RespireClient.ConnectAsync(options with
+        {
+            CommandTimeout = TimeSpan.FromDays(50),
+            EnableReplicaRedirects = redirects,
+            RetryPolicy = retries ? options.RetryPolicy : null,
+        });
+
+        bool exists = await client.Keys.ExistsAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(exists).IsFalse();
+        await Assert.That(sends).IsEqualTo(retries ? 2 : 1);
+
+        if (replica is not null)
+        {
+            await Assert.That(replica.ReceivedCommands.Count(command => command == "EXISTS key")).IsEqualTo(1);
+        }
+    }
+
+    [Test]
     [Arguments("string")]
     [Arguments("bytes")]
     [Arguments("converted")]
@@ -332,7 +379,9 @@ public class StandaloneCommandRetryTests
     }
 
     [Test]
-    public async Task CancellationDuringBackoffStopsResend()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CancellationDuringBackoffStopsResend(bool longTimeout)
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         var handled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -358,8 +407,12 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.ReplyOverride = (_, command) => command == "GET key" ? "-TRYAGAIN busy\r\n"u8.ToArray() : Setup(command);
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
-        await using var client = await RespireClient.ConnectAsync(Options(server) with
-        { RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(1), Jitter = 0 } });
+        RespireOptions options = Options(server);
+        await using var client = await RespireClient.ConnectAsync(options with
+        {
+            CommandTimeout = longTimeout ? TimeSpan.FromDays(50) : options.CommandTimeout,
+            RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(1), Jitter = 0 },
+        });
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var pending = client.GetStringAsync("key", cancellation.Token).AsTask();

@@ -16,9 +16,10 @@ public class BatchCommandRetryTests
     private static readonly byte[] TryAgain = "-TRYAGAIN busy\r\n"u8.ToArray();
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task SafeBatchReplaysEveryMemberAndPublishesOnlyFinalReplies(bool circuits)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task SafeBatchReplaysEveryMemberAndPublishesOnlyFinalReplies(bool circuits, bool longTimeout)
     {
         var reads = 0;
         await using var server = Server(command => command switch
@@ -28,7 +29,12 @@ public class BatchCommandRetryTests
             _ => null,
         });
 #pragma warning disable RESP010 // Test-owned client isolates batch replay and final-reply publication with circuit admission enabled or disabled.
-        await using var client = await RespireClient.ConnectAsync(Options(server) with { CircuitBreaker = circuits ? new() : null });
+        RespireOptions options = Options(server);
+        await using var client = await RespireClient.ConnectAsync(options with
+        {
+            CircuitBreaker = circuits ? new() : null,
+            CommandTimeout = longTimeout ? TimeSpan.FromDays(50) : options.CommandTimeout,
+        });
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var first = batch.GetString("first");

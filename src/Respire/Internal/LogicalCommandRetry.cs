@@ -63,10 +63,7 @@ internal static class LogicalCommandRetry
     {
         callerToken.ThrowIfCancellationRequested();
         var deadline = CreateDeadline(commandTimeout);
-        using var timeout = deadline.IsSet
-            ? CommandTimeoutCancellation.Create(callerToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
-            : null;
-        var token = timeout?.Token ?? callerToken;
+        using IDisposable? timeout = CommandTimeoutCancellation.CreateForDeadline(callerToken, deadline, out CancellationToken token);
         var retries = 0;
         Exception? finalError = null;
 
@@ -129,7 +126,7 @@ internal static class LogicalCommandRetry
             finalError = new OperationCanceledException(error.Message, error, callerToken);
             throw finalError;
         }
-        catch (OperationCanceledException error) when (timeout is not null && timeout.IsCancellationRequested
+        catch (OperationCanceledException error) when (timeout is not null && token.IsCancellationRequested
             && error.CancellationToken == token)
         {
             finalError = new RespireTimeoutException(operation, commandTimeout!.Value, error);

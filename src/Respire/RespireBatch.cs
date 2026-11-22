@@ -529,10 +529,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             deadline = LogicalCommandRetry.CreateDeadline(core.Options.CommandTimeout);
         }
 
-        using var timeout = deadline.IsSet
-            ? CommandTimeoutCancellation.Create(callerToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
-            : null;
-        var token = timeout?.Token ?? callerToken;
+        using IDisposable? timeout = CommandTimeoutCancellation.CreateForDeadline(callerToken, deadline, out CancellationToken token);
         var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(operations.Count);
         var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(operations.Count);
         var category = RespireCommandRetryCategory.Never;
