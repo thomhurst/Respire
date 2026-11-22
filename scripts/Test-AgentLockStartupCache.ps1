@@ -108,6 +108,21 @@ exit 1
     }
     finally { Remove-Item -LiteralPath (Join-Path $bin.FullName 'docker') }
 
+    # A GET against this test-only list must fail even though Docker reaches Redis.
+    $redisContainer = 'respire-agent-locks-redis'
+    $lockKey = "respire:agent-lock:$lockName"
+    try {
+        $seedList = "redis.call('RPUSH', KEYS[1], 'test'); return redis.call('EXPIRE', KEYS[1], 300)"
+        $seeded = docker exec $redisContainer redis-cli -e EVAL $seedList 1 $lockKey
+        if ($LASTEXITCODE -ne 0 -or $seeded -ne '1') { throw 'Could not seed the Redis error fixture.' }
+        Assert-Result (Invoke-Locks @('status', '-LockName', $lockName)) 1 'redis GET failed'
+        Assert-Result (Invoke-Worker @('status', '-LockName', $lockName)) 1 'redis GET failed'
+    }
+    finally {
+        docker exec $redisContainer redis-cli -e DEL $lockKey | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Could not remove the Redis error fixture.' }
+    }
+
     Set-TestEnvironment 'RESPIRE_TEST_LOCK_CACHE_MODE' 'timeout'
     try {
         Assert-Result (Invoke-Locks @('ping') -TimeoutSeconds 1) 124 '^timed out after 1 s$'
@@ -115,8 +130,8 @@ exit 1
     finally { Set-TestEnvironment 'RESPIRE_TEST_LOCK_CACHE_MODE' '' }
 
     $caches = @(Get-Content -LiteralPath $cacheLog)
-    if ($caches.Count -ne 9 -or @($caches | Sort-Object -Unique).Count -ne $caches.Count) {
-        throw "Expected 9 separate cache directories, got $($caches.Count) launches."
+    if ($caches.Count -ne 11 -or @($caches | Sort-Object -Unique).Count -ne $caches.Count) {
+        throw "Expected 11 separate cache directories, got $($caches.Count) launches."
     }
     foreach ($usedCache in $caches) {
         if (Test-Path -LiteralPath $usedCache) { throw "Child startup cache was not removed: $usedCache" }
