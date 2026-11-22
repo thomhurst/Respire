@@ -4,6 +4,16 @@ Update the [public API declarations](#public-api-review-and-deprecation) alongsi
 each API change. Build both supported frameworks and run `Respire.PublicApi.Tests` to check
 the API and deprecation policy.
 
+## Blame and the Curb reformat
+
+GitHub's blame view automatically skips the Curb formatting commit listed in
+`.git-blame-ignore-revs`. Run this command once from the repository root to skip
+the same commit in local `git blame` output.
+
+```sh
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
 ## Public API review and deprecation
 
 Every shipping library package has a checked-in public API baseline in
