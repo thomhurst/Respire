@@ -85,6 +85,50 @@ public class FakeListMoveManyTests
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task BlockedMoveResumesAfterSourceChangesType(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var move = client.Lists.MoveManyAsync("source", "destination", waitFor: Timeout.InfiniteTimeSpan,
+            cancellationToken: deadline.Token).AsTask();
+        await WaitForWaiterCount(server, 1, deadline.Token);
+        await client.SetAsync("source", "text", cancellationToken: deadline.Token);
+        // Wait until the string update has been processed before replacing the key with a list.
+        await WaitForWaiterCount(server, 1, deadline.Token);
+        await Assert.That(move.IsCompleted).IsFalse();
+
+        await client.Keys.DeleteAsync("source");
+        await client.Lists.RightPushAsync("source", ["ready"], deadline.Token);
+        await Assert.That((await move.WaitAsync(deadline.Token))!).IsEquivalentTo(["ready"]);
+        await Assert.That(await client.Lists.CountAsync("destination")).IsEqualTo(1);
+        await WaitForWaiterCount(server, 0, deadline.Token);
+    }
+
+    [Test]
+    public async Task BlockedMoveTimesOutWhenSourceStaysWrongType()
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var move = client.Lists.MoveManyAsync("source", "destination", waitFor: TimeSpan.FromSeconds(2),
+            cancellationToken: deadline.Token).AsTask();
+        await WaitForWaiterCount(server, 1, deadline.Token);
+        await client.SetAsync("source", "text", cancellationToken: deadline.Token);
+
+        await Assert.That(await move.WaitAsync(deadline.Token)).IsNull();
+        await WaitForWaiterCount(server, 0, deadline.Token);
+        await Assert.That(async () => await client.Lists.MoveManyAsync("source", "destination",
+            waitFor: TimeSpan.FromSeconds(2), cancellationToken: deadline.Token)).Throws<RespireServerException>();
+    }
+
+    [Test]
     public async Task CompetingWaitersKeepTheNextGenerationRegisteredForBinaryKeys()
     {
         await using var server = new RespireFakeServer();

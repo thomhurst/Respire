@@ -247,7 +247,8 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     }
 
     private Outbound? ExecuteLocked(Connection connection, byte[][] arguments, RespireFakeFaultScope? scope,
-        out ListMoveWaiters? listMoveChanged, bool allowListMoveWait = false, FakeReply? expectedReply = null)
+        out ListMoveWaiters? listMoveChanged, ListMoveWaitMode listMoveWaitMode = ListMoveWaitMode.None,
+        FakeReply? expectedReply = null)
     {
         listMoveChanged = null;
         // Keep synchronous state protection outside the async receive state machine,
@@ -267,9 +268,12 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 // EXEC and all its commands share one server-time sample.
                 _commandTimestamp = _clock.GetUtcNow();
                 _commandTime = _commandTimestamp.ToUnixTimeMilliseconds();
-                var result = Execute(connection, arguments, expectedReply);
+                // A move that has already blocked waits for a list to become ready at the source key.
+                bool waitingForList = listMoveWaitMode == ListMoveWaitMode.Resuming
+                    && Find(arguments[1])?.Data is not List<byte[]>;
+                var result = waitingForList ? FakeReply.NullArray : Execute(connection, arguments, expectedReply);
 
-                if (allowListMoveWait && ReferenceEquals(result, FakeReply.NullArray))
+                if (listMoveWaitMode != ListMoveWaitMode.None && ReferenceEquals(result, FakeReply.NullArray))
                 {
                     if (!_listMoveWaiters.TryGetValue(arguments[1], out listMoveChanged))
                     {
