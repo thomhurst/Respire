@@ -27,7 +27,11 @@ public sealed class ClusterKeyNotificationIntegrationTests(ClusterKeyNotificatio
 
         await using (var subscription = await client.SubscribeAsync(RespireChannel.KeySpacePrefix(prefix, 0)))
         {
-            foreach (var key in keys) await client.SetAsync(key, "value");
+            foreach (var key in keys)
+            {
+                await client.SetAsync(key, "value");
+            }
+
             await WaitForNotificationsAsync(subscription, keys, RespireKeyNotificationType.Set);
         }
 
@@ -35,35 +39,55 @@ public sealed class ClusterKeyNotificationIntegrationTests(ClusterKeyNotificatio
         {
             foreach (var key in keys)
             {
-                using (var deleted = await client.ExecuteAsync("DEL", key)) { }
-                using (var reply = await client.ExecuteAsync("HSET", key, "field", "value")) { }
+                using (var deleted = await client.ExecuteAsync("DEL", key))
+                {
+                }
+
+                using (var reply = await client.ExecuteAsync("HSET", key, "field", "value"))
+                {
+                }
             }
+
             var seen = new HashSet<string>(StringComparer.Ordinal);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
             await foreach (var message in subscription.WithCancellation(deadline.Token))
             {
                 if (!message.TryParseKeyNotification(out var notification)
                     || notification.Type != RespireKeyNotificationType.HSet
-                    || notification.GetSubKeys().Count == 0) continue;
+                    || notification.GetSubKeys().Count == 0)
+                {
+                    continue;
+                }
+
                 seen.Add(Encoding.UTF8.GetString(notification.KeyBytes.Span));
-                if (seen.Count == keys.Length) break;
+
+                if (seen.Count == keys.Length)
+                {
+                    break;
+                }
             }
+
             seen.Should().BeEquivalentTo(keys);
         }
 
         var exact = RespireChannel.KeySpaceSingleKey(keys[0], 0);
+
         await using (var subscription = await client.SubscribeAsync(exact))
         {
             var channel = exact.ToString();
             var counts = new int[3];
+
             for (var node = 0; node < counts.Length; node++)
             {
                 var result = await cluster.CommandAsync(node, "PUBSUB", "NUMSUB", channel);
                 var fields = result.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
                 counts[node] = int.Parse(fields[^1], CultureInfo.InvariantCulture);
             }
+
             counts.Should().Equal(1, 0, 0);
             await subscription.DisposeAsync();
+
             for (var node = 0; node < counts.Length; node++)
             {
                 var result = await cluster.CommandAsync(node, "PUBSUB", "NUMSUB", channel);
@@ -89,16 +113,22 @@ public sealed class ClusterKeyNotificationIntegrationTests(ClusterKeyNotificatio
         {
             if (change.Endpoint == endpoint && change.State == RespireConnectionState.Connected
                 && change.ReconnectSource == RespireReconnectSource.PubSub)
+            {
                 recovered.TrySetResult();
+            }
         };
 
         await cluster.RestartPrimaryAsync(1);
         await recovered.Task.WaitAsync(TimeSpan.FromSeconds(20));
+
         using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
         {
             while (int.Parse((await cluster.CommandAsync(1, "PUBSUB", "NUMPAT")).Trim(), CultureInfo.InvariantCulture) == 0)
+            {
                 await Task.Delay(10, deadline.Token);
+            }
         }
+
         await cluster.CommandAsync(1, "SET", restartedKey, "after-restart");
         await WaitForNotificationsAsync(subscription, [restartedKey], RespireKeyNotificationType.Set);
     }
@@ -108,12 +138,22 @@ public sealed class ClusterKeyNotificationIntegrationTests(ClusterKeyNotificatio
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
         await foreach (var message in subscription.WithCancellation(deadline.Token))
         {
-            if (!message.TryParseKeyNotification(out var notification) || notification.Type != expectedType) continue;
+            if (!message.TryParseKeyNotification(out var notification) || notification.Type != expectedType)
+            {
+                continue;
+            }
+
             seen.Add(Encoding.UTF8.GetString(notification.KeyBytes.Span));
-            if (seen.Count == keys.Length) break;
+
+            if (seen.Count == keys.Length)
+            {
+                break;
+            }
         }
+
         seen.Should().BeEquivalentTo(keys);
     }
 }
@@ -122,6 +162,7 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
 {
     private const string NotificationFlags = "KEAmoncSTIV";
     private IContainer? _container;
+
     private IContainer Container => _container ?? throw new InvalidOperationException("Cluster has not been initialized.");
 
     private static IContainer CreateContainer() => new ContainerBuilder("redis:8.8-alpine")
@@ -134,6 +175,7 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
     private readonly string[] _nodeIds = new string[3];
 
     internal int Port(int node) => Container.GetMappedPublicPort(7000 + node);
+
     internal RespireOptions Options(int protocol) => new()
     {
         UseCluster = true,
@@ -145,6 +187,7 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
     public async Task InitializeAsync()
     {
         _container = await ContainerStartRetry.StartAsync(CreateContainer, [7000, 7001, 7002]);
+
         try
         {
             for (var node = 0; node < 3; node++)
@@ -157,13 +200,17 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
                 await CommandAsync(node, "CLUSTER", "ADDSLOTSRANGE", start.ToString(CultureInfo.InvariantCulture), end.ToString(CultureInfo.InvariantCulture));
                 _nodeIds[node] = (await CommandAsync(node, "CLUSTER", "MYID")).Trim();
             }
+
             await CommandAsync(0, "CLUSTER", "MEET", "127.0.0.1", "7001");
             await CommandAsync(0, "CLUSTER", "MEET", "127.0.0.1", "7002");
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
             for (var node = 0; node < 3; node++)
             {
                 while (!(await CommandAsync(node, "CLUSTER", "INFO")).Contains("cluster_state:ok", StringComparison.Ordinal))
+                {
                     await Task.Delay(100, deadline.Token);
+                }
             }
         }
         catch
@@ -198,23 +245,35 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
         ]);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         InvalidOperationException? lastPingError = null;
+
         while (true)
         {
             try
             {
-                if ((await CommandAsync(node, "PING")).Trim() == "PONG") break;
+                if ((await CommandAsync(node, "PING")).Trim() == "PONG")
+                {
+                    break;
+                }
             }
             catch (InvalidOperationException error)
             {
                 // Expected while the restarted server is still starting; kept for the timeout.
                 lastPingError = error;
             }
+
             if (deadline.IsCancellationRequested)
+            {
                 throw new TimeoutException($"Restarted primary {node} did not answer PING.", lastPingError);
+            }
+
             await Task.Delay(100, CancellationToken.None);
         }
+
         while (!(await CommandAsync(node, "CLUSTER", "INFO")).Contains("cluster_state:ok", StringComparison.Ordinal))
+        {
             await Task.Delay(100, deadline.Token);
+        }
+
         await CommandAsync(node, "CONFIG", "SET", "notify-keyspace-events", NotificationFlags);
     }
 
@@ -224,8 +283,12 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
     private async Task<string> ExecAsync(string[] arguments)
     {
         var result = await Container.ExecAsync(arguments);
+
         if (result.ExitCode != 0)
+        {
             throw new InvalidOperationException($"Cluster fixture command failed: {string.Join(' ', arguments)}; {result.Stdout} {result.Stderr}");
+        }
+
         return result.Stdout;
     }
 
@@ -234,7 +297,11 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
         for (var index = 0; ; index++)
         {
             var tag = index.ToString(CultureInfo.InvariantCulture);
-            if (ClusterHash.GetSlot(tag) == slot) return tag;
+
+            if (ClusterHash.GetSlot(tag) == slot)
+            {
+                return tag;
+            }
         }
     }
 

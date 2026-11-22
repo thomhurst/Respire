@@ -31,9 +31,17 @@ public class StandaloneCommandRetryTests
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, RetryableErrors = selection } });
+
 #pragma warning restore RESP010
-        if (retries) await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
-        else await Assert.That(async () => await client.GetStringAsync("key")).ThrowsExactly<RespireServerException>();
+        if (retries)
+        {
+            await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        }
+        else
+        {
+            await Assert.That(async () => await client.GetStringAsync("key")).ThrowsExactly<RespireServerException>();
+        }
+
         await Assert.That(reads).IsEqualTo(retries ? 2 : 1);
         // A later command confirms that the failure did not poison the next reply slot.
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
@@ -44,8 +52,7 @@ public class StandaloneCommandRetryTests
     [Arguments(false, true)]
     [Arguments(true, false)]
     [Arguments(true, true)]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "RESP010", Justification =
-        "Each wire case needs an isolated server, retry policy and capability negotiation.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "RESP010", Justification = "Each wire case needs an isolated server, retry policy and capability negotiation.")]
     public async Task HealthyRetryOwnersPreserveTypedAndCatalogReplies(bool redirects, bool catalog)
     {
         var reads = 0;
@@ -55,6 +62,7 @@ public class StandaloneCommandRetryTests
             : Setup(command);
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { EnableReplicaRedirects = redirects });
+
         for (var index = 0; index < 2; index++)
         {
             if (catalog)
@@ -62,8 +70,12 @@ public class StandaloneCommandRetryTests
                 using var result = await client.ExecuteAsync(RespireCommands.String.STRLEN, ["key"]);
                 await Assert.That(result.AsInteger()).IsEqualTo(5L);
             }
-            else await Assert.That(await client.Strings.LengthAsync("key")).IsEqualTo(5L);
+            else
+            {
+                await Assert.That(await client.Strings.LengthAsync("key")).IsEqualTo(5L);
+            }
         }
+
         await Assert.That(reads).IsEqualTo(3);
         await Assert.That(server.ReceivedCommands.Contains("CLIENT CAPA REDIRECT")).IsEqualTo(redirects);
     }
@@ -82,17 +94,27 @@ public class StandaloneCommandRetryTests
             : Setup(command);
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+
 #pragma warning restore RESP010
         switch (shape)
         {
-            case "string": await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value"); break;
-            case "bytes": await Assert.That((await client.GetBytesAsync("key"))!).IsEquivalentTo("value"u8.ToArray()); break;
-            case "converted": await Assert.That(await client.GetAsync<string>("key")).IsEqualTo("value"); break;
+            case "string":
+                await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+                break;
+            case "bytes":
+                await Assert.That((await client.GetBytesAsync("key"))!).IsEquivalentTo("value"u8.ToArray());
+                break;
+            case "converted":
+                await Assert.That(await client.GetAsync<string>("key")).IsEqualTo("value");
+                break;
             case "catalog":
                 using (var result = await client.ExecuteAsync(RespireCommands.String.GET, ["key"]))
+                {
                     await Assert.That(result.AsString()).IsEqualTo("value");
+                }
                 break;
         }
+
         await Assert.That(reads).IsEqualTo(2);
     }
 
@@ -109,13 +131,19 @@ public class StandaloneCommandRetryTests
             : Setup(command);
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+
 #pragma warning restore RESP010
         if (name == "GEOSEARCH")
+        {
             await Assert.That((await client.Geo.SearchAsync("places", RespireGeoSearchOrigin.FromMember("origin"),
                 RespireGeoSearchShape.Circle(1)))[0].Member).IsEqualTo("one");
+        }
         else
+        {
             await Assert.That((await client.Bitmaps.FieldReadOnlyAsync("bits",
                 RespireBitFieldOperation.Get(RespireBitFieldEncoding.Unsigned(8), RespireBitFieldOffset.Bits(0))))[0]).IsEqualTo(7L);
+        }
+
         await Assert.That(reads).IsEqualTo(2);
     }
 
@@ -140,8 +168,17 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.ReplyOverride = (_, command) =>
         {
-            if (command != "GET key") return Setup(command);
-            if (Interlocked.Increment(ref reads) == 1) { server.CloseConnections(); return null; }
+            if (command != "GET key")
+            {
+                return Setup(command);
+            }
+
+            if (Interlocked.Increment(ref reads) == 1)
+            {
+                server.CloseConnections();
+                return null;
+            }
+
             return "$5\r\nvalue\r\n"u8.ToArray();
         };
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
@@ -164,7 +201,13 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.ReplyOverride = (_, command) => command == "GET key"
             ? CountError() : Setup(command);
-        byte[] CountError() { Interlocked.Increment(ref reads); return "-LOADING busy\r\n"u8.ToArray(); }
+
+        byte[] CountError()
+        {
+            Interlocked.Increment(ref reads);
+            return "-LOADING busy\r\n"u8.ToArray();
+        }
+
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = policyPresent ? new() { MaxAttempts = 1 } : null });
@@ -182,23 +225,40 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.ReplyOverride = (_, command) =>
         {
-            if (command != "INCR counter") return Setup(command);
+            if (command != "INCR counter")
+            {
+                return Setup(command);
+            }
+
             var current = Interlocked.Increment(ref effects);
-            if (current == 1) { server.CloseConnections(); return null; }
+
+            if (current == 1)
+            {
+                server.CloseConnections();
+                return null;
+            }
+
             return ":2\r\n"u8.ToArray();
         };
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
+
 #pragma warning restore RESP010
         if (expectedEffects == 1)
-            await Assert.That(async () => { using var result = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]); })
+        {
+            await Assert.That(async () =>
+                {
+                    using var result = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]);
+                })
                 .Throws<RespireConnectionException>();
+        }
         else
         {
             using var result = await client.ExecuteAsync(RespireCommands.String.INCR, ["counter"]);
             await Assert.That(result.AsInteger()).IsEqualTo(2);
         }
+
         await Assert.That(effects).IsEqualTo(expectedEffects);
     }
 
@@ -211,17 +271,30 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.ReplyOverride = (_, command) =>
         {
-            if (!command.StartsWith("SET key ", StringComparison.Ordinal)) return Setup(command);
-            if (Interlocked.Increment(ref sends) != 1) return FakeRespServer.OkReply;
+            if (!command.StartsWith("SET key ", StringComparison.Ordinal))
+            {
+                return Setup(command);
+            }
+
+            if (Interlocked.Increment(ref sends) != 1)
+            {
+                return FakeRespServer.OkReply;
+            }
+
             first.TrySetResult();
             return "-TRYAGAIN busy\r\n"u8.ToArray();
         };
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
-            RetryPolicy = new() { MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins,
-                InitialBackoff = TimeSpan.FromMilliseconds(100), Jitter = 0 },
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
+            RetryPolicy = new()
+            {
+                MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins,
+                InitialBackoff = TimeSpan.FromMilliseconds(100),
+                Jitter = 0
+            },
         });
 #pragma warning restore RESP010
         var pending = client.SetAsync("key", payload).AsTask();
@@ -240,7 +313,11 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.ReplyOverride = (_, command) =>
         {
-            if (command != "GET key") return Setup(command);
+            if (command != "GET key")
+            {
+                return Setup(command);
+            }
+
             cancellation.Cancel();
             return "-TRYAGAIN busy\r\n"u8.ToArray();
         };
@@ -262,12 +339,20 @@ public class StandaloneCommandRetryTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, meter) =>
         {
-            if (instrument.Name == "redis.client.errors") meter.EnableMeasurementEvents(instrument);
+            if (instrument.Name == "redis.client.errors")
+            {
+                meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             foreach (var tag in tags)
-                if (tag.Key == "redis.client.errors.internal" && Equals(tag.Value, true)) handled.TrySetResult();
+            {
+                if (tag.Key == "redis.client.errors.internal" && Equals(tag.Value, true))
+                {
+                    handled.TrySetResult();
+                }
+            }
         });
         listener.Start();
         await using var server = Server();
@@ -319,9 +404,17 @@ public class StandaloneCommandRetryTests
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero } });
+
 #pragma warning restore RESP010
-        if (exhaust) await Assert.That(async () => await client.GetStringAsync("key")).ThrowsExactly<RespireServerException>();
-        else await Assert.That(await client.GetStringAsync("key")).IsEqualTo("x");
+        if (exhaust)
+        {
+            await Assert.That(async () => await client.GetStringAsync("key")).ThrowsExactly<RespireServerException>();
+        }
+        else
+        {
+            await Assert.That(await client.GetStringAsync("key")).IsEqualTo("x");
+        }
+
         await Assert.That(events["attempted"]).IsEqualTo(1);
         await Assert.That(events[exhaust ? "exhausted" : "succeeded"]).IsEqualTo(1);
         await Assert.That(events.Count).IsEqualTo(2);
@@ -342,21 +435,32 @@ public class StandaloneCommandRetryTests
         var descriptor = RespireCommands.All.ToArray().Single(command => command.Name == name);
         RespireValue[] arguments = name switch
         {
-            "CONFIG GET" => ["maxclients"], "CONFIG SET" => ["maxclients", "100"],
-            "GET" or "INCR" => ["key"], "SETNX" => ["key", "value"],
-            "HSET" => ["key", "field", "value"], _ => [],
+            "CONFIG GET" => ["maxclients"],
+            "CONFIG SET" => ["maxclients", "100"],
+            "GET" or "INCR" => ["key"],
+            "SETNX" => ["key", "value"],
+            "HSET" => ["key", "field", "value"],
+            _ => [],
         };
         var expectedCommand = name + (arguments.Length == 0 ? "" : " " + string.Join(' ', arguments.Select(argument => argument.ToString())));
         await using var server = Server();
         server.SuppressReply = command =>
         {
-            if (command != "ECHO occupy") return false;
+            if (command != "ECHO occupy")
+            {
+                return false;
+            }
+
             occupied.TrySetResult();
             return true;
         };
         server.ReplyOverride = (_, command) =>
         {
-            if (command == expectedCommand) Interlocked.Increment(ref effects);
+            if (command == expectedCommand)
+            {
+                Interlocked.Increment(ref effects);
+            }
+
             return Setup(command) ?? FakeRespServer.OkReply;
         };
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
@@ -370,7 +474,10 @@ public class StandaloneCommandRetryTests
         using var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(result.AsString()).IsEqualTo("OK");
         await Assert.That(effects).IsEqualTo(1);
-        await Assert.That(async () => { using var ignored = await occupying; }).Throws<RespireConnectionException>();
+        await Assert.That(async () =>
+        {
+            using var ignored = await occupying;
+        }).Throws<RespireConnectionException>();
     }
 
     [Test]
@@ -384,7 +491,11 @@ public class StandaloneCommandRetryTests
         server.GateCommand("GET key", release.Task);
         server.ReplyOverride = (_, command) =>
         {
-            if (command != "GET key") return Setup(command);
+            if (command != "GET key")
+            {
+                return Setup(command);
+            }
+
             return Interlocked.Increment(ref reads) == 1 ? "-TRYAGAIN busy\r\n"u8.ToArray() : "$5\r\nvalue\r\n"u8.ToArray();
         };
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
@@ -410,8 +521,13 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.SuppressReply = command =>
         {
-            if (command != "SET key value") return false;
-            received.TrySetResult(); return true;
+            if (command != "SET key value")
+            {
+                return false;
+            }
+
+            received.TrySetResult();
+            return true;
         };
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
@@ -439,8 +555,18 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.SuppressReply = command =>
         {
-            if (command == "SET key first") { firstSeen.TrySetResult(); return true; }
-            if (command == "STRLEN second") { secondSeen.TrySetResult(); return true; }
+            if (command == "SET key first")
+            {
+                firstSeen.TrySetResult();
+                return true;
+            }
+
+            if (command == "STRLEN second")
+            {
+                secondSeen.TrySetResult();
+                return true;
+            }
+
             return false;
         };
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
@@ -472,9 +598,12 @@ public class StandaloneCommandRetryTests
         // Compile both attempt paths before starting the deliberately short shared deadline.
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using (var warmup = await RespireClient.ConnectAsync(Options(server) with
-            { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero } }))
+        { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero } }))
+        {
 #pragma warning restore RESP010
             await Assert.That(await warmup.GetStringAsync("key")).IsEqualTo("x");
+        }
+
         reads = 0;
         server.DelayCommand("GET key", 150);
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
@@ -493,7 +622,10 @@ public class StandaloneCommandRetryTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = static (instrument, meter) =>
         {
-            if (instrument.Name == "respire.command.retries") meter.EnableMeasurementEvents(instrument);
+            if (instrument.Name == "respire.command.retries")
+            {
+                meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>(static (_, _, _, _) => throw new InvalidOperationException("exporter failed"));
         listener.Start();
@@ -519,7 +651,11 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.ReplyOverride = (_, command) =>
         {
-            if (!command.StartsWith(name + " key ", StringComparison.Ordinal)) return Setup(command);
+            if (!command.StartsWith(name + " key ", StringComparison.Ordinal))
+            {
+                return Setup(command);
+            }
+
             Interlocked.Increment(ref effects);
             return "-TRYAGAIN busy\r\n"u8.ToArray();
         };
@@ -530,10 +666,14 @@ public class StandaloneCommandRetryTests
         var descriptor = RespireCommands.All.ToArray().Single(command => command.Name == name);
         RespireValue[] arguments = name switch
         {
-            "SET" => ["key", "new", "GET"], "ZADD" => ["key", "INCR", "1", "member"],
+            "SET" => ["key", "new", "GET"],
+            "ZADD" => ["key", "INCR", "1", "member"],
             _ => ["key", "*", "field", "value"],
         };
-        await Assert.That(async () => { using var result = await client.ExecuteAsync(descriptor, arguments); })
+        await Assert.That(async () =>
+            {
+                using var result = await client.ExecuteAsync(descriptor, arguments);
+            })
             .ThrowsExactly<RespireServerException>();
         await Assert.That(effects).IsEqualTo(1);
     }
@@ -547,7 +687,11 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.ReplyOverride = (_, command) =>
         {
-            if (command != "SET key value") return Setup(command);
+            if (command != "SET key value")
+            {
+                return Setup(command);
+            }
+
             return Interlocked.Increment(ref effects) == 1 ? "-TRYAGAIN busy\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
@@ -558,15 +702,20 @@ public class StandaloneCommandRetryTests
             ? RespireCommands.String.SET.WithRetryCategory(RespireCommandRetryCategory.WriteLastWins)
             : RespireCommands.String.SET;
         RespireValue[] arguments = ["key", "value"];
+
         if (declared)
         {
             using var result = await client.ExecuteAsync(descriptor, arguments);
         }
         else
         {
-            await Assert.That(async () => { using var result = await client.ExecuteAsync(descriptor, arguments); })
+            await Assert.That(async () =>
+                {
+                    using var result = await client.ExecuteAsync(descriptor, arguments);
+                })
                 .ThrowsExactly<RespireServerException>();
         }
+
         await Assert.That(effects).IsEqualTo(expected);
     }
 
@@ -577,13 +726,21 @@ public class StandaloneCommandRetryTests
         await using var server = Server();
         server.ReplyOverride = (_, command) =>
         {
-            if (command != "GET key") return Setup(command);
-            Interlocked.Increment(ref effects); return "-LOADING busy\r\n"u8.ToArray();
+            if (command != "GET key")
+            {
+                return Setup(command);
+            }
+
+            Interlocked.Increment(ref effects);
+            return "-LOADING busy\r\n"u8.ToArray();
         };
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
 #pragma warning restore RESP010
-        await Assert.That(async () => { using var result = await client.ExecuteAsync("GET", ["key"]); })
+        await Assert.That(async () =>
+            {
+                using var result = await client.ExecuteAsync("GET", ["key"]);
+            })
             .ThrowsExactly<RespireServerException>();
         await Assert.That(effects).IsEqualTo(1);
     }
@@ -609,12 +766,21 @@ public class StandaloneCommandRetryTests
         IRespireCommandQueue queue = transactional ? transaction : batch;
         var pending = queue.Strings.GetString("key");
         var successful = queue.Strings.GetString("other");
-        if (transactional) await transaction.CommitAsync();
-        else await batch.TryExecuteAsync();
+
+        if (transactional)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch.TryExecuteAsync();
+        }
+
         await Assert.That(pending.Error).IsTypeOf<RespireServerException>();
         await Assert.That(successful.Result).IsEqualTo("ok");
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(3);
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET other")).IsEqualTo(3);
+
         if (transactional)
         {
             await Assert.That(server.ReceivedCommands.Count(command => command == "MULTI")).IsEqualTo(3);
@@ -632,16 +798,26 @@ public class StandaloneCommandRetryTests
         listener.InstrumentPublished = static (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
+            {
                 if (tag.Key == "redis.client.errors.internal")
                 {
-                    if (Equals(tag.Value, true)) Interlocked.Add(ref internalErrors, value);
-                    else Interlocked.Add(ref finalErrors, value);
+                    if (Equals(tag.Value, true))
+                    {
+                        Interlocked.Add(ref internalErrors, value);
+                    }
+                    else
+                    {
+                        Interlocked.Add(ref finalErrors, value);
+                    }
                 }
+            }
         });
         listener.Start();
         var reads = 0;
@@ -651,9 +827,13 @@ public class StandaloneCommandRetryTests
             : Setup(command);
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+
 #pragma warning restore RESP010
         for (var index = 0; index < 128; index++)
+        {
             await Assert.That(await client.GetStringAsync("key")).IsEqualTo("x");
+        }
+
         await Assert.That(internalErrors).IsEqualTo(128);
         await Assert.That(finalErrors).IsEqualTo(0);
         server.ReplyOverride = (_, command) => command == "GET key" ? "-LOADING busy\r\n"u8.ToArray() : Setup(command);
@@ -668,13 +848,19 @@ public class StandaloneCommandRetryTests
         listener.InstrumentPublished = static (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.command.retries")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
+            {
                 if (tag.Key == "respire.command.retry.outcome")
+                {
                     events.AddOrUpdate((string)tag.Value!, value, (_, old) => old + value);
+                }
+            }
         });
         listener.Start();
         return listener;
@@ -682,22 +868,31 @@ public class StandaloneCommandRetryTests
 
     private static FakeRespServer Server() => new(32, FakeRespServer.OkReply)
     { ReplyOverride = (_, command) => Setup(command) };
+
     private static byte[]? Setup(string command) => command switch
     {
         _ when command.StartsWith("HELLO", StringComparison.Ordinal) => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
         "CLIENT ID" => ":1\r\n"u8.ToArray(),
         _ => null,
     };
+
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespireProtocol.Resp2,
-        ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(3),
+        Endpoints = { new("127.0.0.1", server.Port) },
+        Protocol = RespireProtocol.Resp2,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(3),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
     };
+
     private static async Task<Exception> Failure(Func<Task> operation)
     {
-        try { await operation(); }
+        try
+        {
+            await operation();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 }

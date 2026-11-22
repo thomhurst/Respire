@@ -14,10 +14,12 @@ internal static class ClusterHash
     {
         var value = key.AsSpan();
         var open = value.IndexOf('{');
+
         if (open >= 0)
         {
             var tagged = value[(open + 1)..];
             var close = tagged.IndexOf('}');
+
             if (close > 0)
             {
                 value = tagged[..close];
@@ -25,6 +27,7 @@ internal static class ClusterHash
         }
 
         ushort crc = 0;
+
         foreach (var character in value)
         {
             if (character > 0x7f)
@@ -65,10 +68,12 @@ internal static class ClusterHash
     internal static int GetSlot(ReadOnlySpan<byte> key)
     {
         var open = key.IndexOf((byte)'{');
+
         if (open >= 0)
         {
             var tagged = key[(open + 1)..];
             var close = tagged.IndexOf((byte)'}');
+
             if (close > 0)
             {
                 key = tagged[..close];
@@ -82,8 +87,17 @@ internal static class ClusterHash
     internal static int GetTagSlot(ReadOnlySpan<byte> first, ReadOnlySpan<byte> second)
     {
         ushort crc = 0;
-        foreach (var value in first) crc = Update(crc, value);
-        foreach (var value in second) crc = Update(crc, value);
+
+        foreach (var value in first)
+        {
+            crc = Update(crc, value);
+        }
+
+        foreach (var value in second)
+        {
+            crc = Update(crc, value);
+        }
+
         return crc & (SlotCount - 1);
     }
 
@@ -91,16 +105,27 @@ internal static class ClusterHash
     internal static int GetTagSlot(ReadOnlySpan<char> first, ReadOnlySpan<char> second)
     {
         ushort crc = 0;
+
         foreach (var value in first)
         {
-            if (value > 0x7f) return GetJoinedUtf8Slot(first, second);
+            if (value > 0x7f)
+            {
+                return GetJoinedUtf8Slot(first, second);
+            }
+
             crc = Update(crc, (byte)value);
         }
+
         foreach (var value in second)
         {
-            if (value > 0x7f) return GetJoinedUtf8Slot(first, second);
+            if (value > 0x7f)
+            {
+                return GetJoinedUtf8Slot(first, second);
+            }
+
             crc = Update(crc, (byte)value);
         }
+
         return crc & (SlotCount - 1);
     }
 
@@ -108,10 +133,11 @@ internal static class ClusterHash
     {
         var length = checked(first.Length + second.Length);
         char[]? rented = null;
-        // stackalloc-audit[083562931e8ebb2c]: init: the two CopyTo calls fill tag[..first.Length] and tag[first.Length..length];
+        // stackalloc-audit[9c7e85436c24a49e]: init: the two CopyTo calls fill tag[..first.Length] and tag[first.Length..length];
         // read: GetUtf8Slot reads tag[..length], exactly the copied chars; failure: a copy throw exits through finally before any read.
         Span<char> tag = length <= StackallocThreshold ? stackalloc char[length]
             : (rented = ArrayPool<char>.Shared.Rent(length));
+
         try
         {
             first.CopyTo(tag);
@@ -120,7 +146,10 @@ internal static class ClusterHash
         }
         finally
         {
-            if (rented is not null) ArrayPool<char>.Shared.Return(rented, clearArray: true);
+            if (rented is not null)
+            {
+                ArrayPool<char>.Shared.Return(rented, clearArray: true);
+            }
         }
     }
 
@@ -129,24 +158,39 @@ internal static class ClusterHash
     {
         slot = 0;
         var open = -1;
+
         for (var index = 0; index < pattern.Length; index++)
         {
             var value = pattern[index];
-            if (value is (byte)'*' or (byte)'?' or (byte)'[' or (byte)'\\') return false;
-            if (open < 0 && value == (byte)'{') open = index;
+
+            if (value is (byte)'*' or (byte)'?' or (byte)'[' or (byte)'\\')
+            {
+                return false;
+            }
+
+            if (open < 0 && value == (byte)'{')
+            {
+                open = index;
+            }
             else if (open >= 0 && value == (byte)'}')
             {
-                if (index == open + 1) return false; // Redis hashes the whole key after an empty first tag.
+                if (index == open + 1)
+                {
+                    return false; // Redis hashes the whole key after an empty first tag.
+                }
+
                 slot = GetCrcSlot(pattern[(open + 1)..index]);
                 return true;
             }
         }
+
         return false;
     }
 
     private static int GetCrcSlot(ReadOnlySpan<byte> key)
     {
         ushort crc = 0;
+
         foreach (var value in key)
         {
             crc = Update(crc, value);
@@ -172,9 +216,11 @@ internal static class ClusterHash
     private static ushort[] CreateCrc16Table()
     {
         var table = new ushort[256];
+
         for (var value = 0; value < table.Length; value++)
         {
             var crc = (ushort)(value << 8);
+
             for (var bit = 0; bit < 8; bit++)
             {
                 crc = (ushort)((crc & 0x8000) != 0 ? (crc << 1) ^ 0x1021 : crc << 1);
@@ -198,16 +244,19 @@ internal static class ClusterHash
             // stackalloc-audit[08445d51344a36f0]: init: every iteration writes both bytes before use;
             // read: Contains and GetCrcSlot read those 2 bytes; failure: the only throw is after the loop and reads nothing.
             Span<byte> candidateBytes = stackalloc byte[RemovalLeaseTagLength];
+
             for (var candidate = 0; candidate < ushort.MaxValue && remaining > 0; candidate++)
             {
                 candidateBytes[0] = (byte)(candidate >> 8);
                 candidateBytes[1] = (byte)candidate;
+
                 if (candidateBytes.Contains((byte)'}'))
                 {
                     continue;
                 }
 
                 var slot = GetCrcSlot(candidateBytes);
+
                 if (tags[slot] == ushort.MaxValue)
                 {
                     tags[slot] = (ushort)candidate;

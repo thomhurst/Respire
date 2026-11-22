@@ -14,9 +14,13 @@ internal sealed partial class SentinelRouter
         lock (_gate)
         {
             ThrowIfBacklogUnavailable();
+
             if (_backlog is null)
+            {
                 _backlog = new(core.Options.BacklogCapacity, _lifetime.Token, ThrowIfBacklogUnavailable,
                     () => Current?.Multiplexer.ActiveConnectionEndpoint, token => WaitForBacklogConnectionAsync(token));
+            }
+
             return _backlog;
         }
     }
@@ -30,19 +34,25 @@ internal sealed partial class SentinelRouter
         RespireTelemetry.ErrorObservation observation = default)
     {
         var budget = new SentinelRetryBudget(core.Options.ReconnectPolicy);
+
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             ThrowIfBacklogUnavailable();
             Generation? generation = null;
+
             try
             {
                 // A disconnected generation is retired, not reconnected in isolation. Resolve
                 // and ROLE-validate the current primary afresh for every queued head.
                 generation = await GetGenerationAsync(cancellationToken, observation: observation).ConfigureAwait(false);
                 var connection = generation.Multiplexer.GetConnection();
+
                 if (generation.IsRetired || !ReferenceEquals(Current, generation))
+                {
                     throw new RespireConnectionRetiredException(connection.Host, connection.Port);
+                }
+
                 return connection;
             }
             catch (ObjectDisposedException error) when (generation is { IsRetired: true }
@@ -60,11 +70,19 @@ internal sealed partial class SentinelRouter
                 // Each resolver call already bounds its candidate fallbacks. This separate
                 // budget bounds repeated discovery rounds for this unsent queue head.
                 if (!budget.TryStartRetry())
+                {
                     throw new RespireReconnectLimitException("Sentinel backlog recovery exhausted its configured attempts.", error)
                     { Endpoint = error.Endpoint };
+                }
+
                 ReadEndpointRouter.RecordCandidateFailure(observation, error, observation.Endpoint ?? error.Endpoint);
                 var delay = budget.GetDelay();
-                if (delay < SentinelRetryBudget.MinimumBacklogDelay) delay = SentinelRetryBudget.MinimumBacklogDelay;
+
+                if (delay < SentinelRetryBudget.MinimumBacklogDelay)
+                {
+                    delay = SentinelRetryBudget.MinimumBacklogDelay;
+                }
+
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }

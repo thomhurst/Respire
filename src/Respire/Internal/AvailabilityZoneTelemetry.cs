@@ -15,7 +15,9 @@ internal static class AvailabilityZoneTelemetry
     internal sealed class Counter
     {
         private long _value;
+
         internal void Increment() => Interlocked.Increment(ref _value);
+
         internal long Value => Interlocked.Read(ref _value);
     }
 
@@ -36,12 +38,28 @@ internal static class AvailabilityZoneTelemetry
 
         internal Counter ForZone(string? zone)
         {
-            if (zone is null) return _unknown;
-            if (zone.Length > MaximumZoneNameLength) return _overflow;
+            if (zone is null)
+            {
+                return _unknown;
+            }
+
+            if (zone.Length > MaximumZoneNameLength)
+            {
+                return _overflow;
+            }
+
             lock (_gate)
             {
-                if (_zones.TryGetValue(zone, out var counter)) return counter;
-                if (_zones.Count == MaximumZones) return _overflow;
+                if (_zones.TryGetValue(zone, out var counter))
+                {
+                    return counter;
+                }
+
+                if (_zones.Count == MaximumZones)
+                {
+                    return _overflow;
+                }
+
                 counter = new();
                 _zones.Add(zone, counter);
                 // Zone discovery is infrequent and bounded. Publish immutable membership once;
@@ -54,10 +72,14 @@ internal static class AvailabilityZoneTelemetry
         internal IEnumerable<Measurement<long>> Observe()
         {
             var zones = Volatile.Read(ref _snapshot);
+
             foreach (var pair in zones)
+            {
                 yield return new(pair.Value.Value,
                     new KeyValuePair<string, object?>("server.availability_zone", pair.Key),
                     new KeyValuePair<string, object?>("respire.availability_zone.status", "known"));
+            }
+
             yield return new(_unknown.Value,
                 new KeyValuePair<string, object?>("respire.availability_zone.status", "unknown"));
             yield return new(_overflow.Value,

@@ -18,28 +18,47 @@ public class DashboardCheckpointConcurrencyTests
         var reading = DashboardState.ReadCheckpointsAsync(ids, async (id, token) =>
         {
             var count = Interlocked.Increment(ref active);
-            if (count > 4) Interlocked.Exchange(ref exceededBound, 1);
-            if (count == 4) started.TrySetResult();
+
+            if (count > 4)
+            {
+                Interlocked.Exchange(ref exceededBound, 1);
+            }
+
+            if (count == 4)
+            {
+                started.TrySetResult();
+            }
+
             try
             {
                 await release.Task.WaitAsync(token);
-                if (id == ids[1]) throw new RespireException("unavailable");
+
+                if (id == ids[1])
+                {
+                    throw new RespireException("unavailable");
+                }
+
                 return null;
             }
             finally { Interlocked.Decrement(ref active); }
         }, timeout.Token);
+
         try
         {
             await started.Task.WaitAsync(timeout.Token);
             await Assert.That(active).IsEqualTo(4);
         }
         finally { release.TrySetResult(); }
+
         var result = await reading;
         await Assert.That(exceededBound).IsEqualTo(0);
         await Assert.That(result.Unavailable).IsTrue();
         await Assert.That(result.Checkpoints.Count).IsEqualTo(ids.Length - 1);
+
         for (var i = 0; i < ids.Length; i++)
+        {
             await Assert.That(result.Checkpoints.ContainsKey(ids[i])).IsEqualTo(i != 1);
+        }
     }
 
     [Test]

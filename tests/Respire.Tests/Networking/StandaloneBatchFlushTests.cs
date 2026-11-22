@@ -26,6 +26,7 @@ public class StandaloneBatchFlushTests
             connectionCount: 2, options: new RespireConnectionOptions { Protocol = RespireProtocol.Resp2 });
         var retired = multiplexer.GetConnection();
         await retired.RetireAsync();
+
         if (pinned)
         {
             await Assert.That(async () => await retired.EnqueuePinnedAsync(new RawCommand(FakeRespServer.PingFrame),
@@ -61,10 +62,18 @@ public class StandaloneBatchFlushTests
     internal static int? RunIsolatedAllocationProbe()
     {
         var runtime = Environment.GetEnvironmentVariable(AllocationProbeMode);
-        if (runtime is null) return null;
+
+        if (runtime is null)
+        {
+            return null;
+        }
+
         try
         {
-            if (runtime != Environment.Version.ToString()) throw new InvalidOperationException("Probe runtime differs from parent.");
+            if (runtime != Environment.Version.ToString())
+            {
+                throw new InvalidOperationException("Probe runtime differs from parent.");
+            }
             // A pool thread lets the first command run the flush loop inline, as in production.
             Task.Run(MeasureBatchStartAsync).GetAwaiter().GetResult();
             return 0;
@@ -76,6 +85,7 @@ public class StandaloneBatchFlushTests
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
         for (var warmup = 0; warmup < 32; warmup++)
         {
             using var warm = CreateBatch(client, 100);
@@ -91,9 +101,11 @@ public class StandaloneBatchFlushTests
         // Includes the execution state machine; excludes queued operations and response-thread work.
         // The control adds one real Task per operation, so the limit must catch that regression.
         if (bytes >= MaxStartBytes || controlBytes < MaxStartBytes || controlBytes - bytes < 100 * MinimumTaskBytes)
+        {
             throw new InvalidOperationException(
                 $"Expected under {MaxStartBytes} bytes to start 100 operations and a control of at least {MaxStartBytes} bytes; "
                 + $"observed {bytes} and {controlBytes} bytes.");
+        }
     }
 
     private static async Task<long> MeasureAndCompleteAsync(FakeRespServer server, RespireClient client, byte[] replyBytes,
@@ -121,11 +133,15 @@ public class StandaloneBatchFlushTests
         PrimeStartingThread();
         var before = GC.GetAllocatedBytesForCurrentThread();
         pending = batch.TryExecuteAsync();
+
         if (allocateControl)
         {
             for (var index = 0; index < s_controlTasks.Length; index++)
+            {
                 s_controlTasks[index] = new Task<long>(s_controlTaskBody);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -144,13 +160,22 @@ public class StandaloneBatchFlushTests
         ArrayPool<ValueTask<RespValue>>.Shared.Return(ArrayPool<ValueTask<RespValue>>.Shared.Rent(100), clearArray: true);
         ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(
             ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(100), clearArray: true);
-        if (s_serializeScratch.GetValue(null) is null) s_serializeScratch.SetValue(null, new WriteBuffer(4 * 1024));
+
+        if (s_serializeScratch.GetValue(null) is null)
+        {
+            s_serializeScratch.SetValue(null, new WriteBuffer(4 * 1024));
+        }
     }
 
     private static RespireBatch CreateBatch(RespireClient client, int count)
     {
         var batch = client.CreateBatch();
-        for (var index = 0; index < count; index++) batch.Increment($"allocation:{index}");
+
+        for (var index = 0; index < count; index++)
+        {
+            batch.Increment($"allocation:{index}");
+        }
+
         return batch;
     }
 
@@ -165,11 +190,13 @@ public class StandaloneBatchFlushTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             LibraryName = null, // Count only the batch's transport writes.
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             TestingStreamFactory = async (host, port, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -180,7 +207,11 @@ public class StandaloneBatchFlushTests
         });
         using var batch = client.CreateBatch();
         var pending = new RespirePending<long>[count];
-        for (var index = 0; index < count; index++) pending[index] = batch.Increment($"counter:{index}");
+
+        for (var index = 0; index < count; index++)
+        {
+            pending[index] = batch.Increment($"counter:{index}");
+        }
 
         // Explicit pool dispatch exercises the inline flush wake-up that split idle batches.
         await Task.Run(async () => await batch.ExecuteAsync());
@@ -189,7 +220,11 @@ public class StandaloneBatchFlushTests
         await Assert.That(transport.WriteCount).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             Enumerable.Range(0, count).Select(index => $"INCR counter:{index}"), CollectionOrdering.Matching);
-        foreach (var result in pending) await Assert.That(result.Result).IsEqualTo(1);
+
+        foreach (var result in pending)
+        {
+            await Assert.That(result.Result).IsEqualTo(1);
+        }
     }
 
     [Test]
@@ -200,12 +235,19 @@ public class StandaloneBatchFlushTests
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 2,
             CircuitBreaker = circuitEnabled ? new() : null,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         using var batch = client.CreateBatch();
-        for (var index = 0; index < 100; index++) _ = batch.Increment($"counter:{index}");
+
+        for (var index = 0; index < 100; index++)
+        {
+            _ = batch.Increment($"counter:{index}");
+        }
+
         await batch.ExecuteAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             Enumerable.Range(0, 100).Select(index => $"INCR counter:{index}"), CollectionOrdering.Matching);
@@ -224,14 +266,20 @@ public class StandaloneBatchFlushTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 2,
             CommandTimeout = TimeSpan.FromMilliseconds(500),
             CircuitBreaker = circuitEnabled ? new() { MinimumFailureCount = 101 } : null,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         using var batch = client.CreateBatch();
         var pending = new RespirePending<long>[100];
-        for (var index = 0; index < pending.Length; index++) pending[index] = batch.Increment($"counter:{index}");
+
+        for (var index = 0; index < pending.Length; index++)
+        {
+            pending[index] = batch.Increment($"counter:{index}");
+        }
 
         // A restarted timeout for each of the 98 capacity waiters takes about 49 seconds.
         Task execution = durability
@@ -239,11 +287,13 @@ public class StandaloneBatchFlushTests
             : batch.ExecuteAsync().AsTask();
         await Assert.That(async () => await execution.WaitAsync(TimeSpan.FromSeconds(3)))
             .ThrowsExactly<RespireTimeoutException>();
+
         foreach (var result in pending)
         {
             await Assert.That(result.IsCompleted).IsTrue();
             await Assert.That(result.Error).IsTypeOf<RespireTimeoutException>();
         }
+
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("INCR ", StringComparison.Ordinal)))
             .IsEqualTo(2);
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("WAIT", StringComparison.Ordinal)))
@@ -260,7 +310,8 @@ public class StandaloneBatchFlushTests
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray()) { SuppressReply = _ => true };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             MaxInflightCommands = boundedRing ? 2 : 128,
             CommandTimeout = TimeSpan.FromSeconds(1),
             CircuitBreaker = circuitEnabled ? new() : null,
@@ -268,7 +319,12 @@ public class StandaloneBatchFlushTests
         });
         using var batch = client.CreateBatch();
         var pending = new RespirePending<long>[3];
-        for (var index = 0; index < pending.Length; index++) pending[index] = batch.Increment($"counter:{index}");
+
+        for (var index = 0; index < pending.Length; index++)
+        {
+            pending[index] = batch.Increment($"counter:{index}");
+        }
+
         var connection = client.Core.Multiplexer!.GetConnection();
         var gate = typeof(RespireConnection).GetField("_writeGate", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(connection)!;
@@ -277,20 +333,27 @@ public class StandaloneBatchFlushTests
         var holder = new Thread(() =>
         {
             gate.GetType().GetMethod("Enter")!.Invoke(gate, null);
+
             try
             {
                 held.SetResult();
                 release.Wait(TimeSpan.FromSeconds(15));
             }
             finally { gate.GetType().GetMethod("Exit")!.Invoke(gate, null); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         var started = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
         var producer = new Thread(() =>
         {
-            try { started.SetResult(batch.ExecuteAsync().AsTask()); }
+            try
+            {
+                started.SetResult(batch.ExecuteAsync().AsTask());
+            }
             catch (Exception error) { started.SetException(error); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         holder.Start();
+
         try
         {
             await held.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -302,12 +365,14 @@ public class StandaloneBatchFlushTests
                 await Assert.That(started.Task.IsCompleted).IsFalse();
                 await Task.Delay(1, guard.Token);
             }
+
             await Task.Delay(TimeSpan.FromMilliseconds(1_100));
             release.Set();
             var execution = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             // An expired budget must not become another full one-second timeout after admission.
             await Assert.That(async () => await execution.WaitAsync(TimeSpan.FromMilliseconds(750)))
                 .ThrowsExactly<RespireTimeoutException>();
+
             foreach (var result in pending)
             {
                 await Assert.That(result.IsCompleted).IsTrue();
@@ -318,10 +383,18 @@ public class StandaloneBatchFlushTests
         {
             release.Set();
             holder.Join(TimeSpan.FromSeconds(5));
-            if ((producer.ThreadState & ThreadState.Unstarted) == 0) producer.Join(TimeSpan.FromSeconds(5));
+
+            if ((producer.ThreadState & ThreadState.Unstarted) == 0)
+            {
+                producer.Join(TimeSpan.FromSeconds(5));
+            }
+
             if (started.Task.IsCompletedSuccessfully)
             {
-                try { await started.Task.Result.WaitAsync(TimeSpan.FromSeconds(5)); }
+                try
+                {
+                    await started.Task.Result.WaitAsync(TimeSpan.FromSeconds(5));
+                }
                 catch (RespireTimeoutException) { }
             }
         }
@@ -336,20 +409,32 @@ public class StandaloneBatchFlushTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, MaxInflightCommands = 2,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            MaxInflightCommands = 2,
             CommandTimeout = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         using var cancellation = new CancellationTokenSource();
         using var batch = client.CreateBatch();
         var pending = new RespirePending<long>[100];
-        for (var index = 0; index < pending.Length; index++) pending[index] = batch.Increment($"counter:{index}");
+
+        for (var index = 0; index < pending.Length; index++)
+        {
+            pending[index] = batch.Increment($"counter:{index}");
+        }
+
         var execution = batch.TryExecuteAsync(cancellation.Token);
         await WaitForCommandsAsync(server, 2).WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
         var result = await execution.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(result.Failures.Count).IsEqualTo(pending.Length);
-        foreach (var operation in pending) await Assert.That(operation.IsCompleted).IsTrue();
+
+        foreach (var operation in pending)
+        {
+            await Assert.That(operation.IsCompleted).IsTrue();
+        }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(2);
 
         // Late replies release the occupied slots without borrowing the next command's reply.
@@ -406,38 +491,67 @@ public class StandaloneBatchFlushTests
 
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
     {
-        while (server.CommandsSeen < count) await Task.Delay(1);
+        while (server.CommandsSeen < count)
+        {
+            await Task.Delay(1);
+        }
     }
 
     // The existing transport factory keeps write instrumentation outside production code.
     private sealed class CountingStream(Stream inner) : Stream
     {
         private int _writeCount;
+
         internal int WriteCount => Volatile.Read(ref _writeCount);
-        internal TaskCompletionSource Written { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Written
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override bool CanRead => inner.CanRead;
+
         public override bool CanSeek => inner.CanSeek;
+
         public override bool CanWrite => inner.CanWrite;
+
         public override long Length => inner.Length;
-        public override long Position { get => inner.Position; set => inner.Position = value; }
+
+        public override long Position
+        {
+            get => inner.Position; set => inner.Position = value;
+        }
+
         public override void Flush() => inner.Flush();
+
         public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             => inner.ReadAsync(buffer, cancellationToken);
+
         public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+
         public override void SetLength(long value) => inner.SetLength(value);
+
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
             await inner.WriteAsync(buffer, cancellationToken);
             Interlocked.Increment(ref _writeCount);
             Written.TrySetResult();
         }
+
         protected override void Dispose(bool disposing)
         {
-            if (disposing) inner.Dispose();
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
             base.Dispose(disposing);
         }
+
         public override ValueTask DisposeAsync() => inner.DisposeAsync();
     }
 }

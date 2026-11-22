@@ -10,7 +10,10 @@ namespace Respire.Coordination.Tests;
 public class CompositeRateLimiterTests
 {
     [ClassDataSource<SharedRedis74>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74 Redis { get; init; }
+    public required SharedRedis74 Redis
+    {
+        get; init;
+    }
 
     [Test]
     [Arguments(1)]
@@ -54,8 +57,12 @@ public class CompositeRateLimiterTests
         await using var limiter = client.Coordination.RateLimiters.Composite(key, limits);
         using var emptyProbe = await limiter.AcquireAsync(0);
         await Assert.That(emptyProbe.IsAcquired).IsTrue();
+
         using (var exists = await client.ExecuteAsync("EXISTS", [key]))
+        {
             await Assert.That(exists.AsInteger()).IsEqualTo(0);
+        }
+
         using var first = await limiter.AcquireAsync(2);
         await Assert.That(first.IsAcquired).IsTrue();
         var before = await ReadStateAsync(client, key);
@@ -80,11 +87,13 @@ public class CompositeRateLimiterTests
             RespireRateLimit.FixedWindow(3, TimeSpan.FromMinutes(1)),
             RespireRateLimit.SlidingWindow(3, TimeSpan.FromMinutes(2), 2),
             RespireRateLimit.TokenBucket(3, 1, TimeSpan.FromHours(1))];
+
         using (var original = client.Coordination.RateLimiters.Composite(key, limits))
         {
             using var lease = await original.AcquireAsync(3);
             await Assert.That(lease.IsAcquired).IsTrue();
         }
+
         await using var replacement = client.Coordination.RateLimiters.Composite(key, limits);
         using var denied = await replacement.AcquireAsync(2);
         await Assert.That(denied.IsAcquired).IsFalse();
@@ -160,7 +169,12 @@ public class CompositeRateLimiterTests
         using var cancellation = new CancellationTokenSource();
         var pending = limiter.AcquireAsync(1, cancellation.Token).AsTask();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (limiter.GetStatistics()!.CurrentQueuedCount != 1) await Task.Delay(1, deadline.Token);
+
+        while (limiter.GetStatistics()!.CurrentQueuedCount != 1)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         await cancellation.CancelAsync();
         await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
         var disposed = limiter.AcquireAsync().AsTask();
@@ -178,7 +192,10 @@ public class CompositeRateLimiterTests
 public class CompositeRateLimiterClusterTests
 {
     [ClassDataSource<SharedRedis74Cluster>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74Cluster Redis { get; init; }
+    public required SharedRedis74Cluster Redis
+    {
+        get; init;
+    }
 
     [Test]
     public async Task CompositeUsesOneClusterKeyWithoutRequiringHashTags()

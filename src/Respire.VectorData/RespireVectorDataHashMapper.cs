@@ -27,14 +27,23 @@ public abstract class RespireVectorDataHashMapper<TRecord> : RespireVectorDataMa
 public sealed record RespireVectorDataVectorField(string PropertyName, string StorageName, int Dimensions)
 {
     /// <summary>JSON property path. Defaults to <c>$.StorageName</c>; ignored by hash mappings.</summary>
-    public string? JsonPath { get; init; }
+    public string? JsonPath
+    {
+        get; init;
+    }
 
     /// <summary>Distance metric for search. Lower scores are better: COSINE is cosine distance,
     /// L2 is squared Euclidean distance, and IP is negative dot product (Redis's IP score minus 1).</summary>
-    public RespireSearchDistanceMetric DistanceMetric { get; init; } = RespireSearchDistanceMetric.Cosine;
+    public RespireSearchDistanceMetric DistanceMetric
+    {
+        get; init;
+    } = RespireSearchDistanceMetric.Cosine;
 
     /// <summary>Index algorithm.</summary>
-    public RespireSearchVectorAlgorithm Algorithm { get; init; } = RespireSearchVectorAlgorithm.Hnsw;
+    public RespireSearchVectorAlgorithm Algorithm
+    {
+        get; init;
+    } = RespireSearchVectorAlgorithm.Hnsw;
 }
 
 /// <summary>Portable little-endian Redis FLOAT32 vector encoding.</summary>
@@ -44,20 +53,35 @@ public static class RespireVectorDataFloat32
     public static byte[] Encode(ReadOnlySpan<float> vector)
     {
         var bytes = new byte[checked(vector.Length * sizeof(float))];
+
         for (var i = 0; i < vector.Length; i++)
         {
-            if (!float.IsFinite(vector[i])) throw new ArgumentException("Vector elements must be finite.", nameof(vector));
+            if (!float.IsFinite(vector[i]))
+            {
+                throw new ArgumentException("Vector elements must be finite.", nameof(vector));
+            }
+
             BinaryPrimitives.WriteSingleLittleEndian(bytes.AsSpan(i * sizeof(float)), vector[i]);
         }
+
         return bytes;
     }
 
     /// <summary>Copies binary hash elements into an owned vector.</summary>
     public static ReadOnlyMemory<float> Decode(ReadOnlySpan<byte> bytes)
     {
-        if (bytes.Length % sizeof(float) != 0) throw new ArgumentException("Invalid FLOAT32 byte length.", nameof(bytes));
+        if (bytes.Length % sizeof(float) != 0)
+        {
+            throw new ArgumentException("Invalid FLOAT32 byte length.", nameof(bytes));
+        }
+
         var vector = new float[bytes.Length / sizeof(float)];
-        for (var i = 0; i < vector.Length; i++) vector[i] = BinaryPrimitives.ReadSingleLittleEndian(bytes[(i * sizeof(float))..]);
+
+        for (var i = 0; i < vector.Length; i++)
+        {
+            vector[i] = BinaryPrimitives.ReadSingleLittleEndian(bytes[(i * sizeof(float))..]);
+        }
+
         return vector;
     }
 }

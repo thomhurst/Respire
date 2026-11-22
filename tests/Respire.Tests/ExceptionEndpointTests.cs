@@ -33,7 +33,9 @@ public class ExceptionEndpointTests
         ];
 
         foreach (var error in errors)
+        {
             await Assert.That(error.Endpoint).IsEqualTo((RespireEndpoint?)Endpoint);
+        }
     }
 
     [Test]
@@ -59,7 +61,9 @@ public class ExceptionEndpointTests
         ];
 
         foreach (var error in errors)
+        {
             await Assert.That(error.Endpoint).IsNull();
+        }
     }
 
     [Test]
@@ -106,7 +110,10 @@ public class ExceptionEndpointTests
         ];
 
         foreach (var wrapper in wrappers)
+        {
             await Assert.That(wrapper.Endpoint).IsNull();
+        }
+
         await Assert.That(wrappers[1].InnerException).IsSameReferenceAs(last);
         await Assert.That(last.Endpoint).IsEqualTo((RespireEndpoint?)Endpoint);
     }

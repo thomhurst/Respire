@@ -1,5 +1,5 @@
-using System.Net;
 using System.IO.Compression;
+using System.Net;
 using System.Reflection;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
@@ -36,7 +36,11 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
             return context.Response.WriteAsync("recovered");
         }, before: app => app.Use(async (context, next) =>
         {
-            if (context.Request.Headers.ContainsKey("X-Abort-Begin")) context.RequestAborted = aborted.Token;
+            if (context.Request.Headers.ContainsKey("X-Abort-Begin"))
+            {
+                context.RequestAborted = aborted.Token;
+            }
+
             await next(context);
         }));
         using var http = server.CreateClient();
@@ -44,7 +48,10 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         request.Headers.Add("Idempotency-Key", "operation");
         request.Headers.Add("X-Caller", "alice");
         request.Headers.Add("X-Abort-Begin", "true");
-        await Assert.That(async () => { using var response = await http.SendAsync(request); })
+        await Assert.That(async () =>
+            {
+                using var response = await http.SendAsync(request);
+            })
             .Throws<OperationCanceledException>();
         await Assert.That(executions).IsEqualTo(0);
         using var retry = await SendAsync(http);
@@ -99,6 +106,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         http.DefaultRequestHeaders.AcceptEncoding.ParseAdd("gzip");
         using var first = await SendAsync(http);
         using var replay = await SendAsync(http);
+
         foreach (var response in new[] { first, replay })
         {
             await Assert.That(response.Content.Headers.ContentEncoding.Single()).IsEqualTo("gzip");
@@ -107,6 +115,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
             using var reader = new StreamReader(gzip);
             await Assert.That(await reader.ReadToEndAsync()).IsEqualTo(new string('x', 1000));
         }
+
         await Assert.That(executions).IsEqualTo(1);
     }
 
@@ -191,18 +200,24 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         });
         using var http = server.CreateClient();
         var owner = SendAsync(http);
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(20));
             var contenders = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => SendAsync(http)));
+
             foreach (var contender in contenders)
             {
                 using (contender)
+                {
                     await Assert.That(contender.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+                }
             }
+
             await Assert.That(executions).IsEqualTo(1);
         }
         finally { release.TrySetResult(); }
+
         using var completed = await owner;
         using var replay = await SendAsync(http);
         await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo("done");
@@ -252,12 +267,14 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
             ("/orders?currency=GBP", "alice", HttpMethod.Post),
             ("/tenant/orders", "alice", HttpMethod.Post),
         };
+
         foreach (var variant in variants)
         {
             using var response = await SendAsync(http, variant.Path, caller: variant.Caller, method: variant.Method);
             using var replay = await SendAsync(http, variant.Path, caller: variant.Caller, method: variant.Method);
             await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo(await response.Content.ReadAsStringAsync());
         }
+
         await Assert.That(executions).IsEqualTo(variants.Length);
     }
 
@@ -299,17 +316,30 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
                 {
                     switch (component)
                     {
-                        case "method": context.Request.Method = value; break;
-                        case "host": context.Request.Headers.Host = value; break;
-                        case "pathBase": context.Request.PathBase = "/" + value; break;
-                        case "path": context.Request.Path = "/" + value; break;
-                        case "query": context.Request.QueryString = new QueryString("?" + value); break;
-                        case "key": context.Request.Headers["Idempotency-Key"] = value; break;
+                        case "method":
+                            context.Request.Method = value;
+                            break;
+                        case "host":
+                            context.Request.Headers.Host = value;
+                            break;
+                        case "pathBase":
+                            context.Request.PathBase = "/" + value;
+                            break;
+                        case "path":
+                            context.Request.Path = "/" + value;
+                            break;
+                        case "query":
+                            context.Request.QueryString = new QueryString("?" + value);
+                            break;
+                        case "key":
+                            context.Request.Headers["Idempotency-Key"] = value;
+                            break;
                     }
                 });
             using var http = server.CreateClient();
             using var first = await SendAsync(http, body: "same body");
             using var retry = await SendAsync(http, body: "same body");
+
             if (malformed)
             {
                 // Identity rejection must also precede body fingerprinting's 413 response.
@@ -330,6 +360,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
                 await Assert.That(await retry.Content.ReadAsStringAsync()).IsEqualTo(await first.Content.ReadAsStringAsync());
                 await Assert.That(scripts.BeginCalls).IsEqualTo(beginCalls + 2);
                 await Assert.That(executions).IsEqualTo(previousExecutions + 1);
+
                 if (component == "caller" && suffix == "\uFFFD")
                 {
                     // Golden key from the original length-prefixed UTF-8 format.
@@ -352,6 +383,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
             endpoints.MapPost("/unmarked", endpoint);
         });
         using var http = server.CreateClient();
+
         for (var i = 0; i < 2; i++)
         {
             using var missing = await SendAsync(http, key: null);
@@ -359,6 +391,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
             await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(unmarked.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
+
         await Assert.That(executions).IsEqualTo(4);
     }
 
@@ -405,7 +438,11 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         {
             Interlocked.Increment(ref executions);
             return context.Response.WriteAsync("ok");
-        }, options => { options.VerifyRequestBody = true; options.MaxRequestBodyBytes = 4; });
+        }, options =>
+        {
+            options.VerifyRequestBody = true;
+            options.MaxRequestBodyBytes = 4;
+        });
         using var http = server.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Post, "/orders")
         {
@@ -413,7 +450,12 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         };
         request.Headers.Add("Idempotency-Key", "operation");
         request.Headers.Add("X-Caller", "alice");
-        if (chunked) request.Headers.TransferEncodingChunked = true;
+
+        if (chunked)
+        {
+            request.Headers.TransferEncodingChunked = true;
+        }
+
         using var oversized = await http.SendAsync(request);
         using var retry = await SendAsync(http, body: "1234");
         await Assert.That(oversized.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
@@ -438,6 +480,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
                     context.Response.ContentLength = 99;
                     return Task.CompletedTask;
                 });
+
                 if (bodyWriter)
                 {
                     await context.Response.BodyWriter.WriteAsync("12345"u8.ToArray());
@@ -449,7 +492,10 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
                     await context.Response.Body.WriteAsync("5"u8.ToArray());
                 }
             }
-            else await context.Response.WriteAsync("ok");
+            else
+            {
+                await context.Response.WriteAsync("ok");
+            }
         }, options => options.MaxResponseBodyBytes = 4);
         using var http = server.CreateClient();
         using var oversized = await SendAsync(http);
@@ -505,15 +551,25 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         {
             if (Interlocked.Increment(ref executions) == 1)
             {
-                if (cancellation) throw new OperationCanceledException("handler cancelled");
+                if (cancellation)
+                {
+                    throw new OperationCanceledException("handler cancelled");
+                }
+
                 throw new InvalidOperationException("handler failed");
             }
+
             return context.Response.WriteAsync("recovered");
         });
         using var http = server.CreateClient();
         Exception? failure = null;
-        try { using var response = await SendAsync(http); }
+
+        try
+        {
+            using var response = await SendAsync(http);
+        }
         catch (Exception exception) { failure = exception; }
+
         await Assert.That(failure is OperationCanceledException or InvalidOperationException).IsTrue();
         using var retry = await SendAsync(http);
         using var replay = await SendAsync(http);
@@ -536,10 +592,14 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
                 entered.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted);
             }
+
             await context.Response.WriteAsync("recovered");
         }, before: app => app.Use(async (context, next) =>
         {
-            try { await next(context); }
+            try
+            {
+                await next(context);
+            }
             finally { finished.TrySetResult(); }
         }));
         using var http = server.CreateClient();
@@ -550,8 +610,13 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         var interrupted = http.SendAsync(request, cancellation.Token);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(20));
         cancellation.Cancel();
-        try { using var response = await interrupted; }
+
+        try
+        {
+            using var response = await interrupted;
+        }
         catch (OperationCanceledException) { }
+
         await finished.Task.WaitAsync(TimeSpan.FromSeconds(20));
         using var retry = await SendAsync(http);
         await Assert.That(await retry.Content.ReadAsStringAsync()).IsEqualTo("recovered");
@@ -596,13 +661,21 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         using var server = CreateServer(client, context =>
         {
             if (Interlocked.Increment(ref executions) == 1)
+            {
                 context.Features.Get<IHttpResponseBodyFeature>()!.DisableBuffering();
+            }
+
             return context.Response.WriteAsync("buffered");
         });
         using var http = server.CreateClient();
         Exception? failure = null;
-        try { using var response = await SendAsync(http); }
+
+        try
+        {
+            using var response = await SendAsync(http);
+        }
         catch (InvalidOperationException exception) { failure = exception; }
+
         await Assert.That(failure).IsNotNull();
         using var retry = await SendAsync(http);
         await Assert.That(await retry.Content.ReadAsStringAsync()).IsEqualTo("buffered");
@@ -652,24 +725,37 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
             var execution = Interlocked.Increment(ref executions);
             (execution == 1 ? oldEntered : newEntered).TrySetResult();
             await (execution == 1 ? oldRelease : newRelease).Task.WaitAsync(TimeSpan.FromSeconds(20));
-            if (execution == 1 && oldOwnerFails) throw new InvalidOperationException("expired handler failed");
+
+            if (execution == 1 && oldOwnerFails)
+            {
+                throw new InvalidOperationException("expired handler failed");
+            }
+
             await context.Response.WriteAsync(execution == 1 ? "old" : "replacement");
         }, options => options.KeyPrefix = "expiry:");
         using var http = server.CreateClient();
         var oldRequest = SendAsync(http);
+
         try
         {
             await oldEntered.Task.WaitAsync(TimeSpan.FromSeconds(20));
             var keys = new List<RespireKey>();
-            await foreach (var key in client.Keys.ScanAsync("expiry:*")) keys.Add(key);
+
+            await foreach (var key in client.Keys.ScanAsync("expiry:*"))
+            {
+                keys.Add(key);
+            }
+
             await Assert.That(keys.Count).IsEqualTo(1);
             // Expire the claim at Redis rather than relying on the duration of HTTP scheduling.
             await client.Keys.ExpireAsync(keys[0], RespireExpiry.In(TimeSpan.Zero));
             var replacement = SendAsync(http);
+
             try
             {
                 await newEntered.Task.WaitAsync(TimeSpan.FromSeconds(20));
                 oldRelease.TrySetResult();
+
                 try
                 {
                     using var oldResponse = await oldRequest;
@@ -677,6 +763,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
                     await Assert.That(await oldResponse.Content.ReadAsStringAsync()).IsEqualTo("old");
                 }
                 catch (InvalidOperationException) when (oldOwnerFails) { }
+
                 using var contender = await SendAsync(http);
                 await Assert.That(contender.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
                 newRelease.TrySetResult();
@@ -711,7 +798,11 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         }, options => options.StoredStatusCodes.Add(status), before: app => app.Use(async (context, next) =>
         {
             Exception? failure = null;
-            try { await next(context); }
+
+            try
+            {
+                await next(context);
+            }
             catch (Exception error) { failure = error; throw; }
             finally { firstRequestFinished.TrySetResult(failure); }
         }), kestrel: kestrel);
@@ -741,9 +832,15 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
             {
                 // Exercise both the individual-value limit and aggregate header envelope limit.
                 context.Response.Headers.ContentLanguage = new string('a', combinedHeaders ? 9000 : 17 * 1024);
-                if (combinedHeaders) context.Response.Headers.ETag = "\"" + new string('b', 9000) + "\"";
+
+                if (combinedHeaders)
+                {
+                    context.Response.Headers.ETag = "\"" + new string('b', 9000) + "\"";
+                }
+
                 return context.Response.WriteAsync("not stored");
             }
+
             context.Response.Headers.ContentLanguage = "en";
             return context.Response.WriteAsync("stored");
         });
@@ -793,7 +890,12 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         => new(new HostBuilder().ConfigureWebHost(web => ConfigureTransport(web, kestrel).ConfigureServices(services =>
         {
             services.AddRouting();
-            if (compression) services.AddResponseCompression();
+
+            if (compression)
+            {
+                services.AddResponseCompression();
+            }
+
             services.AddSingleton(client);
             services.AddRespireIdempotency(options =>
             {
@@ -804,17 +906,33 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         {
             before?.Invoke(app);
             app.UseRouting();
-            if (prepareRequest is not null) app.Use((context, next) =>
+
+            if (prepareRequest is not null)
+            {
+                app.Use((context, next) =>
             {
                 prepareRequest(context);
                 return next(context);
             });
+            }
+
             app.UseRespireIdempotency();
-            if (compression) app.UseResponseCompression();
+
+            if (compression)
+            {
+                app.UseResponseCompression();
+            }
+
             app.UseEndpoints(endpoints =>
             {
-                if (routes is not null) routes(endpoints);
-                else endpoints.MapPost("/orders", endpoint).WithRespireIdempotency("orders");
+                if (routes is not null)
+                {
+                    routes(endpoints);
+                }
+                else
+                {
+                    endpoints.MapPost("/orders", endpoint).WithRespireIdempotency("orders");
+                }
             });
         })).Start(), kestrel);
 
@@ -831,18 +949,41 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
 
     public class ClientProxy : DispatchProxy
     {
-        public IRespireClient Inner { get; set; } = null!;
-        public IRespireScriptCommands Scripts { get; set; } = null!;
+        public IRespireClient Inner
+        {
+            get; set;
+        } = null!;
+
+        public IRespireScriptCommands Scripts
+        {
+            get; set;
+        } = null!;
+
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
             => method!.Name == "get_Scripts" ? Scripts : method.Invoke(Inner, arguments);
     }
 
     public class ScriptFaults : DispatchProxy
     {
-        public IRespireScriptCommands Inner { get; set; } = null!;
-        public Action? AfterBegin { get; set; }
-        public bool FailComplete { get; set; }
-        public bool AcceptCompleteBeforeFailure { get; set; }
+        public IRespireScriptCommands Inner
+        {
+            get; set;
+        } = null!;
+
+        public Action? AfterBegin
+        {
+            get; set;
+        }
+
+        public bool FailComplete
+        {
+            get; set;
+        }
+
+        public bool AcceptCompleteBeforeFailure
+        {
+            get; set;
+        }
         public int BeginCalls;
 
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
@@ -852,11 +993,21 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         private async ValueTask<RespireResult> ExecuteAsync(MethodInfo method, object?[] arguments)
         {
             var source = ((RespireScript)arguments[0]!).Source;
-            if (source.Contains("'EXISTS'", StringComparison.Ordinal)) Interlocked.Increment(ref BeginCalls);
+
+            if (source.Contains("'EXISTS'", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref BeginCalls);
+            }
+
             var complete = source.Contains("'HDEL'", StringComparison.Ordinal);
+
             if (complete && FailComplete && !AcceptCompleteBeforeFailure)
+            {
                 throw new IOException("Completion rejected before Redis executes it.");
+            }
+
             var result = await (ValueTask<RespireResult>)method.Invoke(Inner, arguments)!;
+
             try
             {
                 if (source.Contains("'EXISTS'", StringComparison.Ordinal) && AfterBegin is { } after)
@@ -866,7 +1017,12 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
                     // Model cancellation of the wait after Redis has accepted the command.
                     ((CancellationToken)arguments[^1]!).ThrowIfCancellationRequested();
                 }
-                if (complete && FailComplete) throw new IOException("Completion reply lost after Redis accepts it.");
+
+                if (complete && FailComplete)
+                {
+                    throw new IOException("Completion reply lost after Redis accepts it.");
+                }
+
                 return result;
             }
             catch { result.Dispose(); throw; }
@@ -879,10 +1035,15 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
     private sealed class TestApplication(IHost host, bool kestrel) : IDisposable
     {
         public HttpClient CreateClient() => kestrel
-            ? new HttpClient { BaseAddress = new Uri(host.Services.GetRequiredService<IServer>()
-                .Features.Get<IServerAddressesFeature>()!.Addresses.Single()) }
+            ? new HttpClient
+            {
+                BaseAddress = new Uri(host.Services.GetRequiredService<IServer>()
+                .Features.Get<IServerAddressesFeature>()!.Addresses.Single())
+            }
             : host.GetTestClient();
+
         public Task<HttpContext> SendAsync(Action<HttpContext> configure) => host.GetTestServer().SendAsync(configure);
+
         public void Dispose() => host.Dispose();
     }
 
@@ -893,8 +1054,17 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         {
             Content = new ByteArrayContent(Encoding.UTF8.GetBytes(body)),
         };
-        if (key is not null) request.Headers.TryAddWithoutValidation("Idempotency-Key", key);
-        if (caller is not null) request.Headers.Add("X-Caller", caller);
+
+        if (key is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", key);
+        }
+
+        if (caller is not null)
+        {
+            request.Headers.Add("X-Caller", caller);
+        }
+
         return await http.SendAsync(request);
     }
 }

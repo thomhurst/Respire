@@ -30,40 +30,98 @@ public enum RespireVectorQuantization
 public readonly record struct RespireVectorAddOptions
 {
     /// <summary>REDUCE target dimension. The server validates compatibility with the set.</summary>
-    public int? ReduceDimensions { get; init; }
+    public int? ReduceDimensions
+    {
+        get; init;
+    }
+
     /// <summary>CAS: allow background graph construction where the server supports it.</summary>
-    public bool CheckAndSet { get; init; }
+    public bool CheckAndSet
+    {
+        get; init;
+    }
+
     /// <summary>Quantization for a newly created set.</summary>
-    public RespireVectorQuantization Quantization { get; init; }
+    public RespireVectorQuantization Quantization
+    {
+        get; init;
+    }
+
     /// <summary>EF construction effort, 1 through 1,000,000.</summary>
-    public int? ExplorationFactor { get; init; }
+    public int? ExplorationFactor
+    {
+        get; init;
+    }
+
     /// <summary>M graph links, 4 through 4096.</summary>
-    public int? Links { get; init; }
+    public int? Links
+    {
+        get; init;
+    }
+
     /// <summary>SETATTR raw JSON. Null omits the option. Borrowed until the operation completes.</summary>
-    public RespireValue AttributesJson { get; init; }
+    public RespireValue AttributesJson
+    {
+        get; init;
+    }
 }
 
 /// <summary>VSIM search controls. Omitted values preserve server defaults.</summary>
 public readonly record struct RespireVectorSearchOptions
 {
     /// <summary>Include similarity scores.</summary>
-    public bool IncludeScores { get; init; }
+    public bool IncludeScores
+    {
+        get; init;
+    }
+
     /// <summary>Include raw JSON attributes, or null for members without attributes.</summary>
-    public bool IncludeAttributes { get; init; }
+    public bool IncludeAttributes
+    {
+        get; init;
+    }
+
     /// <summary>Maximum results; must be positive.</summary>
-    public long? Count { get; init; }
+    public long? Count
+    {
+        get; init;
+    }
+
     /// <summary>EF search effort, 1 through 1,000,000.</summary>
-    public int? ExplorationFactor { get; init; }
+    public int? ExplorationFactor
+    {
+        get; init;
+    }
+
     /// <summary>FILTER expression evaluated by Redis against attributes.</summary>
-    public string? Filter { get; init; }
+    public string? Filter
+    {
+        get; init;
+    }
+
     /// <summary>FILTER-EF maximum filtering effort; must be positive.</summary>
-    public long? FilterExplorationFactor { get; init; }
+    public long? FilterExplorationFactor
+    {
+        get; init;
+    }
+
     /// <summary>EPSILON maximum distance, from zero through one.</summary>
-    public double? Epsilon { get; init; }
+    public double? Epsilon
+    {
+        get; init;
+    }
+
     /// <summary>TRUTH: use exact linear search instead of approximate graph search.</summary>
-    public bool Exact { get; init; }
+    public bool Exact
+    {
+        get; init;
+    }
+
     /// <summary>NOTHREAD: execute on the server's main thread.</summary>
-    public bool NoThread { get; init; }
+    public bool NoThread
+    {
+        get; init;
+    }
 }
 
 /// <summary>An owned binary member with optional similarity score and JSON attributes.</summary>

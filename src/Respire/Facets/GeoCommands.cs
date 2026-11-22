@@ -62,13 +62,22 @@ public readonly record struct RespireGeoSearchResult
     }
 
     /// <summary>The requested distance from the search origin, or null when omitted.</summary>
-    public double? Distance { get; init; }
+    public double? Distance
+    {
+        get; init;
+    }
 
     /// <summary>The requested geohash integer, or null when omitted.</summary>
-    public long? Hash { get; init; }
+    public long? Hash
+    {
+        get; init;
+    }
 
     /// <summary>The requested coordinates, or null when omitted.</summary>
-    public RespireGeoPosition? Position { get; init; }
+    public RespireGeoPosition? Position
+    {
+        get; init;
+    }
 
     /// <summary>The member decoded as UTF-8 text.</summary>
     public string Member
@@ -142,10 +151,25 @@ public readonly struct RespireGeoSearchOrigin
         Latitude = latitude;
     }
 
-    internal RespireValue? Member { get; }
-    internal double Longitude { get; }
-    internal double Latitude { get; }
-    internal bool IsInitialized { get; }
+    internal RespireValue? Member
+    {
+        get;
+    }
+
+    internal double Longitude
+    {
+        get;
+    }
+
+    internal double Latitude
+    {
+        get;
+    }
+
+    internal bool IsInitialized
+    {
+        get;
+    }
 
     /// <summary>Creates a Redis GEOSEARCH <c>FROMMEMBER</c> origin.</summary>
     public static RespireGeoSearchOrigin FromMember(RespireValue member) => new(member, 0, 0);
@@ -169,12 +193,31 @@ public readonly struct RespireGeoSearchShape
     }
 
     private readonly RespireGeoPosition[]? _vertices;
+
     internal ReadOnlySpan<RespireGeoPosition> Vertices => _vertices;
+
     internal bool IsPolygon => _vertices is not null;
-    internal double Radius { get; }
-    internal double Width { get; }
-    internal double Height { get; }
-    internal RespireGeoUnit Unit { get; }
+
+    internal double Radius
+    {
+        get;
+    }
+
+    internal double Width
+    {
+        get;
+    }
+
+    internal double Height
+    {
+        get;
+    }
+
+    internal RespireGeoUnit Unit
+    {
+        get;
+    }
+
     internal bool IsRadius => Radius > 0;
 
     /// <summary>Creates a Redis GEOSEARCH <c>BYRADIUS</c> shape.</summary>
@@ -208,6 +251,7 @@ public readonly struct RespireGeoSearchShape
         }
 
         var distinct = new HashSet<RespireGeoPosition>();
+
         foreach (var vertex in vertices)
         {
             GeoCommands.ValidateCoordinates(vertex.Longitude, vertex.Latitude);
@@ -235,32 +279,56 @@ public readonly struct RespireGeoSearchShape
 public readonly record struct RespireGeoSearchOptions
 {
     /// <summary>Gets the requested distance ordering.</summary>
-    public RespireGeoSortOrder Sort { get; init; }
+    public RespireGeoSortOrder Sort
+    {
+        get; init;
+    }
 
     /// <summary>Gets the maximum number of results, or null for no limit.</summary>
-    public int? Count { get; init; }
+    public int? Count
+    {
+        get; init;
+    }
 
     /// <summary>Gets whether Redis may stop after any <see cref="Count"/> matches.</summary>
-    public bool Any { get; init; }
+    public bool Any
+    {
+        get; init;
+    }
 
     /// <summary>Gets whether each result includes its distance. Redis: GEOSEARCH WITHDIST.</summary>
-    public bool IncludeDistance { get; init; }
+    public bool IncludeDistance
+    {
+        get; init;
+    }
 
     /// <summary>Gets whether each result includes its geohash integer. Redis: GEOSEARCH WITHHASH.</summary>
-    public bool IncludeHash { get; init; }
+    public bool IncludeHash
+    {
+        get; init;
+    }
 
     /// <summary>Gets whether each result includes coordinates. Redis: GEOSEARCH WITHCOORD.</summary>
-    public bool IncludeCoordinates { get; init; }
+    public bool IncludeCoordinates
+    {
+        get; init;
+    }
 }
 
 /// <summary>Options controlling GEOADD conditional writes and changed-count reporting.</summary>
 public readonly record struct RespireGeoAddOptions
 {
     /// <summary>Gets the condition under which members are written.</summary>
-    public RespireSetWhen When { get; init; }
+    public RespireSetWhen When
+    {
+        get; init;
+    }
 
     /// <summary>Gets whether Redis counts both added and changed members.</summary>
-    public bool Changed { get; init; }
+    public bool Changed
+    {
+        get; init;
+    }
 }
 
 /// <summary>Redis geospatial index commands.</summary>
@@ -358,7 +426,6 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
     public ValueTask<RespireGeoPosition?[]> PositionAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken)
         => PositionAsync(key, [member], cancellationToken);
 
-
     public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<RespireGeoEntry> entries)
         => AddAsync(key, default, entries, CancellationToken.None);
 
@@ -440,6 +507,7 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
     {
         var values = reply.AsArray();
         var result = new RespireGeoPosition?[values.Length];
+
         for (var i = 0; i < values.Length; i++)
         {
             if (values[i].IsNull)
@@ -504,7 +572,10 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
 #endif
     private static async ValueTask<T> CompletePolygonAsync<T>(ValueTask<T> response)
     {
-        try { return await response.ConfigureAwait(false); }
+        try
+        {
+            return await response.ConfigureAwait(false);
+        }
         catch (RespireServerException error) when (error.Message == "ERR syntax error")
         {
             throw PolygonError(error);
@@ -514,7 +585,7 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
     internal static Exception PolygonError(Exception error)
         => error is RespireServerException { Message: "ERR syntax error", CommandName: "GEOSEARCH" or "GEOSEARCHSTORE" } server
             ? new RespireServerException(server.Message + " Check server support for the requested options; BYPOLYGON requires Valkey 9.0+.", server.CommandName)
-                { Endpoint = server.Endpoint }
+            { Endpoint = server.Endpoint }
             : error;
 
     internal static RespireGeoSearchResult[] ParseSearch(in RespValue reply, RespireGeoSearchOptions options)
@@ -522,6 +593,7 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
         var values = reply.AsArray();
         var results = new RespireGeoSearchResult[values.Length];
         var detailed = options.IncludeDistance || options.IncludeHash || options.IncludeCoordinates;
+
         for (var i = 0; i < values.Length; i++)
         {
             if (!detailed)
@@ -535,6 +607,7 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
             double? distance = options.IncludeDistance ? ResponseReader.Double(in item[index++]) : null;
             long? hash = options.IncludeHash ? item[index++].AsInteger() : null;
             RespireGeoPosition? position = null;
+
             if (options.IncludeCoordinates)
             {
                 var coordinates = item[index].AsArray();
@@ -613,6 +686,7 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
         }
 
         _ = Unit(shape.Unit);
+
         if (!Enum.IsDefined(options.Sort))
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Sort is invalid.");
@@ -664,8 +738,11 @@ internal readonly struct GeoSearchCommand(
     internal bool IsPolygon => shape.IsPolygon;
 
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
+
     public RespireCommandRetryCategory RetryCategory => verb.RetryCategory;
+
     public ReadCommandKind ReadKind => verb.ReadKind;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
@@ -702,12 +779,14 @@ internal readonly struct GeoSearchCommand(
             destination ?? RespireValue.Null,
             storeDistance,
         ];
+
         if (shape.IsPolygon)
         {
             var polygonArguments = new RespireValue[arguments.Length + 1 + shape.Vertices.Length * 2];
             arguments.CopyTo(polygonArguments, 0);
             var index = arguments.Length;
             polygonArguments[index++] = "BYPOLYGON";
+
             foreach (var vertex in shape.Vertices)
             {
                 polygonArguments[index++] = vertex.Longitude;
@@ -727,16 +806,19 @@ internal readonly struct GeoSearchCommand(
     public void Write(ref RespWriter writer)
     {
         var shapeArgumentCount = shape.IsRadius ? 3 : 4;
+
         if (shape.IsPolygon)
         {
             shapeArgumentCount = 2 + shape.Vertices.Length * 2;
         }
 
         var originArgumentCount = 0;
+
         if (!shape.IsPolygon)
         {
             originArgumentCount = origin.Member is null ? 3 : 2;
         }
+
         var argumentCount = (destination.HasValue ? 1 : 0)
             + 1
             + originArgumentCount
@@ -749,12 +831,14 @@ internal readonly struct GeoSearchCommand(
             + (storeDistance ? 1 : 0);
         writer.WriteArrayHeader(verb.Tokens + argumentCount);
         writer.WriteRaw(verb.Bulk);
+
         if (destination is { } destinationKey)
         {
             destinationKey.WriteTo(ref writer);
         }
 
         source.WriteTo(ref writer);
+
         if (!shape.IsPolygon && origin.Member is { } member)
         {
             writer.WriteRaw(CommandOptionFrames.FROMMEMBER);
@@ -771,6 +855,7 @@ internal readonly struct GeoSearchCommand(
         {
             writer.WriteBulkString("BYPOLYGON"u8);
             writer.WriteBulkInteger(shape.Vertices.Length);
+
             foreach (var vertex in shape.Vertices)
             {
                 ((RespireValue)vertex.Longitude).WriteTo(ref writer);
@@ -803,6 +888,7 @@ internal readonly struct GeoSearchCommand(
         {
             writer.WriteRaw(CommandOptionFrames.COUNT);
             writer.WriteBulkInteger(count);
+
             if (options.Any)
             {
                 writer.WriteRaw(CommandOptionFrames.ANY);
@@ -828,8 +914,11 @@ internal readonly struct GeoAddCommand(
     Verb verb, RespireValue key, RespireSetWhen when, bool changed, RespireGeoEntry[] entries) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => verb.CacheMetadata;
+
     public RespireCacheMutation GetCacheMutation(string operation) => verb.CacheMetadata.Policy;
+
     public RespireCommandRetryCategory RetryCategory => verb.RetryCategory;
+
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
@@ -840,6 +929,7 @@ internal readonly struct GeoAddCommand(
         writer.WriteArrayHeader(verb.Tokens + 1 + optionCount + entries.Length * 3);
         writer.WriteRaw(verb.Bulk);
         key.WriteTo(ref writer);
+
         if (when != RespireSetWhen.Always)
         {
             writer.WriteBulkString(when == RespireSetWhen.NotExists ? "NX" : "XX");

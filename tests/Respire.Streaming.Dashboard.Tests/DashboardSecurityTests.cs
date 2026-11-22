@@ -100,9 +100,19 @@ public class DashboardSecurityTests(RedisTestContainer redis)
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
         await using var app = await CreateApplication(client);
         using var http = app.GetTestClient();
-        if (role is not null) http.DefaultRequestHeaders.Add("X-Test-Role", role);
+
+        if (role is not null)
+        {
+            http.DefaultRequestHeaders.Add("X-Test-Role", role);
+        }
+
         using var request = new HttpRequestMessage(new HttpMethod(method), path);
-        if (method == "POST") request.Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["id"] = "1-0" });
+
+        if (method == "POST")
+        {
+            request.Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["id"] = "1-0" });
+        }
+
         using var response = await http.SendAsync(request);
         await Assert.That((int)response.StatusCode).IsEqualTo(status);
     }
@@ -118,8 +128,12 @@ public class DashboardSecurityTests(RedisTestContainer redis)
         http.DefaultRequestHeaders.Add("X-Test-Role", "operator");
         using var page = await http.GetAsync("/workers/");
         var html = await page.Content.ReadAsStringAsync();
+
         if (Environment.GetEnvironmentVariable("RESPIRE_DASHBOARD_PREVIEW") is { Length: > 0 } preview)
+        {
             await File.WriteAllTextAsync(preview, html);
+        }
+
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(html).DoesNotContain("<script>alert(1)</script>");
         await Assert.That(html).Contains("&lt;script&gt;");
@@ -129,13 +143,15 @@ public class DashboardSecurityTests(RedisTestContainer redis)
         http.DefaultRequestHeaders.Add("Cookie", page.Headers.GetValues("Set-Cookie").First().Split(';')[0]);
         using var response = await http.PostAsync("/workers/99/retry", new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["id"] = "1-0", ["__RequestVerificationToken"] = WebUtility.HtmlDecode(token),
+            ["id"] = "1-0",
+            ["__RequestVerificationToken"] = WebUtility.HtmlDecode(token),
         }));
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await response.Content.ReadAsStringAsync()).Contains("Return to dashboard");
         using var invalidId = await http.PostAsync("/workers/0/delete", new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["id"] = "-", ["__RequestVerificationToken"] = WebUtility.HtmlDecode(token),
+            ["id"] = "-",
+            ["__RequestVerificationToken"] = WebUtility.HtmlDecode(token),
         }));
         await Assert.That(invalidId.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
     }
@@ -167,8 +183,14 @@ public class DashboardSecurityTests(RedisTestContainer redis)
     internal static RespireDashboardOptions Options(bool jobs = false)
     {
         var options = new RespireDashboardOptions();
-        options.Streams.Add(new() { Name = "Orders", Stream = "{dash}:source", Group = "g",
-            DeadLetterStream = "{dash}:dead", IsJobQueue = jobs });
+        options.Streams.Add(new()
+        {
+            Name = "Orders",
+            Stream = "{dash}:source",
+            Group = "g",
+            DeadLetterStream = "{dash}:dead",
+            IsJobQueue = jobs
+        });
         return options;
     }
 
@@ -176,10 +198,23 @@ public class DashboardSecurityTests(RedisTestContainer redis)
         bool jobs = false, int entryLimit = 50, bool kestrel = false, Action<RespireDashboardOptions>? configure = null)
     {
         var builder = WebApplication.CreateBuilder();
-        if (kestrel) builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
-        else builder.WebHost.UseTestServer();
+
+        if (kestrel)
+        {
+            builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
+        }
+        else
+        {
+            builder.WebHost.UseTestServer();
+        }
+
         builder.Services.AddSingleton(client);
-        builder.Services.AddAuthentication("test").AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>("test", _ => { });
+        builder
+            .Services
+            .AddAuthentication("test")
+            .AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>("test", _ =>
+            {
+            });
         builder.Services.AddAuthorization(options => options.AddPolicy("operators", policy => policy.RequireRole("operator")));
         builder.Services.AddRespireStreamingDashboard(options =>
         {
@@ -188,11 +223,24 @@ public class DashboardSecurityTests(RedisTestContainer redis)
             configure?.Invoke(options);
         });
         var app = builder.Build();
-        if (nested) app.UsePathBase("/tenant");
+
+        if (nested)
+        {
+            app.UsePathBase("/tenant");
+        }
+
         app.UseAuthentication();
         app.UseAuthorization();
-        if (nested) app.MapGroup("/admin").MapRespireStreamingDashboard("/workers", mappedPolicy);
-        else app.MapRespireStreamingDashboard("/workers", mappedPolicy);
+
+        if (nested)
+        {
+            app.MapGroup("/admin").MapRespireStreamingDashboard("/workers", mappedPolicy);
+        }
+        else
+        {
+            app.MapRespireStreamingDashboard("/workers", mappedPolicy);
+        }
+
         await app.StartAsync();
         return app;
     }
@@ -203,7 +251,12 @@ public class DashboardSecurityTests(RedisTestContainer redis)
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
             var role = Request.Headers["X-Test-Role"].ToString();
-            if (role.Length == 0) return Task.FromResult(AuthenticateResult.NoResult());
+
+            if (role.Length == 0)
+            {
+                return Task.FromResult(AuthenticateResult.NoResult());
+            }
+
             var identity = new ClaimsIdentity([new Claim(ClaimTypes.Name, "operator"), new Claim(ClaimTypes.Role, role)], "test");
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), "test")));
         }

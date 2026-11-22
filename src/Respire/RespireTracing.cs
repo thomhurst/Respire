@@ -12,7 +12,10 @@ public sealed class RespireTracingOptions
     /// fast and nonblocking. Exceptions suppress the trace without affecting command execution
     /// or metrics. Pipelines and transactions require every member to pass.
     /// </remarks>
-    public Func<string, bool>? CommandFilter { get; init; }
+    public Func<string, bool>? CommandFilter
+    {
+        get; init;
+    }
 }
 
 /// <summary>Selects command traces for every Respire client in the process.</summary>
@@ -40,8 +43,15 @@ public static class RespireTracing
 
     internal static bool IncludesCommand(Func<string, bool>? filter, string operation)
     {
-        if (filter is null) return true;
-        try { return filter(operation); }
+        if (filter is null)
+        {
+            return true;
+        }
+
+        try
+        {
+            return filter(operation);
+        }
         catch (Exception) { return false; } // Diagnostics must not change command outcomes.
     }
 }

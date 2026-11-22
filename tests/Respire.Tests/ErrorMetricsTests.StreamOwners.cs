@@ -21,14 +21,21 @@ public partial class ErrorMetricsTests
         var group = nullConsumer ? "group" : null!;
         var consumer = nullConsumer ? null! : "consumer";
         using var capture = new Capture(throwOnMeasurement: true);
+
         async Task Execute()
         {
-            if (route == "page") await client.Streams.ReadGroupOnceAsync("events", group, consumer);
+            if (route == "page")
+            {
+                await client.Streams.ReadGroupOnceAsync("events", group, consumer);
+            }
             else
             {
-                await foreach (var _ in client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "events", group, consumer)) { }
+                await foreach (var _ in client.Streams.ReadGroupAsync(new RespireStreamReadOptions(), "events", group, consumer))
+                {
+                }
             }
         }
+
         var error = await Assert.That(Execute).ThrowsExactly<ArgumentNullException>();
         await Assert.That(error!.ParamName).IsEqualTo(nullConsumer ? "consumer" : "group");
         var items = capture.Items.ToArray();
@@ -74,20 +81,27 @@ public partial class ErrorMetricsTests
             "live" => client.Streams.ReadGroupAsync("events", "group", "consumer"),
             _ => client.Streams.ReadGroupAsync("events", "group", "consumer", RespireStreamId.Beginning),
         };
+
         await using (var reader = entries.GetAsyncEnumerator())
         {
             await Assert.That(await reader.MoveNextAsync()).IsTrue();
             await Assert.That(reader.Current.Id).IsEqualTo((RespireStreamId)"1-0");
+
             if (!disposeEarly)
+            {
                 await Assert.That(async () => await reader.MoveNextAsync()).ThrowsExactly<RespireServerException>();
+            }
         }
+
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(disposeEarly ? 0 : 1);
+
         if (!disposeEarly)
         {
             await Assert.That(items[0].Tags["db.response.status_code"]).IsEqualTo("NOPERM");
             await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsFalse();
         }
+
         await Assert.That(reads).IsEqualTo(disposeEarly ? 1 : 2);
     }
 

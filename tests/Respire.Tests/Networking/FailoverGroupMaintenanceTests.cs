@@ -43,7 +43,10 @@ public class FailoverGroupMaintenanceTests
             _ => clusterReplies(id, command),
         };
         // A successful command processes earlier pushes before the next health probe starts.
-        if (beforeProbe) await group.ActiveClient.PingAsync();
+        if (beforeProbe)
+        {
+            await group.ActiveClient.PingAsync();
+        }
 
         await group.ForTests.ProbeAsync(0);
 
@@ -179,7 +182,12 @@ public class FailoverGroupMaintenanceTests
         var connection = ((RespireClient)group.ActiveClient).Core.Multiplexer.GetConnection();
         await server.SendRawAsync(Start(start));
         await WaitUntilAsync(() => GroupMaintenance(group));
-        if (completed) await server.SendRawAsync(Finish(finish));
+
+        if (completed)
+        {
+            await server.SendRawAsync(Finish(finish));
+        }
+
         await WaitUntilAsync(() => !GroupMaintenance(group));
         var replies = server.ReplyOverride!;
         server.ReplyOverride = (id, command) => command == "PING"
@@ -354,6 +362,7 @@ public class FailoverGroupMaintenanceTests
     };
 
     private static byte[] Start(string kind) => Encoding.UTF8.GetBytes($">3\r\n+{kind}\r\n:1\r\n:1\r\n");
+
     private static byte[] Finish(string kind) => Encoding.UTF8.GetBytes($">2\r\n+{kind}\r\n:1\r\n");
 
     // The probe reads the group's shared tracker, which the reader updates just after the connection's own window.
@@ -363,6 +372,10 @@ public class FailoverGroupMaintenanceTests
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!condition()) await Task.Delay(10, timeout.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 }

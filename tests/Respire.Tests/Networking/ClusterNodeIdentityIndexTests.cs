@@ -30,7 +30,12 @@ public class ClusterNodeIdentityIndexTests
         await Assert.That(WithLock(gate, () => index.ReverseNodeIdCount)).IsEqualTo(1);
         await Assert.That(WithLock(gate, () => index.All.Count())).IsEqualTo(3);
         await first.RetireAsync();
-        lock (gate) index.Forget(first);
+
+        lock (gate)
+        {
+            index.Forget(first);
+        }
+
         await Assert.That(WithLock(gate, () => index.All.Count())).IsEqualTo(2);
         await Assert.That(WithLock(gate, () => index.GetOrCreate(endpoint))).IsSameReferenceAs(second);
     }
@@ -73,9 +78,15 @@ public class ClusterNodeIdentityIndexTests
             new(0, 1, firstEndpoint, includeIds ? "first" : null, [secondEndpoint]),
             new(2, 3, secondEndpoint, includeIds ? "second" : null, []),
         ];
-        if (reverse) ranges.Reverse();
+
+        if (reverse)
+        {
+            ranges.Reverse();
+        }
+
         RespireConnectionMultiplexer firstOwner;
         RespireConnectionMultiplexer secondOwner;
+
         lock (gate)
         {
             var resolved = index.ApplySnapshot(ranges);
@@ -204,7 +215,11 @@ public class ClusterNodeIdentityIndexTests
         var gate = new Lock();
         var index = new ClusterNodeIdentityIndex(seedEndpoint, seed, (endpoint, isReadOnly) =>
         {
-            if (!isReadOnly) throw new InvalidOperationException("Only replica transports are expected.");
+            if (!isReadOnly)
+            {
+                throw new InvalidOperationException("Only replica transports are expected.");
+            }
+
             return endpoint.Host == firstEndpoint.Host ? first : second;
         }, gate);
 
@@ -228,7 +243,12 @@ public class ClusterNodeIdentityIndexTests
         await Assert.That(WithLock(gate, () => registry.Count)).IsEqualTo(1);
 
         await first.RetireAsync();
-        lock (gate) index.Forget(first);
+
+        lock (gate)
+        {
+            index.Forget(first);
+        }
+
         await Assert.That(WithLock(gate, () => index.All.Contains(first))).IsFalse();
         await Assert.That(WithLock(gate, () => registry.TryGetId(second, out var id) ? id : null)).IsEqualTo("replica-id");
     }

@@ -20,22 +20,31 @@ public class HealthProbeAbandonedTaskTests
         var observed = new ConcurrentDictionary<Exception, bool>();
         var lateFailure = new InvalidOperationException("abandoned provider");
         var controlFailure = new InvalidOperationException("unobserved positive control");
+
         void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs args)
         {
-            foreach (var error in args.Exception.Flatten().InnerExceptions) observed.TryAdd(error, true);
+            foreach (var error in args.Exception.Flatten().InnerExceptions)
+            {
+                observed.TryAdd(error, true);
+            }
+
             args.SetObserved();
         }
+
         TaskScheduler.UnobservedTaskException += OnUnobserved;
+
         try
         {
             var abandoned = await AbandonProviderAsync(contract, lateFailure);
             var control = CreateUnobservedFault(controlFailure);
+
             for (var attempt = 0; attempt < 10 && (abandoned.IsAlive || control.IsAlive); attempt++)
             {
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
                 await Task.Yield();
             }
+
             await Assert.That(abandoned.IsAlive).IsFalse();
             await Assert.That(control.IsAlive).IsFalse();
             await Assert.That(observed.ContainsKey(controlFailure)).IsTrue();
@@ -59,9 +68,19 @@ public class HealthProbeAbandonedTaskTests
         var ping = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancellationFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationTokenRegistration registration = default;
+
         void RegisterCancellation(CancellationToken token) => registration = token.Register(() => cancellationFinished.SetResult());
-        proxy.Probe = (_, token) => { RegisterCancellation(token); return new(pending.Task); };
-        proxy.Ping = token => { RegisterCancellation(token); return new(ping.Task); };
+
+        proxy.Probe = (_, token) =>
+        {
+            RegisterCancellation(token);
+            return new(pending.Task);
+        };
+        proxy.Ping = token =>
+        {
+            RegisterCancellation(token);
+            return new(ping.Task);
+        };
         var context = new HealthCheckContext { Registration = new("respire", _ => throw new NotSupportedException(), HealthStatus.Unhealthy, null) };
         var result = await new RespireHealthCheck(client, new() { ProbeTimeout = TimeSpan.FromMilliseconds(1) })
             .CheckHealthAsync(context).WaitAsync(TimeSpan.FromSeconds(5));
@@ -70,8 +89,16 @@ public class HealthProbeAbandonedTaskTests
         // the provider, so this waits until its cancellation callback has removed its observer.
         await cancellationFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
         registration.Dispose();
-        if (contract) pending.SetException(error);
-        else ping.SetException(error);
+
+        if (contract)
+        {
+            pending.SetException(error);
+        }
+        else
+        {
+            ping.SetException(error);
+        }
+
         return new WeakReference(contract ? pending.Task : ping.Task);
     }
 }

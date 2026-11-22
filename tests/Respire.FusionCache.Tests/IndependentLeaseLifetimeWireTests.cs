@@ -19,24 +19,34 @@ public class IndependentLeaseLifetimeWireTests
         await using var server = CreateServer();
         server.ReplyOverride = (_, command) =>
         {
-            if (command.StartsWith("SET ", StringComparison.Ordinal)) renewed.TrySetResult();
+            if (command.StartsWith("SET ", StringComparison.Ordinal))
+            {
+                renewed.TrySetResult();
+            }
+
             return Reply(command);
         };
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("DELEX ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             releaseArrived.TrySetResult();
             return true;
         };
         await using var client = await ConnectAsync(server, protocol);
         await using var locker = new RespireFusionCacheDistributedLocker(client, new()
         {
-            ReleaseOnCallerCancellation = false, LeaseDuration = TimeSpan.FromSeconds(1),
+            ReleaseOnCallerCancellation = false,
+            LeaseDuration = TimeSpan.FromSeconds(1),
             MaximumIndependentLeaseLifetime = TimeSpan.FromSeconds(2),
         });
         using var caller = new CancellationTokenSource();
         var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero, caller.Token))!;
         await caller.CancelAsync();
+
         try
         {
             await renewed.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -55,6 +65,7 @@ public class IndependentLeaseLifetimeWireTests
             await Assert.That(owner.DisposeAsync().AsTask()).IsSameReferenceAs(cleanup);
         }
         finally { await server.SendRawAsync(":1\r\n"u8.ToArray()); }
+
         await Task.WhenAll(owner.DisposeAsync().AsTask(), locker.DisposeAsync().AsTask()).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(await client.Strings.IncrementAsync("client-survives")).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
@@ -69,14 +80,19 @@ public class IndependentLeaseLifetimeWireTests
         await using var server = CreateServer();
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             acquisitionArrived.TrySetResult();
             return true;
         };
         await using var client = await ConnectAsync(server, protocol);
         await using var locker = new RespireFusionCacheDistributedLocker(client, new()
         {
-            ReleaseOnCallerCancellation = false, MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(200),
+            ReleaseOnCallerCancellation = false,
+            MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(200),
         });
         var acquisition = DistributedLockerTests.AcquireAsync(locker, "cache", Timeout.InfiniteTimeSpan).AsTask();
         await acquisitionArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -102,11 +118,20 @@ public class IndependentLeaseLifetimeWireTests
         await using var client = await ConnectAsync(server, protocol);
         await using var locker = new RespireFusionCacheDistributedLocker(client, new()
         {
-            ReleaseOnCallerCancellation = false, MaximumIndependentLeaseLifetime = TimeSpan.MaxValue,
+            ReleaseOnCallerCancellation = false,
+            MaximumIndependentLeaseLifetime = TimeSpan.MaxValue,
         });
         var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero))!;
-        if (shutdown) await locker.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        else await owner.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        if (shutdown)
+        {
+            await locker.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        else
+        {
+            await owner.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
         await Assert.That(owner.LifetimeLimitExpired).IsFalse();
         await Assert.That(owner.OwnershipCancellationToken.IsCancellationRequested).IsTrue();
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
@@ -122,19 +147,25 @@ public class IndependentLeaseLifetimeWireTests
         await using var server = CreateServer();
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("DELEX ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             releaseArrived.TrySetResult();
             return true;
         };
         await using var client = await ConnectAsync(server, protocol);
         await using var locker = new RespireFusionCacheDistributedLocker(client, new()
         {
-            ReleaseOnCallerCancellation = false, MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(200),
+            ReleaseOnCallerCancellation = false,
+            MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(200),
         });
         var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero))!;
         var release = owner.DisposeAsync().AsTask();
         await releaseArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var shutdown = locker.DisposeAsync().AsTask();
+
         try
         {
             await Task.Delay(300);
@@ -144,6 +175,7 @@ public class IndependentLeaseLifetimeWireTests
             await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("DELEX ", StringComparison.Ordinal))).IsEqualTo(1);
         }
         finally { await server.SendRawAsync(":1\r\n"u8.ToArray()); }
+
         await Task.WhenAll(release, shutdown).WaitAsync(TimeSpan.FromSeconds(5));
     }
 
@@ -158,7 +190,8 @@ public class IndependentLeaseLifetimeWireTests
         await using var client = await ConnectAsync(server, protocol);
         await using var locker = new RespireFusionCacheDistributedLocker(client, new()
         {
-            ReleaseOnCallerCancellation = false, MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(50),
+            ReleaseOnCallerCancellation = false,
+            MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(50),
         });
         var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero))!;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -183,7 +216,8 @@ public class IndependentLeaseLifetimeWireTests
         await using var client = await ConnectAsync(server, 2);
         var options = new RespireFusionCacheDistributedLockerOptions
         {
-            ReleaseOnCallerCancellation = false, MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(milliseconds),
+            ReleaseOnCallerCancellation = false,
+            MaximumIndependentLeaseLifetime = TimeSpan.FromMilliseconds(milliseconds),
         };
         await Assert.That(() => new RespireFusionCacheDistributedLocker(client, options)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new ServiceCollection().AddFusionCacheRespireDistributedLocker(options)).Throws<ArgumentOutOfRangeException>();
@@ -221,7 +255,9 @@ public class IndependentLeaseLifetimeWireTests
 
     private static Task<RespireClient> ConnectAsync(FakeRespServer server, int protocol) => RespireClient.ConnectAsync(new RespireOptions
     {
-        Protocol = (RespireProtocol)protocol, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
+        Protocol = (RespireProtocol)protocol,
+        Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+        Connections = 1,
         MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     }).AsTask();
 }

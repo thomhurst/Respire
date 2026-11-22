@@ -126,13 +126,18 @@ public class GeneratedSearchSchemaTests
 #pragma warning restore RESP010
         var vector = new byte[] { 255, 128, 0, 1, 2, 3, 4, 5 };
         var value = new SearchExpiringHashModel("42", vector);
+
         if (tracked)
         {
             var tracker = SearchExpiringHashModelHashMapper.Track(client, "expiring");
             await tracker.UpdateAsync(value);
             await tracker.UpdateAsync(value);
         }
-        else await SearchExpiringHashModelHashMapper.SetAsync(client, "expiring", value);
+        else
+        {
+            await SearchExpiringHashModelHashMapper.SetAsync(client, "expiring", value);
+        }
+
         var write = server.ReceivedArguments.Single(arguments => Encoding.UTF8.GetString(arguments[0]) == "HSETEX");
         await Assert.That(write[^1]).IsEquivalentTo(vector);
         await Assert.That(Encoding.UTF8.GetString(write[3])).IsEqualTo("60000");
@@ -144,7 +149,11 @@ public class GeneratedSearchSchemaTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = Server();
         server.ReplyOverride = (_, command) => command.StartsWith("HSET ", StringComparison.Ordinal) ? ":1\r\n"u8.ToArray() : null;
-        server.SuppressReply = _ => { received.TrySetResult(); return true; };
+        server.SuppressReply = _ =>
+        {
+            received.TrySetResult();
+            return true;
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var value = new SearchHashModel("42", "Hello", "tools", 2, new byte[8]);
         var tracker = SearchHashModelHashMapper.Track(client, value);
@@ -176,7 +185,11 @@ public class GeneratedSearchSchemaTests
                 ? "*1\r\n*6\r\n$6\r\nhsetex\r\n:-6\r\n*0\r\n:1\r\n:1\r\n:1\r\n"u8.ToArray() : null,
             SuppressReply = command =>
             {
-                if (!command.StartsWith("HSET ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("HSET ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -205,13 +218,19 @@ public class GeneratedSearchSchemaTests
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = Server();
-        server.SuppressReply = _ => { received.TrySetResult(); return true; };
+        server.SuppressReply = _ =>
+        {
+            received.TrySetResult();
+            return true;
+        };
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
-            CommandTimeout = TimeSpan.FromMilliseconds(200), ThreadPoolMonitoring = false,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         var value = new SearchHashModel("42", "Hello", "tools", 2, new byte[8]);
@@ -262,6 +281,7 @@ public class GeneratedSearchSchemaTests
         RespireSearchVectorValidation.ValidateHash(new byte[elementSize * 2], options);
         await Assert.That(() => RespireSearchVectorValidation.ValidateHash(new byte[elementSize], options)).Throws<ArgumentException>();
     }
+
     private static FakeRespServer Server() => new(FakeRespServer.OkReply)
     {
         ReplyOverride = (_, command) => command switch
@@ -271,8 +291,11 @@ public class GeneratedSearchSchemaTests
             _ => null,
         },
     };
+
     private static RespireOptions Options(FakeRespServer server, int protocol) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = (RespireProtocol)protocol, ThreadPoolMonitoring = false,
+        Endpoints = { new("127.0.0.1", server.Port) },
+        Protocol = (RespireProtocol)protocol,
+        ThreadPoolMonitoring = false,
     };
 }

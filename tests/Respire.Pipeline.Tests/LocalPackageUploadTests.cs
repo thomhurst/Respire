@@ -16,6 +16,7 @@ public class LocalPackageUploadTests
     public async Task CopiesEveryPackageAndOverwritesExistingPackage()
     {
         var root = Directory.CreateTempSubdirectory("Respire local upload ");
+
         try
         {
             var source = root.CreateSubdirectory("source");
@@ -42,6 +43,7 @@ public class LocalPackageUploadTests
     public async Task CopyFailureFaultsModuleEvenAfterAnotherPackageWasCopied(bool destinationConflict)
     {
         var root = Directory.CreateTempSubdirectory("Respire local upload ");
+
         try
         {
             var source = root.CreateSubdirectory("source");
@@ -49,6 +51,7 @@ public class LocalPackageUploadTests
             var first = WritePackage(source, "First.1.0.0.nupkg", "first package");
             var failed = new FileInfo(Path.Combine(source.FullName, "Failed.1.0.0.nupkg"));
             var failedDestination = Path.Combine(destination.FullName, failed.Name);
+
             if (destinationConflict)
             {
                 File.WriteAllText(failed.FullName, "failed package");
@@ -74,6 +77,7 @@ public class LocalPackageUploadTests
     public async Task NoPackagesReturnsZero()
     {
         var destination = Directory.CreateTempSubdirectory("Respire local upload ");
+
         try
         {
             await Assert.That(await ExecuteUploadAsync([], destination)).IsEqualTo(0);

@@ -26,8 +26,12 @@ internal sealed class TagInvalidationMessage(string cacheNamespace, int maximumB
     internal int ValidateTag(string tag)
     {
         var length = Utf8.GetByteCount(tag);
+
         if (length > maximumBytes - HeaderBytes - _namespace.Length)
+        {
             throw new ArgumentException("The tag exceeds MaxTagInvalidationMessageBytes.", nameof(tag));
+        }
+
         return length;
     }
 
@@ -36,15 +40,33 @@ internal sealed class TagInvalidationMessage(string cacheNamespace, int maximumB
         sender = default;
         tag = "";
         timestamp = default;
+
         if (message.Length <= HeaderBytes + _namespace.Length || message.Length > maximumBytes
             || !message[..4].SequenceEqual("RHT1"u8)
             || BinaryPrimitives.ReadInt32LittleEndian(message.Slice(28, 4)) != _namespace.Length
-            || !message.Slice(HeaderBytes, _namespace.Length).SequenceEqual(_namespace)) return false;
+            || !message.Slice(HeaderBytes, _namespace.Length).SequenceEqual(_namespace))
+        {
+            return false;
+        }
+
         var ticks = BinaryPrimitives.ReadInt64LittleEndian(message.Slice(20, 8));
-        if (ticks < 0 || ticks > DateTimeOffset.MaxValue.UtcTicks) return false;
-        try { tag = Utf8.GetString(message[(HeaderBytes + _namespace.Length)..]); }
+
+        if (ticks < 0 || ticks > DateTimeOffset.MaxValue.UtcTicks)
+        {
+            return false;
+        }
+
+        try
+        {
+            tag = Utf8.GetString(message[(HeaderBytes + _namespace.Length)..]);
+        }
         catch (DecoderFallbackException) { return false; }
-        if (string.IsNullOrWhiteSpace(tag)) return false;
+
+        if (string.IsNullOrWhiteSpace(tag))
+        {
+            return false;
+        }
+
         sender = new Guid(message.Slice(4, 16));
         timestamp = new DateTimeOffset(ticks, TimeSpan.Zero);
         return true;
@@ -53,6 +75,8 @@ internal sealed class TagInvalidationMessage(string cacheNamespace, int maximumB
     internal static void ValidateNamespace(string cacheNamespace, int maximumBytes)
     {
         if (Utf8.GetByteCount(cacheNamespace) >= maximumBytes - HeaderBytes)
+        {
             throw new ArgumentException("The namespace leaves no room for a tag message.", nameof(cacheNamespace));
+        }
     }
 }

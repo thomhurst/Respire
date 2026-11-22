@@ -63,6 +63,7 @@ public class OrleansCommandsTests(RedisTestContainer redis)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
         var database = connection.GetDatabase();
+
         foreach (var transactionMode in new[] { false, true })
         {
             byte[] key = [0xff, 0];
@@ -74,8 +75,16 @@ public class OrleansCommandsTests(RedisTestContainer redis)
             key[0] = value[0] = 0;
             keys[0] = "changed-key";
             values[0] = "changed-value";
-            if (queue is ITransaction transaction) Assert.True(await transaction.ExecuteAsync());
-            else queue.Execute();
+
+            if (queue is ITransaction transaction)
+            {
+                Assert.True(await transaction.ExecuteAsync());
+            }
+            else
+            {
+                queue.Execute();
+            }
+
             var reply = (RedisResult[])(await pending)!;
             Assert.Equal(new byte[] { 0xff, 0 }, (byte[]?)reply[0]);
             Assert.Equal(new byte[] { 0xfe, 0 }, (byte[]?)reply[1]);
@@ -133,15 +142,23 @@ public class OrleansCommandsTests(RedisTestContainer redis)
             ("a", "b"), ("b", "a"), (Array.Empty<byte>(), "b"),
             (new byte[] { 0 }, new byte[] { 0xff, 0 }), (1, 2), (2, 1),
         ];
+
         foreach (var (min, max) in bounds)
-        foreach (var exclude in new[] { Exclude.None, Exclude.Start, Exclude.Stop, Exclude.Both })
-        foreach (var order in new[] { Order.Ascending, Order.Descending })
-        foreach (var (skip, take) in new[] { (0L, -1L), (1L, 2L), (0L, 0L) })
         {
-            var result = await expected.SortedSetRangeByValueAsync("lex", min, max, exclude, order, skip, take);
-            Assert.Equal(result, await database.SortedSetRangeByValueAsync("lex", min, max, exclude, order, skip, take));
-            Assert.Equal(result, database.SortedSetRangeByValue("lex", min, max, exclude, order, skip, take));
+            foreach (var exclude in new[] { Exclude.None, Exclude.Start, Exclude.Stop, Exclude.Both })
+            {
+                foreach (var order in new[] { Order.Ascending, Order.Descending })
+                {
+                    foreach (var (skip, take) in new[] { (0L, -1L), (1L, 2L), (0L, 0L) })
+                    {
+                        var result = await expected.SortedSetRangeByValueAsync("lex", min, max, exclude, order, skip, take);
+                        Assert.Equal(result, await database.SortedSetRangeByValueAsync("lex", min, max, exclude, order, skip, take));
+                        Assert.Equal(result, database.SortedSetRangeByValue("lex", min, max, exclude, order, skip, take));
+                    }
+                }
+            }
         }
+
         var ascending = await expected.SortedSetRangeByValueAsync("lex", "a", "b", Exclude.Start, 0, -1, CommandFlags.None);
         Assert.Equal(ascending, await database.SortedSetRangeByValueAsync("lex", "a", "b", Exclude.Start, 0, -1, CommandFlags.None));
         Assert.Equal(ascending, database.SortedSetRangeByValue("lex", "a", "b", Exclude.Start, 0, -1, CommandFlags.None));
@@ -166,26 +183,47 @@ public class OrleansCommandsTests(RedisTestContainer redis)
         var database = connection.GetDatabase();
         var expected = control.GetDatabase();
         StackExchange.Redis.SortedSetEntry[] members = [new("a", 0), new("b", 0), new("c", 0), new(new byte[] { 0xff, 0 }, 0)];
+
         foreach (var (min, max) in new (RedisValue, RedisValue)[] { ("a", "c"), ("c", "a"), (RedisValue.Null, RedisValue.Null), ("c", new byte[] { 0xff, 0 }) })
-        foreach (var exclude in new[] { Exclude.None, Exclude.Start, Exclude.Stop, Exclude.Both })
-        foreach (var path in new[] { "async", "sync", "batch", "transaction" })
         {
-            await expected.KeyDeleteAsync(["control", "shim"]);
-            await expected.SortedSetAddAsync("control", members);
-            await expected.SortedSetAddAsync("shim", members);
-            var count = await expected.SortedSetRemoveRangeByValueAsync("control", min, max, exclude);
-            if (path == "sync") Assert.Equal(count, database.SortedSetRemoveRangeByValue("shim", min, max, exclude));
-            else if (path == "async") Assert.Equal(count, await database.SortedSetRemoveRangeByValueAsync("shim", min, max, exclude));
-            else
+            foreach (var exclude in new[] { Exclude.None, Exclude.Start, Exclude.Stop, Exclude.Both })
             {
-                var queue = path == "batch" ? database.CreateBatch() : database.CreateTransaction();
-                var pending = queue.SortedSetRemoveRangeByValueAsync("shim", min, max, exclude);
-                Assert.False(pending.IsCompleted);
-                if (queue is ITransaction transaction) Assert.True(await transaction.ExecuteAsync());
-                else queue.Execute();
-                Assert.Equal(count, await pending);
+                foreach (var path in new[] { "async", "sync", "batch", "transaction" })
+                {
+                    await expected.KeyDeleteAsync(["control", "shim"]);
+                    await expected.SortedSetAddAsync("control", members);
+                    await expected.SortedSetAddAsync("shim", members);
+                    var count = await expected.SortedSetRemoveRangeByValueAsync("control", min, max, exclude);
+
+                    if (path == "sync")
+                    {
+                        Assert.Equal(count, database.SortedSetRemoveRangeByValue("shim", min, max, exclude));
+                    }
+                    else if (path == "async")
+                    {
+                        Assert.Equal(count, await database.SortedSetRemoveRangeByValueAsync("shim", min, max, exclude));
+                    }
+                    else
+                    {
+                        var queue = path == "batch" ? database.CreateBatch() : database.CreateTransaction();
+                        var pending = queue.SortedSetRemoveRangeByValueAsync("shim", min, max, exclude);
+                        Assert.False(pending.IsCompleted);
+
+                        if (queue is ITransaction transaction)
+                        {
+                            Assert.True(await transaction.ExecuteAsync());
+                        }
+                        else
+                        {
+                            queue.Execute();
+                        }
+
+                        Assert.Equal(count, await pending);
+                    }
+
+                    Assert.Equal(await expected.SortedSetRangeByRankAsync("control"), await expected.SortedSetRangeByRankAsync("shim"));
+                }
             }
-            Assert.Equal(await expected.SortedSetRangeByRankAsync("control"), await expected.SortedSetRangeByRankAsync("shim"));
         }
     }
 }

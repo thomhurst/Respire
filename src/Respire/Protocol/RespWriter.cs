@@ -66,12 +66,17 @@ internal ref struct RespWriter
     {
 #if DEBUG
         _buffer.ValidateWriter(_writerSequence, _bufferVersion, publishing: true);
+
         if (!_allowGrowth)
         {
             if (_position > _remainingReservation)
+            {
                 throw new InvalidOperationException("The RESP command exceeded its positive write size hint.");
+            }
+
             _remainingReservation -= _position;
         }
+
 #endif
         _buffer.Advance(_position);
         _start += _position;
@@ -88,15 +93,21 @@ internal ref struct RespWriter
     {
 #if DEBUG
         _buffer.ValidateWriter(_writerSequence, _bufferVersion, publishing: false);
+
 #endif
         // Known commands reserve their complete upper bound once. Unknown commands
         // preserve all unpublished bytes before replacing the backing array.
-        if (_allowGrowth) EnsureCapacity(checked(_position + sizeHint));
+        if (_allowGrowth)
+        {
+            EnsureCapacity(checked(_position + sizeHint));
+        }
+
 #if DEBUG
         if (sizeHint > 0)
         {
             _buffer.MarkWriterUnpublished(_writerSequence);
         }
+
 #endif
         return _destination[_position..];
     }
@@ -117,9 +128,13 @@ internal ref struct RespWriter
     public void WriteArrayHeader(int count)
     {
         if ((uint)(count - 1) < 9)
+        {
             WriteRaw("*1\r\n*2\r\n*3\r\n*4\r\n*5\r\n*6\r\n*7\r\n*8\r\n*9\r\n"u8.Slice((count - 1) * 4, 4));
+        }
         else
+        {
             WritePrefixedLine(RespConstants.ArrayPrefix, count);
+        }
     }
 
     /// <summary>Writes "$&lt;length&gt;\r\n&lt;value&gt;\r\n".</summary>
@@ -160,6 +175,7 @@ internal ref struct RespWriter
             _position += binaryLength + 2;
             return;
         }
+
         if (text.Length == 0 || text[0] <= 0x7f)
         {
             // An ASCII first code unit cannot pair with a surrogate at the prefix boundary.
@@ -167,6 +183,7 @@ internal ref struct RespWriter
             var asciiLength = checked(prefix.Bytes.Length + text.Length);
             var asciiPayload = WriteBulkHeaderAndReservePayload(asciiLength);
             prefix.Bytes.CopyTo(asciiPayload);
+
             if (Ascii.FromUtf16(text, asciiPayload[prefix.Bytes.Length..], out var asciiBytes) == OperationStatus.Done)
             {
                 asciiPayload[asciiLength] = RespConstants.CarriageReturn;
@@ -174,9 +191,11 @@ internal ref struct RespWriter
                 _position += asciiLength + 2;
                 return;
             }
+
             CompleteUtf8Suffix(mark, checked(prefix.Bytes.Length + asciiBytes), text.AsSpan(asciiBytes));
             return;
         }
+
         var length = prefix.GetWireLength(text, bytes);
         var payload = WriteBulkHeaderAndReservePayload(length);
         prefix.WritePayload(text, bytes, payload);
@@ -196,8 +215,12 @@ internal ref struct RespWriter
 
         var length = checked(values.Length * sizeof(float));
         var output = WriteBulkHeaderAndReservePayload(length);
+
         for (var index = 0; index < values.Length; index++)
+        {
             BinaryPrimitives.WriteSingleLittleEndian(output.Slice(index * sizeof(float), sizeof(float)), values[index]);
+        }
+
         output[length] = RespConstants.CarriageReturn;
         output[length + 1] = RespConstants.LineFeed;
         _position += length + 2;
@@ -210,6 +233,7 @@ internal ref struct RespWriter
         {
             var mark = _position;
             var asciiSpan = WriteBulkHeaderAndReservePayload(value.Length);
+
             if (Ascii.FromUtf16(value, asciiSpan, out var asciiBytes) == OperationStatus.Done)
             {
                 asciiSpan[asciiBytes] = RespConstants.CarriageReturn;
@@ -235,7 +259,7 @@ internal ref struct RespWriter
     {
         var oldHeaderLength = _position - mark;
         var byteCount = checked(encodedPrefixLength + Encoding.UTF8.GetByteCount(suffix));
-        // stackalloc-audit[9e91996f2eb37eca]: init: byte 0, the TryFormat digits, and the CRLF at digits + 1 and + 2 are written;
+        // stackalloc-audit[96ebf2a8c2139cd1]: init: byte 0, the TryFormat digits, and the CRLF at digits + 1 and + 2 are written;
         // read: header[..headerLength], where headerLength = digits + 3, covers only those bytes; failure: a 24-byte
         // buffer always holds an int, and a growth or copy throw leaves the header unread.
         Span<byte> header = stackalloc byte[MaxIntegerLineLength];
@@ -247,10 +271,19 @@ internal ref struct RespWriter
         var frameLength = checked(headerLength + byteCount + 2);
 
         _position += encodedPrefixLength;
-        if (_allowGrowth) EnsureCapacity(checked(mark + frameLength));
+
+        if (_allowGrowth)
+        {
+            EnsureCapacity(checked(mark + frameLength));
+        }
+
         var frame = _destination.Slice(mark, frameLength);
+
         if (headerLength != oldHeaderLength)
+        {
             frame.Slice(oldHeaderLength, encodedPrefixLength).CopyTo(frame[headerLength..]);
+        }
+
         header[..headerLength].CopyTo(frame);
         Encoding.UTF8.GetBytes(suffix, frame[(headerLength + encodedPrefixLength)..]);
         frame[headerLength + byteCount] = RespConstants.CarriageReturn;
@@ -274,7 +307,7 @@ internal ref struct RespWriter
         {
             // Preserve the bulk-string fallback's 24-byte header reservation.
             // Reserving the maximum complete integer frame can grow a buffer early.
-            // stackalloc-audit[2a1fbc78f602e773]: init: TryFormat writes payloadLength digits of the long;
+            // stackalloc-audit[04357342759d97f7]: init: TryFormat writes payloadLength digits of the long;
             // read: WriteBulkString reads payload[..payloadLength]; failure: 20 bytes always hold a long, and a false result would report zero digits.
             Span<byte> payload = stackalloc byte[20];
             Utf8Formatter.TryFormat(value, payload, out var payloadLength);
@@ -286,9 +319,14 @@ internal ref struct RespWriter
         // without counting decimal digits, then format the value only once.
         var headerLength = value is > -100_000_000 and < 1_000_000_000 ? 4 : 5;
         var span = GetSpan(headerLength + 20 + 2);
+
         if (!Utf8Formatter.TryFormat(value, span[headerLength..], out var length))
+        {
             throw new InvalidOperationException("The write buffer cannot hold the integer payload.");
+        }
+
         span[0] = RespConstants.BulkStringPrefix;
+
         if (headerLength == 4)
         {
             span[1] = (byte)('0' + length);
@@ -303,6 +341,7 @@ internal ref struct RespWriter
             span[1] = (byte)'1';
             span[2] = (byte)('0' + length - 10);
         }
+
         span[headerLength - 2] = RespConstants.CarriageReturn;
         span[headerLength - 1] = RespConstants.LineFeed;
         var frameLength = headerLength + length + 2;
@@ -315,8 +354,12 @@ internal ref struct RespWriter
     public void WriteBulkUInt64(ulong value)
     {
         var span = GetSpan(MaxFormattedScalarFrameLength);
+
         if (!Utf8Formatter.TryFormat(value, span[4..], out var length))
+        {
             ThrowFormattedScalarTooLarge();
+        }
+
         CompleteFormattedScalar(span, length);
     }
 
@@ -324,8 +367,12 @@ internal ref struct RespWriter
     public void WriteBulkSingle(float value)
     {
         var span = GetSpan(MaxFormattedScalarFrameLength);
+
         if (!Utf8Formatter.TryFormat(value, span[4..], out var length))
+        {
             ThrowFormattedScalarTooLarge();
+        }
+
         CompleteFormattedScalar(span, length);
     }
 
@@ -333,8 +380,12 @@ internal ref struct RespWriter
     public void WriteBulkDouble(double value)
     {
         var span = GetSpan(MaxFormattedScalarFrameLength);
+
         if (!Utf8Formatter.TryFormat(value, span[4..], out var length))
+        {
             ThrowFormattedScalarTooLarge();
+        }
+
         CompleteFormattedScalar(span, length);
     }
 
@@ -346,6 +397,7 @@ internal ref struct RespWriter
         Debug.Assert((uint)length <= MaxFormattedScalarLength);
         int headerLength;
         span[0] = RespConstants.BulkStringPrefix;
+
         if (length < 10)
         {
             span[1] = (byte)('0' + length);
@@ -359,6 +411,7 @@ internal ref struct RespWriter
             span[2] = (byte)('0' + (uint)length - tens * 10);
             headerLength = 5;
         }
+
         span[headerLength - 2] = RespConstants.CarriageReturn;
         span[headerLength - 1] = RespConstants.LineFeed;
         var frameLength = headerLength + length + 2;
@@ -388,6 +441,7 @@ internal ref struct RespWriter
     private Span<byte> WriteBulkHeaderAndReservePayload(int length)
     {
         Debug.Assert(length >= 0);
+
         if ((uint)length < 10)
         {
             var span = GetSpan(length + 6);
@@ -398,6 +452,7 @@ internal ref struct RespWriter
             _position += 4;
             return span[4..];
         }
+
         if ((uint)length < 100)
         {
             var span = GetSpan(length + 7);
@@ -410,6 +465,7 @@ internal ref struct RespWriter
             _position += 5;
             return span[5..];
         }
+
         return WriteLongBulkHeaderAndReservePayload(length);
     }
 
@@ -428,11 +484,13 @@ internal ref struct RespWriter
     private static int CountDigits(uint value)
     {
         var digits = 1;
+
         while (value >= 10)
         {
             value /= 10;
             digits++;
         }
+
         return digits;
     }
 
@@ -460,7 +518,9 @@ internal interface IRespCommand
     /// Keep bounds tight without extra payload scans: bounds above the scratch retention limit select gate-held serialization.</remarks>
     int GetWriteSizeHint() => 0;
 
-    void OnAccepted() { }
+    void OnAccepted()
+    {
+    }
 
     /// <summary>Explicitly identifies connection-owned protocol setup, rather than application data dispatch.</summary>
     bool IsConnectionProtocol => false;
@@ -469,12 +529,17 @@ internal interface IRespCommand
     ClientSideCacheCoordinator.MutationFence GetMutationFence() => default;
 
     /// <summary>Checks admission before redirect recovery and immediately before frame and response-slot publication.</summary>
-    void ValidateAdmission() { }
+    void ValidateAdmission()
+    {
+    }
 
     /// <summary>Separates a pre-submission budget from cancellation of an accepted response.</summary>
     CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
 
-    ReadCommandKind ReadKind { get; }
+    ReadCommandKind ReadKind
+    {
+        get;
+    }
 
     /// <summary>Audited execution risk; diagnostic names never grant replay permission.</summary>
     RespireCommandRetryCategory RetryCategory => RespireCommandRetryCategory.Never;
@@ -544,11 +609,19 @@ internal interface IStreamingRespCommand : IRespCommand
 /// </summary>
 internal interface IRespCommandWrapper : IMutationAdmissionCommand
 {
-    new bool IsConnectionProtocol { get; }
+    new bool IsConnectionProtocol
+    {
+        get;
+    }
+
     new RespireCacheMutation GetCacheMutation(string operation);
+
     new ClientCacheCommandMetadata GetClientCacheMetadata(string operation);
+
     new void ValidateAdmission();
+
     new CancellationToken GetResponseCancellationToken(CancellationToken admissionToken);
+
     new void OnAccepted();
 }
 
@@ -561,7 +634,10 @@ internal interface IMutationAdmissionCommand : IRespCommand
 /// <summary>A streamed command that can reset its source and resend after a Cluster redirect.</summary>
 internal interface IReplayableStreamingRespCommand : IStreamingRespCommand
 {
-    bool CanReplay { get; }
+    bool CanReplay
+    {
+        get;
+    }
 
     void ResetSourceForReplay();
 }

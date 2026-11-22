@@ -41,7 +41,8 @@ public class SortedSetRankWithScoreIntegrationTests(ModernRedisTestContainer fix
     public async Task CachedRankAndScoredRank_AreDistinctAndInvalidateTogether()
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
+            with
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
         var view = client.WithKeyPrefix($"rank-cache:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("key", ("a", 1), ("b", 2));
         (await view.SortedSets.RankAsync("key", "b")).Should().Be(1);
@@ -59,7 +60,11 @@ public class SortedSetRankWithScoreIntegrationTests(ModernRedisTestContainer fix
     private static async Task<RespireSortedSetRankResult?> Rank(IRespireClient client, string mode,
         string key, string member, bool descending)
     {
-        if (mode == "immediate") return await client.SortedSets.RankWithScoreAsync(key, member, descending);
+        if (mode == "immediate")
+        {
+            return await client.SortedSets.RankWithScoreAsync(key, member, descending);
+        }
+
         if (mode == "batch")
         {
             using var batch = client.CreateBatch();
@@ -67,6 +72,7 @@ public class SortedSetRankWithScoreIntegrationTests(ModernRedisTestContainer fix
             await batch.ExecuteAsync();
             return pending.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var result = transaction.SortedSets.RankWithScore(key, member, descending);
         await transaction.CommitAsync();

@@ -26,6 +26,7 @@ public class PubSubComparisonBenchmarks
         var host = Environment.GetEnvironmentVariable("REDIS_HOST");
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort)
             ? configuredPort : 6379;
+
         if (string.IsNullOrEmpty(host))
         {
             _redisContainer = new RedisBuilder("redis:8.10").Build();
@@ -65,14 +66,17 @@ public class PubSubComparisonBenchmarks
     public async Task<string?> Respire_PublishAndConsume()
     {
         await _respire.PublishAsync(_respireChannel, _payload);
+
         if (!await _messages.MoveNextAsync())
         {
             throw new InvalidOperationException("Subscription ended before delivery.");
         }
+
         if (_messages.Current.Kind == RespireMessageKind.Gap)
         {
             throw new InvalidOperationException("Subscription reported a delivery gap during measurement.");
         }
+
         return _messages.Current.Text;
     }
 
@@ -84,6 +88,7 @@ public class PubSubComparisonBenchmarks
         await _queue.UnsubscribeAsync();
         await _respire.DisposeAsync();
         await _stackExchange.DisposeAsync();
+
         if (_redisContainer is not null)
         {
             await _redisContainer.DisposeAsync();

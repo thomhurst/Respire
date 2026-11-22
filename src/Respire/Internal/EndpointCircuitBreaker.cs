@@ -1,12 +1,25 @@
 namespace Respire.Internal;
 
-internal enum EndpointCircuitState { Closed, Open, HalfOpen }
-internal enum CircuitOutcome { Success, Failure, Ignored }
+internal enum EndpointCircuitState
+{
+    Closed,
+    Open,
+    HalfOpen
+}
+
+internal enum CircuitOutcome
+{
+    Success,
+    Failure,
+    Ignored
+}
+
 // Every acquired permit must be completed by its owner, including cancellation and exceptions.
 // Dispatch must guard completion with finally/using; permits have no lease or automatic expiry.
 // An abandoned half-open permit retains capacity and can prevent recovery indefinitely.
 internal readonly record struct CircuitPermit(EndpointCircuitBreaker? Owner, long Generation, int ProbeSlot, long PermitId,
     EndpointCircuitBreaker.CompletionTicket? Ticket = null);
+
 internal readonly record struct CircuitSnapshot(EndpointCircuitState State, int SampleCount, int FailureCount, int ActiveProbes, int SuccessfulProbes);
 
 // Ticket identities make completion idempotent even when a caller copies a permit.
@@ -41,7 +54,10 @@ internal sealed class EndpointCircuitBreaker
         _freeProbeSlots = new int[options.HalfOpenProbeCount];
     }
 
-    public RespireEndpoint Endpoint { get; }
+    public RespireEndpoint Endpoint
+    {
+        get;
+    }
 
     public CircuitSnapshot Snapshot()
     {
@@ -55,12 +71,18 @@ internal sealed class EndpointCircuitBreaker
     public bool TryAcquire(out CircuitPermit permit, out TimeSpan? retryAfter)
     {
         var acquired = TryAcquireCore(out permit, out retryAfter, out var openingTransition, out var recoveryTransition);
+
         if (_reportMetrics)
         {
             RecordTransition(openingTransition);
             RecordTransition(recoveryTransition);
-            if (!acquired) RespireTelemetry.RecordCircuitRejection(Endpoint);
+
+            if (!acquired)
+            {
+                RespireTelemetry.RecordCircuitRejection(Endpoint);
+            }
         }
+
         return acquired;
     }
 
@@ -68,19 +90,23 @@ internal sealed class EndpointCircuitBreaker
         out Transition? openingTransition, out Transition? recoveryTransition)
     {
         openingTransition = recoveryTransition = null;
+
         lock (_gate)
         {
             permit = default;
             retryAfter = null;
+
             if (_state == EndpointCircuitState.Closed)
             {
                 var now = _clock.GetTimestamp();
                 TrimHistory(now);
                 openingTransition = OpenIfThresholdReached(now);
             }
+
             if (_state == EndpointCircuitState.Open)
             {
                 var elapsed = _clock.GetElapsedTime(_openedAt, _clock.GetTimestamp());
+
                 if (elapsed < _options.OpenDuration)
                 {
                     retryAfter = _options.OpenDuration - elapsed;
@@ -93,21 +119,32 @@ internal sealed class EndpointCircuitBreaker
                 _generation++;
                 ClearHistory();
             }
+
             if (_state == EndpointCircuitState.Closed)
             {
                 var ticket = _freeTickets;
-                if (ticket is null) ticket = new CompletionTicket();
+
+                if (ticket is null)
+                {
+                    ticket = new CompletionTicket();
+                }
                 else
                 {
                     _freeTickets = ticket.Next;
                     _freeTicketCount--;
                     ticket.Next = null;
                 }
+
                 ticket.Id = NextPermitId();
                 permit = new(this, _generation, -1, ticket.Id, ticket);
                 return true;
             }
-            if (_successfulProbes + _activeProbes == _probes.Length) return false;
+
+            if (_successfulProbes + _activeProbes == _probes.Length)
+            {
+                return false;
+            }
+
             var slot = _freeProbeSlots[--_freeProbeCount];
             _probes[slot] = NextPermitId();
             _activeProbes++;
@@ -122,23 +159,44 @@ internal sealed class EndpointCircuitBreaker
     public void Complete(ref CircuitPermit permit, CircuitOutcome outcome)
     {
         CompleteCore(ref permit, outcome, out var transition);
-        if (_reportMetrics) RecordTransition(transition);
+
+        if (_reportMetrics)
+        {
+            RecordTransition(transition);
+        }
     }
 
     private void CompleteCore(ref CircuitPermit permit, CircuitOutcome outcome, out Transition? transition)
     {
         transition = null;
+
         if (outcome is not (CircuitOutcome.Success or CircuitOutcome.Failure or CircuitOutcome.Ignored))
+        {
             throw new ArgumentOutOfRangeException(nameof(outcome));
-        if (permit.Owner is null) return;
-        if (!ReferenceEquals(permit.Owner, this)) throw new ArgumentException("The permit belongs to another circuit.", nameof(permit));
+        }
+
+        if (permit.Owner is null)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(permit.Owner, this))
+        {
+            throw new ArgumentException("The permit belongs to another circuit.", nameof(permit));
+        }
+
         var completed = permit;
         permit = default;
+
         lock (_gate)
         {
             if (completed.Ticket is { } ticket)
             {
-                if (ticket.Id != completed.PermitId) return;
+                if (ticket.Id != completed.PermitId)
+                {
+                    return;
+                }
+
                 ticket.Id = 0;
                 // Outstanding permits own overflow tickets; the endpoint retains only a bounded idle pool.
                 if (_freeTicketCount < _samples.Length)
@@ -148,13 +206,23 @@ internal sealed class EndpointCircuitBreaker
                     _freeTicketCount++;
                 }
             }
-            if (completed.Generation != _generation) return;
+
+            if (completed.Generation != _generation)
+            {
+                return;
+            }
+
             if (_state == EndpointCircuitState.HalfOpen)
             {
-                if (completed.ProbeSlot < 0 || _probes[completed.ProbeSlot] != completed.PermitId) return;
+                if (completed.ProbeSlot < 0 || _probes[completed.ProbeSlot] != completed.PermitId)
+                {
+                    return;
+                }
+
                 _probes[completed.ProbeSlot] = 0;
                 _freeProbeSlots[_freeProbeCount++] = completed.ProbeSlot;
                 _activeProbes--;
+
                 if (outcome == CircuitOutcome.Failure)
                 {
                     transition = Open(_clock.GetTimestamp());
@@ -166,16 +234,32 @@ internal sealed class EndpointCircuitBreaker
                     _generation++;
                     _successfulProbes = 0;
                 }
+
                 return;
             }
-            if (_state != EndpointCircuitState.Closed || outcome == CircuitOutcome.Ignored) return;
+
+            if (_state != EndpointCircuitState.Closed || outcome == CircuitOutcome.Ignored)
+            {
+                return;
+            }
+
             var now = _clock.GetTimestamp();
             TrimHistory(now);
-            if (_sampleCount == _samples.Length) RemoveOldest();
+
+            if (_sampleCount == _samples.Length)
+            {
+                RemoveOldest();
+            }
+
             var failure = outcome == CircuitOutcome.Failure;
             _samples[(_head + _sampleCount) % _samples.Length] = new(now, failure);
             _sampleCount++;
-            if (failure) _failureCount++;
+
+            if (failure)
+            {
+                _failureCount++;
+            }
+
             transition = OpenIfThresholdReached(now);
         }
     }
@@ -184,21 +268,31 @@ internal sealed class EndpointCircuitBreaker
     // outside the circuit gate. Concurrent operations may deliver transitions out of order.
     private void RecordTransition(Transition? transition)
     {
-        if (transition is { } change) RespireTelemetry.RecordCircuitTransition(Endpoint, change.From, change.To);
+        if (transition is { } change)
+        {
+            RespireTelemetry.RecordCircuitTransition(Endpoint, change.From, change.To);
+        }
     }
 
     private Transition? OpenIfThresholdReached(long now)
     {
         if (_failureCount >= _options.MinimumFailureCount
             && (double)_failureCount / _sampleCount >= _options.FailureRateThreshold)
+        {
             return Open(now);
+        }
+
         return null;
     }
 
     private long NextPermitId()
     {
         // Zero denotes a consumed ticket or free probe slot, including when the counter wraps.
-        if (++_nextPermitId == 0) ++_nextPermitId;
+        if (++_nextPermitId == 0)
+        {
+            ++_nextPermitId;
+        }
+
         return _nextPermitId;
     }
 
@@ -210,7 +304,12 @@ internal sealed class EndpointCircuitBreaker
         _generation++;
         _activeProbes = _successfulProbes = 0;
         Array.Clear(_probes);
-        for (var i = 0; i < _freeProbeSlots.Length; i++) _freeProbeSlots[i] = i;
+
+        for (var i = 0; i < _freeProbeSlots.Length; i++)
+        {
+            _freeProbeSlots[i] = i;
+        }
+
         _freeProbeCount = _freeProbeSlots.Length;
         return transition;
     }
@@ -218,18 +317,26 @@ internal sealed class EndpointCircuitBreaker
     private void TrimHistory(long now)
     {
         while (_sampleCount != 0 && _clock.GetElapsedTime(_samples[_head].Timestamp, now) >= _options.SamplingWindow)
+        {
             RemoveOldest();
+        }
     }
 
     private void RemoveOldest()
     {
-        if (_samples[_head].Failure) _failureCount--;
+        if (_samples[_head].Failure)
+        {
+            _failureCount--;
+        }
+
         _head = (_head + 1) % _samples.Length;
         _sampleCount--;
     }
 
     private void ClearHistory() => _head = _sampleCount = _failureCount = 0;
+
     private readonly record struct Sample(long Timestamp, bool Failure);
+
     private readonly record struct Transition(EndpointCircuitState From, EndpointCircuitState To);
 
     internal sealed class CompletionTicket

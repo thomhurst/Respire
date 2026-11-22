@@ -11,7 +11,11 @@ internal static class ArrayFacetScenarios
 
     internal static async Task EmptyRegularExpressionIsRejectedBeforeKeyLookup(IRespireClient client, bool present)
     {
-        if (present) await client.Arrays.SetAsync("regex", 0, "", "value");
+        if (present)
+        {
+            await client.Arrays.SetAsync("regex", 0, "", "value");
+        }
+
         RespireArrayPredicate[] predicates = [new(RespireArrayPredicateKind.Regex, "")];
         await Assert.That(async () => await client.Arrays.GrepAsync("regex", RespireArrayBound.First, RespireArrayBound.Last, predicates))
             .Throws<RespireServerException>().WithMessage("ERR regular expression is empty");
@@ -72,10 +76,14 @@ internal static class ArrayFacetScenarios
             ("[a-c]*", [0, 1, 4, 5]), ("[^a]*", [2]), ("a\\*\\?", [1]),
             ("*a*b*", [0, 4]), ("B[5-1]", [2]), ("?*?", [0, 1, 2, 4, 5]),
         ];
+
         foreach (var (pattern, expected) in globCases)
+        {
             await Assert.That(await arrays.GrepAsync("glob", RespireArrayBound.First, RespireArrayBound.Last,
                 new RespireArrayPredicate(RespireArrayPredicateKind.Glob, pattern)))
                 .IsEquivalentTo(expected, CollectionOrdering.Matching);
+        }
+
         await Assert.That((await arrays.AggregateAsync("search", 3, 5, RespireArrayOperation.And)).Integer).IsEqualTo(0L);
         await Assert.That((await arrays.AggregateAsync("search", 3, 5, RespireArrayOperation.Or)).Integer).IsEqualTo(-1L);
         await Assert.That((await arrays.AggregateAsync("search", 3, 5, RespireArrayOperation.Xor)).Integer).IsEqualTo(-2L);
@@ -139,8 +147,16 @@ internal static class ArrayFacetScenarios
         RespireValue[] values = ["first", "second"];
         var arraySet = arrays.Set("value-array", 0, values);
         var arrayRead = arrays.Range("value-array", 0, 1);
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(set.Result).IsEqualTo(2UL);
         await Assert.That(manySet.Result).IsEqualTo(1UL);
         await Assert.That(get.Result).IsEqualTo("2");
@@ -197,7 +213,12 @@ internal static class ArrayFacetScenarios
         await client.Arrays.SetManyAsync("scan", new RespireArrayItem(0, "first"), new RespireArrayItem(4, "middle"), new RespireArrayItem(last, "last"));
         await Assert.That(await client.Arrays.LengthAsync("scan")).IsEqualTo(ulong.MaxValue);
         List<RespireArrayEntry<string>> items = [];
-        await foreach (var item in client.Arrays.ScanAsync("scan", last, 0, pageSize: 1)) items.Add(item);
+
+        await foreach (var item in client.Arrays.ScanAsync("scan", last, 0, pageSize: 1))
+        {
+            items.Add(item);
+        }
+
         await Assert.That(items.Select(item => item.Index).ToArray()).IsEquivalentTo(new[] { last, 4UL, 0UL }, CollectionOrdering.Matching);
         await Assert.That(items.Select(item => item.Value).ToArray()).IsEquivalentTo(new string?[] { "last", "middle", "first" }, CollectionOrdering.Matching);
         var forward = await client.Arrays.ScanPageAsync("scan", 0, last, limit: 2);
@@ -206,7 +227,9 @@ internal static class ArrayFacetScenarios
         cancellation.Cancel();
         await Assert.That(async () =>
         {
-            await foreach (var _ in client.Arrays.ScanAsync("scan", 0, last, cancellationToken: cancellation.Token)) { }
+            await foreach (var _ in client.Arrays.ScanAsync("scan", 0, last, cancellationToken: cancellation.Token))
+            {
+            }
         }).Throws<OperationCanceledException>();
     }
 

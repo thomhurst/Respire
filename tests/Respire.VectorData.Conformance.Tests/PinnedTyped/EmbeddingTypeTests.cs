@@ -70,6 +70,7 @@ public abstract class EmbeddingTypeTests<TKey>(EmbeddingTypeTests<TKey>.Fixture 
 
         var result1 = await collection.GetAsync(key, new() { IncludeVectors = true });
         Assert.Equal(42, result1!.Int);
+
         if (fixture.TestStore.VectorsComparable)
         {
             vectorEqualityAsserter(value, result1.Vector);
@@ -79,6 +80,7 @@ public abstract class EmbeddingTypeTests<TKey>(EmbeddingTypeTests<TKey>.Fixture 
         // filter by Int here.
         var result2 = await collection.SearchAsync(value, top: 1, new() { IncludeVectors = true, Filter = r => r.Int == 42 }).SingleAsync();
         Assert.Equal(42, result2.Record.Int);
+
         if (fixture.TestStore.VectorsComparable)
         {
             vectorEqualityAsserter(value, result2.Record.Vector);
@@ -111,6 +113,7 @@ public abstract class EmbeddingTypeTests<TKey>(EmbeddingTypeTests<TKey>.Fixture 
             => Task.FromResult(new GeneratedEmbeddings<BinaryEmbedding>([new(data)]));
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
         public void Dispose()
         {
         }
@@ -118,21 +121,44 @@ public abstract class EmbeddingTypeTests<TKey>(EmbeddingTypeTests<TKey>.Fixture 
 
     public class RecordWithString
     {
-        public TKey Key { get; set; }
-        public string Vector { get; set; }
-        public int Int { get; set; }
+        public TKey Key
+        {
+            get; set;
+        }
+
+        public string Vector
+        {
+            get; set;
+        }
+
+        public int Int
+        {
+            get; set;
+        }
     }
 
     public class Record<TVector>
     {
-        public TKey Key { get; set; }
-        public TVector Vector { get; set; }
-        public int Int { get; set; }
+        public TKey Key
+        {
+            get; set;
+        }
+
+        public TVector Vector
+        {
+            get; set;
+        }
+
+        public int Int
+        {
+            get; set;
+        }
     }
 
     public abstract class Fixture : VectorStoreFixture
     {
         protected virtual string CollectionNameBase => nameof(EmbeddingTypeTests<>);
+
         public virtual string CollectionName => TestStore.AdjustCollectionName(CollectionNameBase);
 
         public virtual VectorStoreCollectionDefinition CreateRecordDefinition<TVectorProperty>(IEmbeddingGenerator? embeddingGenerator, string? distanceFunction, int dimensions)

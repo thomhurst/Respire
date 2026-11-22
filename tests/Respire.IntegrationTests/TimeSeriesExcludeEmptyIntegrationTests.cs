@@ -32,7 +32,12 @@ public class TimeSeriesExcludeEmptyIntegrationTests(VersionedServerFixture serve
         var outside = $"{id}:outside";
         var values = $"{id}:values";
         var nan = $"{id}:nan";
-        foreach (var key in new[] { empty, outside, values, nan }) await timeSeries.CreateAsync(key, labels);
+
+        foreach (var key in new[] { empty, outside, values, nan })
+        {
+            await timeSeries.CreateAsync(key, labels);
+        }
+
         await timeSeries.AddAsync(outside, 200, 2);
         await timeSeries.AddAsync(values, 10, 1);
         await timeSeries.AddAsync(values, 20, 2);

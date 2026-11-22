@@ -1,5 +1,5 @@
-using System.Text;
 using System.Reflection;
+using System.Text;
 using Respire.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -47,7 +47,11 @@ public class JobTransactionTests
 
     public class ForwardingClient : DispatchProxy
     {
-        public IRespireClient Inner { get; set; } = null!;
+        public IRespireClient Inner
+        {
+            get; set;
+        } = null!;
+
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
             => method!.Invoke(Inner, arguments);
     }

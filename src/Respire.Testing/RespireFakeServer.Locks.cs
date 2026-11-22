@@ -39,19 +39,42 @@ public sealed partial class RespireFakeServer
             : Matches(FencedLockAcquireCrLfScript) ? FencedLockAcquireCrLfScript
             : Matches(LockCommands.ReleaseScript) ? LockCommands.ReleaseScript
             : Matches(LockCommands.ExtendScript) ? LockCommands.ExtendScript : null;
-        if (script is null) return StreamWorkerScript(args, sha);
+
+        if (script is null)
+        {
+            return StreamWorkerScript(args, sha);
+        }
+
         if (sha && !_scriptCache.Contains(source))
+        {
             return FakeReply.Error("NOSCRIPT No matching script. Please use EVAL.");
+        }
 
         var acquire = script == FencedLockAcquireLfScript || script == FencedLockAcquireCrLfScript;
         var extend = script == LockCommands.ExtendScript;
+
         if (Integer(args[2]) != (acquire ? 2 : 1) || args.Length != (acquire ? 7 : extend ? 6 : 5))
+        {
             return Syntax("EVAL");
-        if (!sha) _scriptCache.Add(script.Sha1);
-        if (acquire) return AcquireFencedLock(args);
+        }
+
+        if (!sha)
+        {
+            _scriptCache.Add(script.Sha1);
+        }
+
+        if (acquire)
+        {
+            return AcquireFencedLock(args);
+        }
 
         var value = Find(args[3])?.Value;
-        if (value is null || !value.AsSpan().SequenceEqual(args[4])) return FakeReply.Integer(0);
+
+        if (value is null || !value.AsSpan().SequenceEqual(args[4]))
+        {
+            return FakeReply.Integer(0);
+        }
+
         return extend ? Expire("PEXPIRE", ["PEXPIRE"u8.ToArray(), args[3], args[5]])
             : FakeReply.Integer(DeleteEntry(args[3]) ? 1 : 0);
 
@@ -62,18 +85,34 @@ public sealed partial class RespireFakeServer
     {
         var key = args[3];
         var counterKey = args[4];
+
         if (key.AsSpan().SequenceEqual(counterKey))
+        {
             return FakeReply.Error("ERR lock and fencing counter keys must differ");
-        if (Find(key) is not null) return FakeReply.Null;
+        }
+
+        if (Find(key) is not null)
+        {
+            return FakeReply.Null;
+        }
+
         var counter = Find(counterKey);
+
         if (counter is not null)
         {
             var value = counter.Value;
+
             if (value.Length == 0 || value.Length > 1 && value[0] == '0' || value.Any(b => b < '0' || b > '9'))
+            {
                 return FakeReply.Error("ERR fencing counter must be a nonnegative canonical integer");
+            }
+
             if (counter.ExpiresAt is not null)
+            {
                 return FakeReply.Error("ERR fencing counter must not expire");
+            }
         }
+
         Increment(counterKey, 1);
         var reply = Set(["SET"u8.ToArray(), key, args[5], "NX"u8.ToArray(), "PX"u8.ToArray(), args[6]]);
         return reply.Prefix == '-' ? reply : FakeReply.Bulk(Find(counterKey)!.Value);

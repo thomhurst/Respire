@@ -1,10 +1,10 @@
+using System.Diagnostics.Tracing;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Diagnosers;
 using DotNet.Testcontainers.Containers;
 using Microsoft.Diagnostics.NETCore.Client;
 using Microsoft.Diagnostics.Tracing.Parsers;
-using System.Diagnostics.Tracing;
 using Testcontainers.Redis;
 
 namespace Respire.Benchmarks;
@@ -45,6 +45,7 @@ public class ClientCacheWriteBenchmarks
             var host = Environment.GetEnvironmentVariable("REDIS_HOST");
             var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort)
                 ? configuredPort : 6379;
+
             if (string.IsNullOrEmpty(host))
             {
                 _container = new RedisBuilder("redis:8.10").Build();
@@ -52,9 +53,12 @@ public class ClientCacheWriteBenchmarks
                 host = _container.Hostname;
                 port = _container.GetMappedPublicPort(6379);
             }
+
             var options = new RespireOptions
             {
-                Endpoints = [new(host, port)], Connections = 1, Protocol = RespireProtocol.Resp3,
+                Endpoints = [new(host, port)],
+                Connections = 1,
+                Protocol = RespireProtocol.Resp3,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             };
             _withoutCache = await RespireClient.ConnectAsync(options);
@@ -63,6 +67,7 @@ public class ClientCacheWriteBenchmarks
             {
                 ClientSideCache = new() { CoalesceConcurrentMisses = true },
             });
+
             if (await SetConcurrent50Coalescing() != Callers * WritesPerCaller
                 || await SetConcurrent50WithoutCoalescing() != Callers * WritesPerCaller
                 || await SetConcurrent50CacheDisabled() != Callers * WritesPerCaller
@@ -70,7 +75,10 @@ public class ClientCacheWriteBenchmarks
                 || await FailedSetConcurrent50() != Callers * WritesPerCaller
                 || await ReadWriteConcurrent50() != Callers * WritesPerCaller
                 || await CoalescedGetMissBurst() != Callers * _value.Length)
+            {
                 throw new InvalidOperationException("Cache write fixture did not preserve SET/GET results.");
+            }
+
             _coalescing.ClientSideCache!.Clear();
             _withoutCoalescing.ClientSideCache!.Clear();
         }
@@ -103,6 +111,7 @@ public class ClientCacheWriteBenchmarks
             _workers[index] = Task.Run(async () =>
             {
                 long rejected = 0;
+
                 for (var write = 0; write < WritesPerCaller; write++)
                 {
                     try
@@ -113,9 +122,11 @@ public class ClientCacheWriteBenchmarks
                     }
                     catch (RespireServerException error) when (error.Code == "ERR") { rejected++; }
                 }
+
                 return rejected;
             });
         }
+
         return (await Task.WhenAll(_workers)).Sum();
     }
 
@@ -133,16 +144,26 @@ public class ClientCacheWriteBenchmarks
             _workers[index] = Task.Run(async () =>
             {
                 long completed = 0;
+
                 for (var write = 0; write < WritesPerCaller; write++)
                 {
-                    if (!await client.SetAsync(key, _value)) throw new InvalidOperationException("SET failed.");
+                    if (!await client.SetAsync(key, _value))
+                    {
+                        throw new InvalidOperationException("SET failed.");
+                    }
+
                     if (readAfterWrite && await client.GetStringAsync(key) != _value)
+                    {
                         throw new InvalidOperationException("GET returned an unexpected value.");
+                    }
+
                     completed++;
                 }
+
                 return completed;
             });
         }
+
         return (await Task.WhenAll(_workers)).Sum();
     }
 
@@ -151,19 +172,43 @@ public class ClientCacheWriteBenchmarks
     public async Task<long> CoalescedGetMissBurst()
     {
         _coalescing.ClientSideCache!.Clear();
+
         for (var index = 0; index < _reads.Length; index++)
+        {
             _reads[index] = _coalescing.GetStringAsync(_keys[0]).AsTask();
+        }
+
         var values = await Task.WhenAll(_reads);
-        if (values.Any(value => value != _value)) throw new InvalidOperationException("Shared GET returned an unexpected value.");
+
+        if (values.Any(value => value != _value))
+        {
+            throw new InvalidOperationException("Shared GET returned an unexpected value.");
+        }
+
         return values.Sum(value => (long)value!.Length);
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_coalescing is not null) await _coalescing.DisposeAsync();
-        if (_withoutCoalescing is not null) await _withoutCoalescing.DisposeAsync();
-        if (_withoutCache is not null) await _withoutCache.DisposeAsync();
-        if (_container is not null) await _container.DisposeAsync();
+        if (_coalescing is not null)
+        {
+            await _coalescing.DisposeAsync();
+        }
+
+        if (_withoutCoalescing is not null)
+        {
+            await _withoutCoalescing.DisposeAsync();
+        }
+
+        if (_withoutCache is not null)
+        {
+            await _withoutCache.DisposeAsync();
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+        }
     }
 }

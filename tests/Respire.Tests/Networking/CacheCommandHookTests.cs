@@ -16,7 +16,9 @@ public partial class CommandHookTests
 #pragma warning disable RESP010 // This cache hook scenario needs isolated resident entries and admission state; it owns the client.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", endpoint.Port)], CommandHook = hook, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", endpoint.Port)],
+            CommandHook = hook,
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         await Assert.That(await Failure(async () => await client.GetOrSetAsync<string>("key",
@@ -42,15 +44,23 @@ public partial class CommandHookTests
 #pragma warning disable RESP010 // This cache hook scenario needs isolated resident entries and admission state; it owns the client.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", endpoint.Port)], ClientSideCache = new(),
-            CommandHook = hook, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", endpoint.Port)],
+            ClientSideCache = new(),
+            CommandHook = hook,
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         SeedCacheOwner(client, "many", "42");
+
         if (aside)
+        {
             await Assert.That(await client.GetOrSetAsync<int>(key, _ => throw new Exception("factory"), TimeSpan.FromMinutes(1))).IsEqualTo(42);
+        }
         else
+        {
             await Assert.That((await client.Strings.GetManyAsync<int>([key]))[0]).IsEqualTo(42);
+        }
+
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
         await Assert.That(client.IsConnected).IsFalse();
     }
@@ -63,8 +73,11 @@ public partial class CommandHookTests
 #pragma warning disable RESP010 // This preflight scenario owns isolated client options and hooks to verify rejection before I/O.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", endpoint.Port)], ClientSideCache = new(), UseCluster = true,
-            CommandHook = hook, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", endpoint.Port)],
+            ClientSideCache = new(),
+            UseCluster = true,
+            CommandHook = hook,
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         await Assert.That(await Failure(async () => await client.Strings.GetManyAsync(["{a}", "{b}"])) is RespireCrossSlotException).IsTrue();
@@ -90,7 +103,8 @@ public partial class CommandHookTests
 #pragma warning disable RESP010 // This retry/fallback scenario owns its client and scripted attempt counters across one logical call.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { ReuseHashFields = true },
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { ReuseHashFields = true },
             RetryPolicy = new() { InitialBackoff = TimeSpan.Zero },
         });
 #pragma warning restore RESP010
@@ -121,18 +135,30 @@ public partial class CommandHookTests
 #pragma warning restore RESP010
         IRespireClient view = bypassCache ? client.WithoutClientCache() : client;
         var failure = new InvalidOperationException("factory failed");
+
         async ValueTask<string?> Factory(CancellationToken token)
         {
             await Assert.That(hook.Completed).IsEmpty();
             var result = await client.GetStringAsync("nested", token);
-            if (failFactory) throw failure;
+
+            if (failFactory)
+            {
+                throw failure;
+            }
+
             return result;
         }
+
         if (failFactory)
+        {
             await Assert.That(await Failure(async () => await view.GetOrSetAsync("missing", Factory, TimeSpan.FromMinutes(1))))
                 .IsSameReferenceAs(failure);
+        }
         else
+        {
             await Assert.That(await view.GetOrSetAsync("missing", Factory, TimeSpan.FromMinutes(1))).IsEqualTo("42");
+        }
+
         await Assert.That(string.Join(",", hook.Entered.Select(c => c.Command))).IsEqualTo("GETORSET,GET");
         await Assert.That(string.Join(",", hook.Completed.Select(c => c.Context.Command))).IsEqualTo("GET,GETORSET");
         await Assert.That(hook.Completed.Last().Outcome).IsEqualTo(failFactory ? RespireCommandOutcome.Failed : RespireCommandOutcome.Succeeded);
@@ -153,6 +179,7 @@ public partial class CommandHookTests
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
+
         async ValueTask<string?> Factory(CancellationToken token)
         {
             Interlocked.Increment(ref calls);
@@ -160,8 +187,10 @@ public partial class CommandHookTests
             await release.Task.WaitAsync(token);
             return "42";
         }
+
         using var canceled = new CancellationTokenSource();
         var first = client.GetOrSetAsync("missing", Factory, TimeSpan.FromMinutes(1), canceled.Token).AsTask();
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -174,6 +203,7 @@ public partial class CommandHookTests
             await Assert.That(await second.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("42");
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(calls).IsEqualTo(1);
         await Assert.That(hook.Entered.Count).IsEqualTo(2);
         await Assert.That(hook.Completed.Count).IsEqualTo(2);
@@ -218,12 +248,19 @@ public partial class CommandHookTests
         {
             Endpoints = [new("127.0.0.1", endpoint.Port)],
             ClientSideCache = new() { CoalesceConcurrentMisses = true, ReuseHashFields = true },
-            CommandHook = hook, ThreadPoolMonitoring = false,
+            CommandHook = hook,
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         SeedCacheOwner(client, route, "42");
         await ReadCacheOwner(client, route);
-        var name = route switch { "hash-many" => "HMGET", "hash-map" => "HGETALL", "aside" => "GETORSET", _ => "MGET" };
+        var name = route switch
+        {
+            "hash-many" => "HMGET",
+            "hash-map" => "HGETALL",
+            "aside" => "GETORSET",
+            _ => "MGET"
+        };
         await Assert.That(hook.Entered.Single().Command).IsEqualTo(name);
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
         var beforeRejection = client.ClientSideCache!.GetStatistics();
@@ -249,8 +286,10 @@ public partial class CommandHookTests
 #pragma warning disable RESP010 // This cache hook scenario needs isolated resident entries and admission state; it owns the client.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", endpoint.Port)], ClientSideCache = new() { ReuseHashFields = true },
-            CommandHook = hook, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", endpoint.Port)],
+            ClientSideCache = new() { ReuseHashFields = true },
+            CommandHook = hook,
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         SeedCacheOwner(client, route, "not-an-integer");
@@ -273,8 +312,10 @@ public partial class CommandHookTests
 #pragma warning disable RESP010 // This cancellation scenario owns its client, hook state and scripted in-flight reply boundaries.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", endpoint.Port)], ClientSideCache = new() { ReuseHashFields = true },
-            CommandHook = hook, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", endpoint.Port)],
+            ClientSideCache = new() { ReuseHashFields = true },
+            CommandHook = hook,
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         SeedCacheOwner(client, route, "42");
@@ -307,17 +348,38 @@ public partial class CommandHookTests
     {
         switch (route)
         {
-            case "many": await client.Strings.GetManyAsync(["key", "key"], token); break;
-            case "typed-many": await client.Strings.GetManyAsync<int>(["key", "key"], token); break;
-            case "raw-many": using (await client.ExecuteAsync(RespireCommands.String.MGET, ["key", "key"], cancellationToken: token)) { } break;
-            case "lease-many": using (await client.ExecuteLeaseAsync(RespireCommands.String.MGET, ["key", "key"], cancellationToken: token)) { } break;
-            case "hash-many": await client.Hashes.GetManyAsync("key", ["field", "field"], token); break;
+            case "many":
+                await client.Strings.GetManyAsync(["key", "key"], token);
+                break;
+            case "typed-many":
+                await client.Strings.GetManyAsync<int>(["key", "key"], token);
+                break;
+            case "raw-many":
+                using (await client.ExecuteAsync(RespireCommands.String.MGET, ["key", "key"], cancellationToken: token))
+                {
+                }
+                break;
+            case "lease-many":
+                using (await client.ExecuteLeaseAsync(RespireCommands.String.MGET, ["key", "key"], cancellationToken: token))
+                {
+                }
+                break;
+            case "hash-many":
+                await client.Hashes.GetManyAsync("key", ["field", "field"], token);
+                break;
 #pragma warning disable RESP011 // SeedCacheOwner installs exactly one HGETALL field/value pair; this resident-hit probe never reads an unbounded server hash.
-            case "hash-map": await client.Hashes.GetAllAsync<int>("key", token); break;
+            case "hash-map":
+                await client.Hashes.GetAllAsync<int>("key", token);
+                break;
 #pragma warning restore RESP011
-            case "aside": await client.GetOrSetAsync<int>("key", _ => throw new Exception("Factory must not run on a hit."), TimeSpan.FromMinutes(1), token); break;
-            case "protected-aside": await client.GetOrSetAsync<int>("key", new RespireCacheAsideOptions(), _ => throw new Exception("Factory must not run."), TimeSpan.FromMinutes(1), token); break;
-            default: throw new ArgumentOutOfRangeException(nameof(route));
+            case "aside":
+                await client.GetOrSetAsync<int>("key", _ => throw new Exception("Factory must not run on a hit."), TimeSpan.FromMinutes(1), token);
+                break;
+            case "protected-aside":
+                await client.GetOrSetAsync<int>("key", new RespireCacheAsideOptions(), _ => throw new Exception("Factory must not run."), TimeSpan.FromMinutes(1), token);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
 }

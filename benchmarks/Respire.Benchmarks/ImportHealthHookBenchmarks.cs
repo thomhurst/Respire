@@ -22,6 +22,7 @@ public class ImportHealthHookBenchmarks
     {
         var host = Environment.GetEnvironmentVariable("REDIS_HOST");
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort) ? configuredPort : 6379;
+
         if (string.IsNullOrEmpty(host))
         {
             _container = new RedisBuilder("redis:8.10").Build();
@@ -29,9 +30,12 @@ public class ImportHealthHookBenchmarks
             host = _container.Hostname;
             port = _container.GetMappedPublicPort(6379);
         }
+
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(host, port)], Protocol = RespireProtocol.Resp2, Connections = 1,
+            Endpoints = [new(host, port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             CommandHook = null,
         });
@@ -41,7 +45,10 @@ public class ImportHealthHookBenchmarks
         // Stable bounded state: SET overwrites one hash; MSETNX always finds existing keys.
         if (!await ImportSet() || await BulkSetIfAbsent()
             || (await HealthProbe()).Any(result => result.Error is not null))
+        {
             throw new InvalidOperationException("Import/health fixture validation failed.");
+        }
+
         await OpenAndDisposeSession();
     }
 
@@ -67,8 +74,19 @@ public class ImportHealthHookBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_session is not null) await _session.DisposeAsync();
-        if (_client is not null) await _client.DisposeAsync();
-        if (_container is not null) await _container.DisposeAsync();
+        if (_session is not null)
+        {
+            await _session.DisposeAsync();
+        }
+
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+        }
     }
 }

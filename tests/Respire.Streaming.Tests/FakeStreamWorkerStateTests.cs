@@ -15,8 +15,12 @@ public class FakeStreamWorkerStateTests
         var clock = new RespireFakeClock();
         await using var server = new RespireFakeServer(clock);
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+
         for (var i = 1; i <= 3; i++)
+        {
             await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", i));
+        }
+
         await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
         await client.Streams.ReadGroupOnceAsync("s", "g", "a", new() { Count = 2 });
         clock.Advance(TimeSpan.FromMilliseconds(100));
@@ -34,7 +38,8 @@ public class FakeStreamWorkerStateTests
         await Assert.That(all[1].IdleTime).IsEqualTo(TimeSpan.FromMilliseconds(350));
         var filtered = await client.Streams.PendingAsync(new RespireStreamPendingOptions
         {
-            MinIdle = TimeSpan.FromMilliseconds(300), Consumer = "a",
+            MinIdle = TimeSpan.FromMilliseconds(300),
+            Consumer = "a",
         }, "s", "g");
         await Assert.That(filtered.Single().Id).IsEqualTo((RespireStreamId)"2-0");
         var exclusive = await client.Streams.PendingAsync(new RespireStreamPendingOptions { Start = "(1-0", End = "2-0" }, "s", "g");

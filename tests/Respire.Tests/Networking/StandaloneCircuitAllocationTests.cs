@@ -67,6 +67,7 @@ public class StandaloneCircuitAllocationTests
         var marker = Path.Combine(Path.GetTempPath(), $"respire-circuit-ready-{Guid.NewGuid():N}");
         start.Environment[StallStageControl] = stage;
         start.Environment[ReadyMarker] = marker;
+
         try
         {
             // Start the short fault-injection deadline only after the child flushes its stage.
@@ -90,6 +91,7 @@ public class StandaloneCircuitAllocationTests
             + $"poolWorker={Thread.CurrentThread.IsThreadPoolThread}; workers={ThreadPool.ThreadCount}; "
             + $"elapsedMs={Stopwatch.GetElapsedTime(ProbeStarted).TotalMilliseconds:F0}");
         Console.Error.Flush();
+
         if (Environment.GetEnvironmentVariable(StallStageControl) == stage)
         {
             File.WriteAllText(Environment.GetEnvironmentVariable(ReadyMarker)!, "");
@@ -100,35 +102,61 @@ public class StandaloneCircuitAllocationTests
     internal static int? RunIsolatedAllocationProbe()
     {
         var runtime = Environment.GetEnvironmentVariable(ProbeMode);
-        if (runtime is null) return null;
+
+        if (runtime is null)
+        {
+            return null;
+        }
+
         try
         {
             ReportStage("entry");
-            if (runtime != Environment.Version.ToString()) throw new InvalidOperationException("Probe runtime differs from parent.");
+
+            if (runtime != Environment.Version.ToString())
+            {
+                throw new InvalidOperationException("Probe runtime differs from parent.");
+            }
+
             ReportStage("pool-warmup");
             ThreadPool.GetMinThreads(out _, out var minIo);
             ThreadPool.GetMaxThreads(out _, out var maxIo);
+
             if (!ThreadPool.SetMinThreads(2, minIo) || !ThreadPool.SetMaxThreads(2, maxIo))
+            {
                 throw new InvalidOperationException("Could not configure the isolated two-worker pool.");
+            }
+
             using var entered = new CountdownEvent(2);
             using var release = new ManualResetEventSlim();
             using var finished = new CountdownEvent(2);
+
             for (var i = 0; i < 2; i++)
+            {
                 ThreadPool.UnsafeQueueUserWorkItem(_ =>
                 {
                     entered.Signal();
                     release.Wait(TimeSpan.FromSeconds(5));
                     finished.Signal();
                 }, 0, preferLocal: false);
+            }
+
             try
             {
-                if (!entered.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Workers did not start.");
+                if (!entered.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException("Workers did not start.");
+                }
             }
             finally
             {
                 release.Set();
-                if (!finished.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Workers did not finish warming.");
+
+                if (!finished.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException("Workers did not finish warming.");
+                }
             }
+
             ReportStage("pool-ready");
             RunMeasurement(bool.Parse(Environment.GetEnvironmentVariable("RESPIRE_RAW_DISPATCH_ALLOCATION_PROBE") ?? "False"));
             ReportStage("complete");
@@ -146,18 +174,26 @@ public class StandaloneCircuitAllocationTests
         ReportStage("server-start");
         var server = new FakeRespServer(4, ":5\r\n"u8.ToArray());
         RespireClient? client = null;
+
         try
         {
             ReportStage("client-connect");
             client = RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-                Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
+                Endpoints = [new("127.0.0.1", server.Port)],
+                Connections = 1,
+                Protocol = RespireProtocol.Resp2,
+                ThreadPoolMonitoring = false,
                 RetryPolicy = bool.Parse(Environment.GetEnvironmentVariable("RESPIRE_DISABLED_RETRY_ALLOCATION_PROBE") ?? "False")
                     ? new() { MaxAttempts = 1 } : null,
             }).GetAwaiter().GetResult();
             ReportStage("command-warmup");
-            for (var i = 0; i < 32; i++) client.Strings.LengthAsync("warm").AsTask().GetAwaiter().GetResult();
+
+            for (var i = 0; i < 32; i++)
+            {
+                client.Strings.LengthAsync("warm").AsTask().GetAwaiter().GetResult();
+            }
+
             server.SuppressReply = command => command == "STRLEN measured";
             var connection = client.Core.Multiplexer.GetConnection();
             RespireValue[] arguments = ["measured"];
@@ -166,6 +202,7 @@ public class StandaloneCircuitAllocationTests
             using var busyFinished = new ManualResetEventSlim();
             var busyWorker = bool.Parse(Environment.GetEnvironmentVariable(BusyWorkerControl) ?? "False");
             var busyExpired = false;
+
             try
             {
                 if (busyWorker)
@@ -176,8 +213,13 @@ public class StandaloneCircuitAllocationTests
                         busyExpired = !busyRelease.Wait(TimeSpan.FromSeconds(20));
                         busyFinished.Set();
                     }, 0, preferLocal: false);
-                    if (!busyEntered.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Busy worker did not start.");
+
+                    if (!busyEntered.Wait(TimeSpan.FromSeconds(5)))
+                    {
+                        throw new TimeoutException("Busy worker did not start.");
+                    }
                 }
+
                 ReportStage("dispatch-warmup");
                 Measure(client, server, connection, false, raw, arguments);
                 ReportStage("control-warmup");
@@ -193,14 +235,20 @@ public class StandaloneCircuitAllocationTests
                         WorkersBefore: workers, WorkersAfter: ThreadPool.ThreadCount);
                 });
                 Console.WriteLine($"runtime={Environment.Version}; raw={raw}; {measured}");
+
                 if (measured.Bytes != 0 || measured.Control < 32L * 37 || measured.WorkersBefore != 2 || measured.WorkersAfter != 2)
+                {
                     throw new InvalidOperationException($"Expected zero disabled dispatch allocations, positive control, and two existing workers; observed {measured}.");
+                }
             }
             finally
             {
                 busyRelease.Set();
+
                 if (busyWorker && (!busyFinished.Wait(TimeSpan.FromSeconds(5)) || busyExpired))
+                {
                     throw new TimeoutException("Busy worker did not remain parked until measurement finished.");
+                }
             }
         }
         finally
@@ -224,28 +272,49 @@ public class StandaloneCircuitAllocationTests
         bool raw, RespireValue[] arguments)
     {
         long total = 0;
+
         for (var i = 0; i < 32; i++)
         {
             var commands = server.CommandsSeen;
             total += MeasureDispatch(client, control, raw, arguments, out var pending, out var rawPending);
-            if (!connection.InspectForTests().Inflight.TryPeek(out var source)) throw new InvalidOperationException("Missing reply source.");
+
+            if (!connection.InspectForTests().Inflight.TryPeek(out var source))
+            {
+                throw new InvalidOperationException("Missing reply source.");
+            }
+
             if (!SpinWait.SpinUntil(() => server.CommandsSeen > commands, TimeSpan.FromSeconds(5)))
+            {
                 throw new TimeoutException($"Server command receipt stalled: iteration={i}; raw={raw}; control={control}; "
                     + $"commandsBefore={commands}; commandsNow={server.CommandsSeen}; poolWorker={Thread.CurrentThread.IsThreadPoolThread}.");
+            }
+
 #pragma warning disable RESP009 // Keep the measurement loop on one thread while releasing each deliberately parked reply.
             server.SendRawAsync(":5\r\n"u8.ToArray()).WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
             if (!SpinWait.SpinUntil(() => (raw ? rawPending.IsCompleted : pending.IsCompleted) && source!.InspectForTests().ReferenceCount <= 1,
                 TimeSpan.FromSeconds(5)))
+            {
                 throw new TimeoutException($"Reply completion stalled: iteration={i}; raw={raw}; control={control}; "
                     + $"references={source!.InspectForTests().ReferenceCount}; poolWorker={Thread.CurrentThread.IsThreadPoolThread}.");
+            }
+
             if (raw)
             {
                 using var result = rawPending.GetAwaiter().GetResult();
-                if (result.AsInteger() != 5) throw new InvalidOperationException("Unexpected raw reply.");
+
+                if (result.AsInteger() != 5)
+                {
+                    throw new InvalidOperationException("Unexpected raw reply.");
+                }
             }
-            else GC.KeepAlive(pending.GetAwaiter().GetResult());
+            else
+            {
+                GC.KeepAlive(pending.GetAwaiter().GetResult());
+            }
         }
+
         return total;
     }
 
@@ -258,7 +327,12 @@ public class StandaloneCircuitAllocationTests
         // The leased raw path retains the allocation-free dispatch contract. The owned
         // default adds result materialization, which is separate from disabled telemetry.
         rawPending = raw ? client.ExecuteLeaseAsync(RespireCommands.String.STRLEN, arguments) : default;
-        if (control) GC.KeepAlive(new byte[37]);
+
+        if (control)
+        {
+            GC.KeepAlive(new byte[37]);
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

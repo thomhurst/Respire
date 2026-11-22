@@ -26,6 +26,7 @@ public class PrimitiveCodecTests
             var overflow = RespValue.Double(beyond);
             await Assert.That(() => PrimitiveCodec.TryDeserialize<decimal>(in overflow, out _)).Throws<FormatException>();
         }
+
         var largest = RespValue.Double(Math.BitDecrement(79228162514264337593543950336d));
         await Assert.That(PrimitiveCodec.TryDeserialize<decimal>(in largest, out parsed)).IsTrue();
         await Assert.That(parsed).IsEqualTo(79228162514264300000000000000M);
@@ -357,8 +358,15 @@ public class PrimitiveCodecTests
 
     private sealed class CountingSerializer : IRespireSerializer
     {
-        public int SerializeCalls { get; private set; }
-        public int DeserializeCalls { get; private set; }
+        public int SerializeCalls
+        {
+            get; private set;
+        }
+
+        public int DeserializeCalls
+        {
+            get; private set;
+        }
 
         public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
             => Serialize(destination, value);

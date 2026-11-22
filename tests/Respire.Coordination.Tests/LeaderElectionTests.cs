@@ -13,6 +13,7 @@ public class LeaderElectionTests
 {
     private static readonly TimeSpan Lease = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
+
     private static TaskCompletionSource<T> Signal<T>() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static RespireLeaderElection Election(IRespireClient client, Clock clock,
@@ -105,6 +106,7 @@ public class LeaderElectionTests
         var successor = Signal<RespireLeadership>();
         using var second = Election(otherClient, clock, successor);
         var gate = new RespireFakeGate();
+
         try
         {
             await first.StartAsync(default);
@@ -193,6 +195,7 @@ public class LeaderElectionTests
         });
         var elected = Signal<RespireLeadership>();
         using var election = Election(client, clock, elected);
+
         try
         {
             await election.StartAsync(default);
@@ -209,14 +212,21 @@ public class LeaderElectionTests
     private sealed class ExpireBeforeKeepAlive(Clock clock) : RespireCommandHook
     {
         private int _expired;
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             if (context.Command == "LOCK KEEPALIVE START" && Interlocked.Exchange(ref _expired, 1) == 0)
+            {
                 clock.Advance(Lease);
+            }
+
             return null;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state,
-            RespireCommandOutcome outcome, Exception? error) { }
+            RespireCommandOutcome outcome, Exception? error)
+        {
+        }
     }
 
     [Test]
@@ -229,6 +239,7 @@ public class LeaderElectionTests
         using var election = Election(client, clock, elected);
         var gate = new RespireFakeGate();
         using var lostReply = server.InjectFault("EVAL", RespireFakeFault.Pause(gate, afterExecution: true));
+
         try
         {
             await election.StartAsync(default);
@@ -254,14 +265,26 @@ public class LeaderElectionTests
             InstrumentPublished = (instrument, owner) =>
             {
                 if (instrument.Meter.Name == "Respire.Coordination.LeaderElection")
+                {
                     owner.EnableMeasurementEvents(instrument);
+                }
             },
         };
         listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, _) =>
         {
-            if (instrument.Name != "respire.leader_election.changes") return;
+            if (instrument.Name != "respire.leader_election.changes")
+            {
+                return;
+            }
+
             foreach (var tag in tags)
-                if (tag.Key == "state") transitions.Enqueue((string)tag.Value!);
+            {
+                if (tag.Key == "state")
+                {
+                    transitions.Enqueue((string)tag.Value!);
+                }
+            }
+
             throw new InvalidOperationException("metrics observer");
         });
         listener.Start();
@@ -305,9 +328,19 @@ public class LeaderElectionTests
         var count = 0;
         using var election = new RespireLeaderElection(client, "{election}:lease", "{election}:fence", new()
         {
-            OnElected = async term => { Interlocked.Increment(ref count); elected.TrySetResult(term); await drain.Task; },
-            OnRevoked = term => { revoked.TrySetResult(term); return Task.CompletedTask; },
+            OnElected = async term =>
+            {
+                Interlocked.Increment(ref count);
+                elected.TrySetResult(term);
+                await drain.Task;
+            },
+            OnRevoked = term =>
+            {
+                revoked.TrySetResult(term);
+                return Task.CompletedTask;
+            },
         }, clock);
+
         try
         {
             await election.StartAsync(default);
@@ -339,11 +372,17 @@ public class LeaderElectionTests
             OnElected = async term =>
             {
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(term.CancellationToken);
-                if (!elected.TrySetResult(term)) reelected.TrySetResult(term);
+
+                if (!elected.TrySetResult(term))
+                {
+                    reelected.TrySetResult(term);
+                }
+
                 await Task.Delay(System.Threading.Timeout.InfiniteTimeSpan, linked.Token);
             },
         }, clock);
         var gate = new RespireFakeGate();
+
         try
         {
             await election.StartAsync(default);
@@ -406,12 +445,14 @@ public class LeaderElectionTests
         circuit.Complete(ref permit, CircuitOutcome.Failure);
         var elected = Signal<RespireLeadership>();
         using var election = Election(client, clock, elected);
+
         try
         {
             await election.StartAsync(default);
             await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
             await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
             await Assert.That(elected.Task.IsCompleted).IsFalse();
+
             if (stopDuringDelay)
             {
                 await election.StopAsync(default).WaitAsync(Timeout);
@@ -445,6 +486,7 @@ public class LeaderElectionTests
         using var fault = server.InjectFault("EVAL", readOnly ? RespireFakeFault.ReadOnly() : RespireFakeFault.Loading());
         var elected = Signal<RespireLeadership>();
         using var election = Election(client, clock, elected);
+
         try
         {
             await election.StartAsync(default);
@@ -452,12 +494,14 @@ public class LeaderElectionTests
             await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
             await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
             await Assert.That(elected.Task.IsCompleted).IsFalse();
+
             if (stopDuringDelay)
             {
                 await election.StopAsync(default).WaitAsync(Timeout);
                 await Assert.That(elected.Task.IsCompleted).IsFalse();
                 return;
             }
+
             clock.Advance(TimeSpan.FromSeconds(1));
             var term = await elected.Task.WaitAsync(Timeout);
             await Assert.That(term.FencingToken).IsEqualTo(1);
@@ -500,6 +544,7 @@ public class LeaderElectionTests
         using var election = Election(client, clock, elected);
         await election.StartAsync(default);
         await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
+
         if (transient)
         {
             await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
@@ -512,6 +557,7 @@ public class LeaderElectionTests
         {
             await Assert.That(async () => await election.ExecuteTask!.WaitAsync(Timeout)).Throws<RespireServerException>();
         }
+
         await Assert.That(elected.Task.IsCompleted).IsFalse();
     }
 
@@ -532,10 +578,12 @@ public class LeaderElectionTests
         };
         var elected = Signal<RespireLeadership>();
         using var election = Election(client, clock, elected);
+
         try
         {
             await election.StartAsync(default);
             await UntilAsync(() => clock.HasTimer(TimeSpan.FromSeconds(1)) || election.ExecuteTask!.IsCompleted);
+
             if (failureKind == "connection")
             {
                 await Assert.That(election.ExecuteTask!.IsCompleted).IsFalse();
@@ -551,6 +599,7 @@ public class LeaderElectionTests
                 await Assert.That(clock.HasTimer(TimeSpan.FromSeconds(1))).IsFalse();
                 await Assert.That(proxy.Attempts).IsEqualTo(1);
             }
+
             await Assert.That(elected.Task.IsCompleted).IsFalse();
             await Assert.That(election.CurrentLeadership).IsNull();
         }
@@ -561,9 +610,14 @@ public class LeaderElectionTests
     {
         internal Exception Failure = null!;
         internal int Attempts;
+
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
-            if (targetMethod?.Name != "get_Scripts") throw new NotSupportedException();
+            if (targetMethod?.Name != "get_Scripts")
+            {
+                throw new NotSupportedException();
+            }
+
             Interlocked.Increment(ref Attempts);
             throw Failure;
         }
@@ -575,7 +629,11 @@ public class LeaderElectionTests
     private static async Task UntilAsync(Func<bool> predicate)
     {
         using var deadline = new CancellationTokenSource(Timeout);
-        while (!predicate()) await Task.Delay(1, deadline.Token);
+
+        while (!predicate())
+        {
+            await Task.Delay(1, deadline.Token);
+        }
     }
 
     // One clock drives server expiry, client monotonic deadlines, renewal, and retry timers.
@@ -585,53 +643,103 @@ public class LeaderElectionTests
         private readonly List<ClockTimer> _timers = [];
         private long _ticks;
         private int _scheduled;
+
         public int ScheduledCount => Volatile.Read(ref _scheduled);
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
         public override long GetTimestamp() => Interlocked.Read(ref _ticks);
+
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddTicks(GetTimestamp());
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new ClockTimer(this, callback, state);
             timer.Change(dueTime, period);
             return timer;
         }
+
         public bool HasTimer(TimeSpan remaining)
         {
-            lock (_gate) return _timers.Any(timer => timer.Due == _ticks + remaining.Ticks);
+            lock (_gate)
+            {
+                return _timers.Any(timer => timer.Due == _ticks + remaining.Ticks);
+            }
         }
+
         public void Advance(TimeSpan elapsed)
         {
             ClockTimer[] due;
+
             lock (_gate)
             {
                 _ticks += elapsed.Ticks;
                 due = _timers.Where(timer => timer.Due <= _ticks).ToArray();
-                foreach (var timer in due) _timers.Remove(timer);
+
+                foreach (var timer in due)
+                {
+                    _timers.Remove(timer);
+                }
             }
-            foreach (var timer in due) timer.Fire();
+
+            foreach (var timer in due)
+            {
+                timer.Fire();
+            }
         }
+
         private sealed class ClockTimer(Clock clock, TimerCallback callback, object? state) : ITimer
         {
-            public long Due { get; private set; }
+            public long Due
+            {
+                get; private set;
+            }
             private bool _disposed;
+
             public bool Change(TimeSpan dueTime, TimeSpan period)
             {
                 lock (clock._gate)
                 {
-                    if (_disposed) return false;
+                    if (_disposed)
+                    {
+                        return false;
+                    }
+
                     clock._timers.Remove(this);
+
                     if (dueTime != global::System.Threading.Timeout.InfiniteTimeSpan)
                     {
                         Due = clock._ticks + dueTime.Ticks;
                         clock._timers.Add(this);
                         Interlocked.Increment(ref clock._scheduled);
                     }
+
                     return true;
                 }
             }
-            public void Fire() { if (!_disposed) callback(state); }
-            public void Dispose() { lock (clock._gate) { _disposed = true; clock._timers.Remove(this); } }
-            public ValueTask DisposeAsync() { Dispose(); return default; }
+
+            public void Fire()
+            {
+                if (!_disposed)
+                {
+                    callback(state);
+                }
+            }
+
+            public void Dispose()
+            {
+                lock (clock._gate)
+                {
+                    _disposed = true;
+                    clock._timers.Remove(this);
+                }
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return default;
+            }
         }
     }
 }

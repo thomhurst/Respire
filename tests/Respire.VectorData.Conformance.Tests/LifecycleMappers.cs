@@ -10,10 +10,16 @@ namespace Respire.VectorData.Conformance.Tests;
 // and ten FLOAT32 elements with the official fixture's default Flat index.
 internal sealed class LifecycleHashMapper : RespireVectorDataHashMapper<Record>
 {
-    public override IReadOnlyList<RespireVectorDataVectorField> VectorFields { get; } =
+    public override IReadOnlyList<RespireVectorDataVectorField> VectorFields
+    {
+        get;
+    } =
         [new(nameof(Record.Floats), nameof(Record.Floats), 10) { Algorithm = RespireSearchVectorAlgorithm.Flat }];
 
-    public override IReadOnlyList<RespireSearchField> DataFields { get; } =
+    public override IReadOnlyList<RespireSearchField> DataFields
+    {
+        get;
+    } =
         [new("text", RespireSearchFieldType.Text), new("number", RespireSearchFieldType.Numeric)];
 
     public override string GetKey(Record record) => record.Key;
@@ -25,7 +31,12 @@ internal sealed class LifecycleHashMapper : RespireVectorDataHashMapper<Record>
             ["number"] = Encoding.UTF8.GetBytes(record.Number.ToString(CultureInfo.InvariantCulture)),
             [nameof(Record.Floats)] = RespireVectorDataFloat32.Encode(record.Floats.Span),
         };
-        if (record.Text is not null) fields["text"] = Encoding.UTF8.GetBytes(record.Text);
+
+        if (record.Text is not null)
+        {
+            fields["text"] = Encoding.UTF8.GetBytes(record.Text);
+        }
+
         return fields;
     }
 
@@ -40,10 +51,16 @@ internal sealed class LifecycleHashMapper : RespireVectorDataHashMapper<Record>
 
 internal sealed class LifecycleJsonMapper() : RespireVectorDataJsonMapper<Record>(LifecycleJsonContext.Default.LifecycleRecord)
 {
-    public override IReadOnlyList<RespireVectorDataVectorField> VectorFields { get; } =
+    public override IReadOnlyList<RespireVectorDataVectorField> VectorFields
+    {
+        get;
+    } =
         [new(nameof(Record.Floats), nameof(Record.Floats), 10) { Algorithm = RespireSearchVectorAlgorithm.Flat }];
 
-    public override IReadOnlyList<RespireSearchField> DataFields { get; } =
+    public override IReadOnlyList<RespireSearchField> DataFields
+    {
+        get;
+    } =
         [new("$.Text", RespireSearchFieldType.Text, Alias: "text"), new("$.Number", RespireSearchFieldType.Numeric, Alias: "number")];
 
     public override string GetKey(Record record) => record.Key;

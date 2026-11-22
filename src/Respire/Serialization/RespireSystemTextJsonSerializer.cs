@@ -15,7 +15,8 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
 {
     private readonly JsonSerializerOptions? _options;
     private readonly JsonSerializerContext? _context;
-    [ThreadStatic] private static Utf8JsonWriter? s_writer;
+    [ThreadStatic]
+    private static Utf8JsonWriter? s_writer;
     private static readonly ArrayBufferWriter<byte> DetachedDestination = new();
 
     /// <summary>
@@ -42,6 +43,7 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
     {
         var writer = RentWriter(destination);
         var completed = false;
+
         try
         {
             JsonSerializer.Serialize(writer, value, GetTypeInfo<T>());
@@ -67,6 +69,7 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
         ArgumentNullException.ThrowIfNull(type);
         var writer = RentWriter(destination);
         var completed = false;
+
         try
         {
             if (_context is not null)
@@ -77,6 +80,7 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
             {
                 JsonSerializer.Serialize(writer, value, type, _options);
             }
+
             completed = true;
         }
         finally
@@ -112,8 +116,10 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
     private JsonTypeInfo<T> ResolveTypeInfo<T>()
     {
         if (_context is not null)
+        {
             return (JsonTypeInfo<T>)(_context.GetTypeInfo(typeof(T))
                 ?? throw new NotSupportedException($"The configured JSON context has no metadata for {typeof(T)}."));
+        }
 
         // Match JsonSerializer's first-use freezing, without freezing caller options in the constructor.
         _options!.MakeReadOnly(populateMissingResolver: true);
@@ -134,7 +140,11 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
         s_writer = null;
         // Default JsonWriterOptions match JsonSerializer's writer overloads; serializer
         // options configure metadata/converters rather than the supplied writer's options.
-        if (writer is null) return new Utf8JsonWriter(destination);
+        if (writer is null)
+        {
+            return new Utf8JsonWriter(destination);
+        }
+
         writer.Reset(destination);
         return writer;
     }
@@ -142,6 +152,7 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
     private static void ReturnWriter(Utf8JsonWriter writer, bool completed)
     {
         var flushed = false;
+
         try
         {
             // Preserve partial-output flushing on converter failure without masking its exception.
@@ -156,8 +167,15 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
         {
             // Detach even on flush failure, so disposal cannot retry a broken caller destination.
             writer.Reset(DetachedDestination);
-            if (flushed && s_writer is null) s_writer = writer;
-            else writer.Dispose();
+
+            if (flushed && s_writer is null)
+            {
+                s_writer = writer;
+            }
+            else
+            {
+                writer.Dispose();
+            }
         }
     }
 }

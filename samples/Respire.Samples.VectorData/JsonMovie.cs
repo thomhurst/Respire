@@ -20,33 +20,47 @@ public sealed record MovieDetails(
 public partial class MovieJsonContext : JsonSerializerContext;
 
 public sealed record NestedVectorRecord(string Id, NestedVectorData Data);
+
 public sealed record NestedVectorData([property: JsonPropertyName("renamed_vector")] float[]? Values, string Caption);
 
 public sealed class NestedVectorMapper() : RespireVectorDataJsonMapper<NestedVectorRecord>(MovieJsonContext.Default.NestedVectorRecord)
 {
     public override IReadOnlyList<RespireVectorDataVectorField> VectorFields =>
         [new("Data.Values", "embedding", 2) { JsonPath = "$.Data.renamed_vector", Algorithm = RespireSearchVectorAlgorithm.Hnsw }];
+
     public override IReadOnlyList<RespireSearchField> DataFields =>
         [new("$.Data.Caption", RespireSearchFieldType.Text, Alias: "caption")];
+
     public override IReadOnlyList<RespireVectorDataTextField> TextFields => [new("Data.Caption", "caption")];
+
     public override string GetKey(NestedVectorRecord record) => record.Id;
 }
 
 public sealed class JsonMovieMapper() : RespireVectorDataJsonMapper<JsonMovie>(MovieJsonContext.Default.JsonMovie)
 {
-    public override IReadOnlyList<RespireVectorDataVectorField> VectorFields { get; } =
+    public override IReadOnlyList<RespireVectorDataVectorField> VectorFields
+    {
+        get;
+    } =
     [
         new(nameof(JsonMovie.Vector), "vector", 2)
         {
-            JsonPath = "$.embedding", Algorithm = RespireSearchVectorAlgorithm.Flat, DistanceMetric = RespireSearchDistanceMetric.L2,
+            JsonPath = "$.embedding",
+            Algorithm = RespireSearchVectorAlgorithm.Flat,
+            DistanceMetric = RespireSearchDistanceMetric.L2,
         },
         new(nameof(JsonMovie.AlternateVector), "alternate", 2)
         {
-            JsonPath = "$.alternate_embedding", Algorithm = RespireSearchVectorAlgorithm.Flat, DistanceMetric = RespireSearchDistanceMetric.L2,
+            JsonPath = "$.alternate_embedding",
+            Algorithm = RespireSearchVectorAlgorithm.Flat,
+            DistanceMetric = RespireSearchDistanceMetric.L2,
         },
     ];
 
-    public override IReadOnlyList<RespireSearchField> DataFields { get; } =
+    public override IReadOnlyList<RespireSearchField> DataFields
+    {
+        get;
+    } =
         [new("$.details.movie_title", RespireSearchFieldType.Text, Alias: "title"), new("$.details.genre", RespireSearchFieldType.Tag, Alias: "tag")];
 
     public override IReadOnlyList<RespireVectorDataTextField> TextFields => [new("Details.Title", "title")];

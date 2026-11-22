@@ -38,7 +38,16 @@ public class SortedSetQueryCommandTests
         var intersection = queue.SortedSets.IntersectCount(keys);
         var limited = queue.SortedSets.IntersectCount(1, keys);
         keys[0] = "changed";
-        if (transaction is not null) await transaction.CommitAsync(); else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(scalar.Result).IsEqualTo("a");
         await Assert.That(members.Result).IsEquivalentTo(["a", "a"], CollectionOrdering.Matching);
         await Assert.That(scored.Result).IsEquivalentTo([new RespireSortedSetEntry("a", 1.5), new RespireSortedSetEntry("a", 1.5)], CollectionOrdering.Matching);
@@ -64,6 +73,7 @@ public class SortedSetQueryCommandTests
         await Assert.That(async () => await client.SortedSets.RandomMembersAsync("key", long.MinValue)).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.SortedSets.RandomMembersWithScoresAsync<int>("key", long.MinValue)).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.SortedSets.CountByLexAsync("key", default)).ThrowsExactly<InvalidOperationException>();
+
         foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, transaction })
         {
             await Assert.That(() => queue.SortedSets.IntersectCount([])).ThrowsExactly<ArgumentException>();
@@ -72,6 +82,7 @@ public class SortedSetQueryCommandTests
             await Assert.That(() => queue.SortedSets.RandomMembersWithScores("key", long.MinValue)).ThrowsExactly<ArgumentOutOfRangeException>();
             await Assert.That(() => queue.SortedSets.RemoveRangeByLex("key", default)).ThrowsExactly<InvalidOperationException>();
         }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }
 
@@ -84,7 +95,9 @@ public class SortedSetQueryCommandTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)]
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)]
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
@@ -126,6 +139,7 @@ public class SortedSetQueryCommandTests
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         long result;
+
         if (path == "immediate")
         {
             result = await view.SortedSets.IntersectCountAsync(1, "{sets}:first", "{sets}:second");
@@ -144,6 +158,7 @@ public class SortedSetQueryCommandTests
             await transaction.CommitAsync();
             result = pending.Result;
         }
+
         await Assert.That(result).IsEqualTo(1);
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(owner.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC"))
@@ -164,7 +179,14 @@ public class SortedSetQueryCommandTests
     public async Task Commands_ForwardCancellation(int command)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new FakeRespServer { SuppressReply = _ => { received.TrySetResult(); return true; } };
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            }
+        };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         Task pending = command switch

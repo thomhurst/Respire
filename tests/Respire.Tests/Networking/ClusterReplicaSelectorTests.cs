@@ -23,14 +23,17 @@ public class ClusterReplicaSelectorTests
         await using var third = RespireConnectionMultiplexer.Create("third", 6379);
         var routes = new ClusterReplicaSet([first, second, third], TimeSpan.Zero);
         RespireConnectionMultiplexer[][] expected = [[second, third, first], [third, first, second], [first, second, third]];
+
         foreach (var pass in expected)
         {
             var selector = new ClusterReplicaSelector(routes);
+
             foreach (var node in pass)
             {
                 await Assert.That(selector.TryNext(out var candidate)).IsTrue();
                 await Assert.That(candidate).IsSameReferenceAs(node);
             }
+
             await Assert.That(selector.TryNext(out _)).IsFalse();
         }
     }

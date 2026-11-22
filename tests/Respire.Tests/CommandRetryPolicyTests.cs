@@ -11,12 +11,17 @@ public sealed class CommandRetryPolicyTests
     public async Task DefaultPolicyAllowsOnlyAuditedReadsAfterPossibleExecution()
     {
         var policy = new CommandRetryPolicy(new() { Jitter = 0 });
+
         foreach (var category in Enum.GetValues<RespireCommandRetryCategory>())
         {
             var allowed = category is RespireCommandRetryCategory.Always or RespireCommandRetryCategory.Connection
                 or RespireCommandRetryCategory.ReadOnly;
+
             foreach (var outcome in new[] { CommandWriteOutcome.Unknown, CommandWriteOutcome.EffectMayHaveReachedServer })
+            {
                 await Assert.That(CanRetry(policy, category, outcome)).IsEqualTo(allowed);
+            }
+
             await Assert.That(CanRetry(policy, category, CommandWriteOutcome.DefinitelyUnwritten))
                 .IsEqualTo(category != RespireCommandRetryCategory.Never);
         }
@@ -37,13 +42,18 @@ public sealed class CommandRetryPolicyTests
             [RespireCommandRetryCategory.WriteAccumulating] = [RespireCommandRetryCategory.Always, RespireCommandRetryCategory.Connection, RespireCommandRetryCategory.ReadOnly, RespireCommandRetryCategory.WriteChecked, RespireCommandRetryCategory.WriteLastWins, RespireCommandRetryCategory.WriteAccumulating],
             [RespireCommandRetryCategory.ServerAdmin] = [RespireCommandRetryCategory.Always, RespireCommandRetryCategory.Connection, RespireCommandRetryCategory.ReadOnly, RespireCommandRetryCategory.WriteChecked, RespireCommandRetryCategory.WriteLastWins, RespireCommandRetryCategory.WriteAccumulating, RespireCommandRetryCategory.ServerAdmin],
         };
+
         foreach (var (maximum, expected) in permitted)
         {
             var policy = new CommandRetryPolicy(new() { MaxCommandRetryCategory = maximum });
+
             foreach (var category in Enum.GetValues<RespireCommandRetryCategory>())
             {
                 foreach (var outcome in new[] { CommandWriteOutcome.Unknown, CommandWriteOutcome.EffectMayHaveReachedServer })
+                {
                     await Assert.That(CanRetry(policy, category, outcome)).IsEqualTo(expected.Contains(category));
+                }
+
                 await Assert.That(CanRetry(policy, category, CommandWriteOutcome.DefinitelyUnwritten))
                     .IsEqualTo(maximum != RespireCommandRetryCategory.Never && category != RespireCommandRetryCategory.Never);
             }
@@ -82,6 +92,7 @@ public sealed class CommandRetryPolicyTests
             (RespireRetryableErrors.MasterDown, new RespireServerException("MASTERDOWN unavailable")),
             (RespireRetryableErrors.ReadOnly, new RespireServerException("READONLY replica")),
         };
+
         foreach (var (selection, failure) in cases)
         {
             var selected = new CommandRetryPolicy(new() { RetryableErrors = selection });
@@ -89,9 +100,12 @@ public sealed class CommandRetryPolicyTests
             await Assert.That(CanRetry(selected, RespireCommandRetryCategory.ReadOnly, CommandWriteOutcome.Unknown, failure)).IsTrue();
             await Assert.That(CanRetry(selected, RespireCommandRetryCategory.WriteAccumulating, CommandWriteOutcome.Unknown, failure)).IsFalse();
             await Assert.That(CanRetry(disabled, RespireCommandRetryCategory.ReadOnly, CommandWriteOutcome.DefinitelyUnwritten, failure)).IsFalse();
+
             foreach (var (otherSelection, otherFailure) in cases)
+            {
                 await Assert.That(CanRetry(selected, RespireCommandRetryCategory.ReadOnly, CommandWriteOutcome.DefinitelyUnwritten, otherFailure))
                     .IsEqualTo(otherSelection == selection);
+            }
         }
     }
 
@@ -114,9 +128,14 @@ public sealed class CommandRetryPolicyTests
             new RespireException("wrapper", new RespireServerException("TRYAGAIN nested")),
         };
         var policy = new CommandRetryPolicy(new() { MaxCommandRetryCategory = RespireCommandRetryCategory.ServerAdmin });
+
         foreach (var failure in failures)
+        {
             foreach (var outcome in Enum.GetValues<CommandWriteOutcome>())
+            {
                 await Assert.That(CanRetry(policy, RespireCommandRetryCategory.Always, outcome, failure)).IsFalse();
+            }
+        }
     }
 
     [Test]
@@ -148,8 +167,11 @@ public sealed class CommandRetryPolicyTests
         {
             var policy = new CommandRetryPolicy(new()
             {
-                InitialBackoff = TimeSpan.FromMilliseconds(10), MaxBackoff = TimeSpan.FromMilliseconds(25), Jitter = jitter,
+                InitialBackoff = TimeSpan.FromMilliseconds(10),
+                MaxBackoff = TimeSpan.FromMilliseconds(25),
+                Jitter = jitter,
             });
+
             foreach (var attempt in new[] { 1, 2, 3, 100, int.MaxValue })
             {
                 var ceiling = attempt == 1 ? 10 : attempt == 2 ? 20 : 25;
@@ -158,6 +180,7 @@ public sealed class CommandRetryPolicyTests
                 await Assert.That(policy.GetDelay(attempt, 0.5)).IsEqualTo(TimeSpan.FromMilliseconds(ceiling * (1 - jitter / 2)));
             }
         }
+
         var zero = new CommandRetryPolicy(new() { InitialBackoff = TimeSpan.Zero });
         await Assert.That(zero.GetDelay(int.MaxValue, 1)).IsEqualTo(TimeSpan.Zero);
     }
@@ -175,8 +198,12 @@ public sealed class CommandRetryPolicyTests
             new() { Jitter = -0.1 }, new() { Jitter = 1.1 }, new() { Jitter = double.NaN },
             new() { Jitter = double.PositiveInfinity }, new() { Jitter = double.NegativeInfinity },
         };
+
         foreach (var settings in invalid)
+        {
             await Assert.That(() => new CommandRetryPolicy(settings)).ThrowsExactly<ArgumentOutOfRangeException>();
+        }
+
         await Assert.That(() => new CommandRetryPolicy(null!)).ThrowsExactly<ArgumentNullException>();
         // Maximum valid settings remain bounded even at extreme attempt numbers.
         var maximum = new CommandRetryPolicy(new() { MaxAttempts = 100, InitialBackoff = TimeSpan.FromMinutes(1), MaxBackoff = TimeSpan.FromMinutes(1) });
@@ -190,8 +217,11 @@ public sealed class CommandRetryPolicyTests
         await Assert.That(() => Decide(policy, 0, TimeSpan.MaxValue, default, out _)).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(() => policy.TryGetDelay(null!, CommandWriteOutcome.Unknown, RespireCommandRetryCategory.ReadOnly,
             1, TimeSpan.MaxValue, default, out _)).ThrowsExactly<ArgumentNullException>();
+
         foreach (var sample in new[] { -0.1, 1.1, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+        {
             await Assert.That(() => policy.GetDelay(1, sample)).ThrowsExactly<ArgumentOutOfRangeException>();
+        }
     }
 
     private static bool CanRetry(CommandRetryPolicy policy, RespireCommandRetryCategory category,

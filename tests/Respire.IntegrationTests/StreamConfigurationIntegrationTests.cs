@@ -9,11 +9,15 @@ namespace Respire.IntegrationTests;
 public sealed class StreamConfigurationRedisContainer : IAsyncInitializer, IAsyncDisposable
 {
     private IContainer? _container;
+
     private IContainer Container => _container ?? throw new InvalidOperationException("Redis container has not been initialized.");
+
     public string ConnectionString => $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}";
+
     public async Task InitializeAsync() => _container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.10-alpine")
         .WithPortBinding(6379, true)
         .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+
     public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
 
@@ -27,6 +31,7 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var key = $"configuration-expiry:{Guid.NewGuid():N}";
+
         try
         {
             await client.Streams.AddAsync(key, ("f", "seed"));
@@ -36,11 +41,13 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
             (await client.Streams.AddAsync(key, options, ("f", "duplicate"))).Should().Be(first);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             RespireStreamId? next;
+
             do
             {
                 await Task.Delay(100, timeout.Token);
                 next = await client.Streams.AddAsync(key, options, [("f", "after expiry")], timeout.Token);
             } while (next == first);
+
             (await client.Streams.CountAsync(key)).Should().Be(3);
         }
         finally { await client.Keys.DeleteAsync(key); }
@@ -57,6 +64,7 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
         var prefix = $"configuration:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
         var identity = new RespireStreamAddOptions { Idempotency = RespireStreamIdempotency.Manual(new byte[] { 0, 255 }, new byte[] { 254, 0 }) };
+
         try
         {
             var first = await view.Streams.AddAsync("s", identity, ("f", "first"));
@@ -72,18 +80,22 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
             await view.Streams.AddAsync("s", identity with { Idempotency = RespireStreamIdempotency.Manual(new byte[] { 0, 255 }, "other") }, ("f", "evict"));
             (await view.Streams.AddAsync("s", identity, ("f", "evicted"))).Should().NotBe(reset);
             (await view.Streams.CountAsync("s")).Should().Be(5);
+
             if (!fake)
             {
                 using var info = await client.ExecuteAsync(RespireCommands.Stream.XINFO_STREAM, prefix + "s");
                 ReadNumber(info, "idmp-duration").Should().Be(86400);
                 ReadNumber(info, "idmp-maxsize").Should().Be(1);
             }
+
             await view.SetAsync("wrong", "value");
+
             foreach (var key in new[] { "missing", "wrong" })
             {
                 Func<Task> configure = async () => await Configure(view, surface, new() { IdempotencyMaxSize = 1 }, key);
                 await configure.Should().ThrowAsync<RespireServerException>();
             }
+
             (await view.Keys.ExistsAsync("missing")).Should().BeFalse();
             (await view.GetStringAsync("wrong")).Should().Be("value");
         }
@@ -93,19 +105,38 @@ public class StreamConfigurationIntegrationTests(StreamConfigurationRedisContain
     private static long ReadNumber(RespireResult fields, string name)
     {
         for (var index = 0; index < fields.Count; index += 2)
-            if (fields[index].AsString() == name) return fields[index + 1].AsInteger();
+        {
+            if (fields[index].AsString() == name)
+            {
+                return fields[index + 1].AsInteger();
+            }
+        }
+
         throw new InvalidOperationException($"Missing XINFO field {name}.");
     }
 
     private static async Task Configure(IRespireClient client, int surface, RespireStreamConfigurationOptions options, string key = "s")
     {
-        if (surface == 0) { (await client.Streams.ConfigureAsync(key, options)).Should().BeTrue(); return; }
+        if (surface == 0)
+        {
+            (await client.Streams.ConfigureAsync(key, options)).Should().BeTrue();
+            return;
+        }
+
         using var batch = surface == 1 ? client.CreateBatch() : null;
         await using var transaction = surface == 2 ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = queue.Streams.Configure(key, options);
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         pending.Result.Should().BeTrue();
     }
 }

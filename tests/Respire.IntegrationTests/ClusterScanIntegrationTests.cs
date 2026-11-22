@@ -33,8 +33,11 @@ public class ClusterScanIntegrationTests
         await cluster.FailoverAsync(replica: 3);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var promotedEndpoint = new RespireEndpoint("127.0.0.1", cluster.Port(3));
+
         while (client.Core.Cluster.GetSlotOwnerEndpoint(slot) != promotedEndpoint)
+        {
             await Task.Delay(25, deadline.Token);
+        }
 
         (await client.SetAsync(key, "after")).Should().BeTrue();
         (await client.GetStringAsync(key)).Should().Be("after");
@@ -48,7 +51,9 @@ public class ClusterScanIntegrationTests
         await using var cluster = await ScanCluster.StartAsync();
         var options = new RespireOptions
         {
-            UseCluster = true, Protocol = (RespireProtocol)protocol, Connections = 1,
+            UseCluster = true,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
             Endpoints = { new RespireEndpoint(cluster.Host, cluster.Port(0)) },
         };
         await using var client = await RespireClient.ConnectAsync(options);
@@ -57,11 +62,17 @@ public class ClusterScanIntegrationTests
         var expected = Enumerable.Range(0, 256).Select(index => $"{prefix}:{{{tag}}}:{index}").ToHashSet();
         expected.Add($"{prefix}:{{{TagForSlot(1)}}}:stable-first");
         expected.Add($"{prefix}:{{{TagForSlot(12000)}}}:stable-third");
-        foreach (var key in expected) await client.SetAsync(key, "present throughout scan");
+
+        foreach (var key in expected)
+        {
+            await client.SetAsync(key, "present throughout scan");
+        }
+
         var seen = new HashSet<string>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var firstCheckpoint = RespireClusterScanCursor.Start;
         RespireClusterScanPage page;
+
         do
         {
             page = await client.Keys.ScanClusterPageAsync(firstCheckpoint, countHint: 1, cancellationToken: deadline.Token);
@@ -69,6 +80,7 @@ public class ClusterScanIntegrationTests
             firstCheckpoint = page.Cursor;
         }
         while (page.Cursor.CompletedSlotCount == 0);
+
         page.Cursor.CompletedSlotCount.Should().Be(5461);
         page = await client.Keys.ScanClusterPageAsync(page.Cursor, countHint: 1);
         seen.UnionWith(page.Keys);
@@ -87,6 +99,7 @@ public class ClusterScanIntegrationTests
         await using var resumed = await RespireClient.ConnectAsync(options);
         var checkpoint = RespireClusterScanCursor.Parse(page.Cursor.ToString());
         var pages = 0;
+
         do
         {
             page = await resumed.Keys.ScanClusterPageAsync(checkpoint, countHint: 13, cancellationToken: deadline.Token);
@@ -95,9 +108,14 @@ public class ClusterScanIntegrationTests
             pages++;
         }
         while (!checkpoint.IsComplete);
+
         pages.Should().BeGreaterThan(1);
         seen.Should().BeEquivalentTo(expected);
-        foreach (var key in expected) (await resumed.GetStringAsync(key)).Should().Be("present throughout scan");
+
+        foreach (var key in expected)
+        {
+            (await resumed.GetStringAsync(key)).Should().Be("present throughout scan");
+        }
     }
 
     private static string TagForSlot(int slot)
@@ -105,7 +123,11 @@ public class ClusterScanIntegrationTests
         for (var index = 0; ; index++)
         {
             var tag = index.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (ClusterHash.GetSlot(tag) == slot) return tag;
+
+            if (ClusterHash.GetSlot(tag) == slot)
+            {
+                return tag;
+            }
         }
     }
 
@@ -114,7 +136,9 @@ public class ClusterScanIntegrationTests
         private readonly string[] _ids = new string[6];
         // Each node publishes its container port unchanged on IPv4 loopback.
         private readonly NodeCommandSessions _nodes = new(IPAddress.Loopback.ToString());
+
         internal string Host => container.Hostname;
+
         internal int Port(int node) => container.GetMappedPublicPort(basePort + node);
 
         // The probe listeners release their ports before Docker binds them, so another process can
@@ -123,7 +147,10 @@ public class ClusterScanIntegrationTests
         {
             for (var attempt = 1; ; attempt++)
             {
-                try { return await StartOnceAsync(); }
+                try
+                {
+                    return await StartOnceAsync();
+                }
                 catch (Exception error) when (attempt < 3 && IsPortConflict(error)) { }
             }
         }
@@ -135,8 +162,11 @@ public class ClusterScanIntegrationTests
                 if (current.Message.Contains("port is already allocated", StringComparison.OrdinalIgnoreCase)
                     || current.Message.Contains("address already in use", StringComparison.OrdinalIgnoreCase)
                     || current.Message.Contains("failed to bind host port", StringComparison.OrdinalIgnoreCase))
+                {
                     return true;
+                }
             }
+
             return false;
         }
 
@@ -163,40 +193,63 @@ public class ClusterScanIntegrationTests
                     .UntilInternalTcpPortIsAvailable(ports[5]))
                 .Build();
             var cluster = new ScanCluster(container, basePort);
+
             try
             {
                 await container.StartAsync();
+
                 for (var node = 0; node < 6; node++)
                 {
                     await cluster.CommandAsync(node, "CLUSTER", "SET-CONFIG-EPOCH", (node + 1).ToString());
+
                     if (node < 3)
+                    {
                         await cluster.CommandAsync(node, "CLUSTER", "ADDSLOTSRANGE", (node * 5461).ToString(), (node == 2 ? 16383 : (node + 1) * 5461 - 1).ToString());
+                    }
+
                     cluster._ids[node] = (await cluster.CommandAsync(node, "CLUSTER", "MYID")).Trim();
                 }
+
                 await cluster.CommandAsync(0, "CLUSTER", "MEET", "127.0.0.1", (basePort + 1).ToString());
                 await cluster.CommandAsync(0, "CLUSTER", "MEET", "127.0.0.1", (basePort + 2).ToString());
+
                 for (var node = 3; node < 6; node++)
+                {
                     await cluster.CommandAsync(0, "CLUSTER", "MEET", "127.0.0.1", (basePort + node).ToString());
+                }
+
                 using var ready = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
                 for (var node = 0; node < 6; node++)
                 {
                     while (!(await cluster.CommandAsync(node, "CLUSTER", "INFO")).Contains("cluster_state:ok", StringComparison.Ordinal))
+                    {
                         await Task.Delay(100, ready.Token);
+                    }
                 }
                 // Start every replication link before waiting, so initial synchronization runs
                 // concurrently rather than consuming the shared deadline once per replica.
                 for (var replica = 3; replica < 6; replica++)
+                {
                     await cluster.CommandAsync(replica, "CLUSTER", "REPLICATE", cluster._ids[replica - 3]);
+                }
+
                 for (var replica = 3; replica < 6; replica++)
                 {
                     while (true)
                     {
                         var replication = await cluster.CommandAsync(replica, "INFO", "replication");
+
                         if (replication.Contains("role:slave", StringComparison.Ordinal)
-                            && replication.Contains("master_link_status:up", StringComparison.Ordinal)) break;
+                            && replication.Contains("master_link_status:up", StringComparison.Ordinal))
+                        {
+                            break;
+                        }
+
                         await Task.Delay(100, ready.Token);
                     }
                 }
+
                 return cluster;
             }
             catch { await cluster.DisposeAsync(); throw; }
@@ -208,6 +261,7 @@ public class ClusterScanIntegrationTests
             {
                 var basePort = Random.Shared.Next(20_000, 39_994);
                 var listeners = new List<TcpListener>(12);
+
                 try
                 {
                     foreach (var port in Enumerable.Range(basePort, 6)
@@ -217,6 +271,7 @@ public class ClusterScanIntegrationTests
                         listener.Start();
                         listeners.Add(listener);
                     }
+
                     return basePort;
                 }
                 catch (SocketException)
@@ -224,7 +279,10 @@ public class ClusterScanIntegrationTests
                 }
                 finally
                 {
-                    foreach (var listener in listeners) listener.Stop();
+                    foreach (var listener in listeners)
+                    {
+                        listener.Stop();
+                    }
                 }
             }
 
@@ -235,6 +293,7 @@ public class ClusterScanIntegrationTests
         {
             await CommandAsync(replica, "CLUSTER", "FAILOVER");
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
             try
             {
                 while (true)
@@ -243,7 +302,12 @@ public class ClusterScanIntegrationTests
                     var promoted = nodes.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
                         .Any(line => line.StartsWith(_ids[replica], StringComparison.Ordinal)
                             && line.Contains("myself,master", StringComparison.Ordinal));
-                    if (promoted) return;
+
+                    if (promoted)
+                    {
+                        return;
+                    }
+
                     await Task.Delay(100, deadline.Token);
                 }
             }
@@ -258,11 +322,17 @@ public class ClusterScanIntegrationTests
         {
             await CommandAsync(target, "CLUSTER", "SETSLOT", slot.ToString(), "IMPORTING", _ids[source]);
             await CommandAsync(source, "CLUSTER", "SETSLOT", slot.ToString(), "MIGRATING", _ids[target]);
+
             while (true)
             {
                 var keys = (await CommandAsync(source, "CLUSTER", "GETKEYSINSLOT", slot.ToString(), "100"))
                     .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-                if (keys.Length == 0) return;
+
+                if (keys.Length == 0)
+                {
+                    return;
+                }
+
                 await CommandAsync(source, ["MIGRATE", "127.0.0.1", (basePort + target).ToString(), "", "0", "5000", "KEYS", .. keys]);
             }
         }
@@ -270,7 +340,9 @@ public class ClusterScanIntegrationTests
         internal async Task FinishMoveAsync(int slot, int target)
         {
             for (var node = 0; node < 3; node++)
+            {
                 await CommandAsync(node, "CLUSTER", "SETSLOT", slot.ToString(), "NODE", _ids[target]);
+            }
         }
 
         private Task<string> CommandAsync(int node, params string[] arguments) => _nodes.CommandAsync(basePort + node, arguments);

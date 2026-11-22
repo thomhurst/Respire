@@ -50,6 +50,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         var dead = jobs ? queue.DeadLetterStreamKey : "{dash}:dead";
         var group = jobs ? RespireJobQueue<string>.ConsumerGroup : "g";
         var workerOptions = new RespireStreamWorkerOptions { DeadLetterStream = dead, ReadWait = TimeSpan.FromMilliseconds(50) };
+
         if (jobs)
         {
             services.AddRespireJobQueue<RejectJob, string>("dashboard", System.Text.Encoding.UTF8.GetBytes,
@@ -61,11 +62,13 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
             services.AddRespireStreamWorker<RejectEntry, RespireStreamEntry>(stream, group, entry => entry, workerOptions);
             await client.Streams.AddAsync(stream, ("payload", "original"));
         }
+
         await using var provider = services.BuildServiceProvider();
         var worker = provider.GetRequiredService<IHostedService>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await worker.StartAsync(deadline.Token);
         RespireStreamEntry deadEntry;
+
         try
         {
             await using var entries = client.Streams.ReadAllAsync(dead, cancellationToken: deadline.Token).GetAsyncEnumerator();
@@ -73,13 +76,19 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
             deadEntry = entries.Current;
         }
         finally { await worker.StopAsync(deadline.Token); }
+
         var options = new RespireDashboardOptions();
         options.Streams.Add(new() { Name = "worker", Stream = stream, Group = group, DeadLetterStream = dead, IsJobQueue = jobs });
         var state = new DashboardState(client, options);
         await Assert.That(await state.MutateAsync(0, deadEntry.Id.ToString(), true, deadline.Token)).IsEqualTo(1);
         var retried = (await client.Streams.ReadGroupOnceAsync(stream, group, "dashboard-retry", cancellationToken: deadline.Token)).Single();
         await Assert.That(retried.GetString(jobs ? "_respire.job.payload" : "payload")).IsEqualTo("original");
-        if (jobs) await Assert.That(retried.GetString("_respire.job.id")).IsEqualTo("job-7");
+
+        if (jobs)
+        {
+            await Assert.That(retried.GetString("_respire.job.id")).IsEqualTo("job-7");
+        }
+
         await Assert.That(await retried.AckAsync(deadline.Token)).IsTrue();
         await Assert.That(await client.Streams.CountAsync(dead)).IsEqualTo(0);
     }
@@ -107,32 +116,62 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         var worker = provider.GetRequiredService<IHostedService>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         await worker.StartAsync(deadline.Token);
+
         try
         {
             await using var events = queue.ReadEventsAsync(cancellationToken: deadline.Token).GetAsyncEnumerator();
+
             while (await events.MoveNextAsync())
-                if (events.Current.JobId == "callback" && events.Current.Kind == "completed") break;
+            {
+                if (events.Current.JobId == "callback" && events.Current.Kind == "completed")
+                {
+                    break;
+                }
+            }
+
             var original = (await queue.GetBatchStatusAsync("batch"))!;
             await Assert.That(original.IsCompleted).IsTrue();
             await Assert.That(original.Failed).IsEqualTo(1);
-            if (removeBatch) await Assert.That(await queue.RemoveBatchAsync("batch")).IsTrue();
+
+            if (removeBatch)
+            {
+                await Assert.That(await queue.RemoveBatchAsync("batch")).IsTrue();
+            }
+
             var dead = (await client.Streams.RangeAsync(queue.DeadLetterStreamKey)).Single();
             var options = new RespireDashboardOptions();
-            options.Streams.Add(new() { Name = "jobs", Stream = queue.StreamKey,
-                Group = RespireJobQueue<string>.ConsumerGroup, DeadLetterStream = queue.DeadLetterStreamKey, IsJobQueue = true });
+            options.Streams.Add(new()
+            {
+                Name = "jobs",
+                Stream = queue.StreamKey,
+                Group = RespireJobQueue<string>.ConsumerGroup,
+                DeadLetterStream = queue.DeadLetterStreamKey,
+                IsJobQueue = true
+            });
             await Assert.That(await new DashboardState(client, options).MutateAsync(0, dead.Id.ToString(), true, deadline.Token)).IsEqualTo(1);
             var retried = (await client.Streams.RangeAsync(queue.StreamKey)).Last();
             await Assert.That(retried.GetString("_respire.job.batch")).IsNull();
             await Assert.That(retried.GetString("_respire.job.member")).IsNull();
             await Assert.That(retried.GetString("_respire.job.id")).IsEqualTo("member");
             await Assert.That(retried.GetString("_respire.job.payload")).IsEqualTo("original");
+
             while (await events.MoveNextAsync())
-                if (events.Current.JobId == "member" && events.Current.Kind == (rejectRetry ? "dead-letter" : "completed")) break;
+            {
+                if (events.Current.JobId == "member" && events.Current.Kind == (rejectRetry ? "dead-letter" : "completed"))
+                {
+                    break;
+                }
+            }
+
             await Assert.That(handler.MemberCalls).IsEqualTo(2);
             await Assert.That(handler.CallbackCalls).IsEqualTo(1);
             await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(rejectRetry ? 1 : 0);
             var status = await queue.GetBatchStatusAsync("batch");
-            if (removeBatch) await Assert.That(status).IsNull();
+
+            if (removeBatch)
+            {
+                await Assert.That(status).IsNull();
+            }
             else
             {
                 await Assert.That(status!.IsCompleted).IsTrue();
@@ -152,11 +191,18 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         public int MemberCalls;
         public int CallbackCalls;
         public bool RejectRetry;
+
         public ValueTask<RespireStreamWorkerResult> HandleAsync(RespireJob<string> job, CancellationToken cancellationToken)
         {
-            if (job.Id == "callback") Interlocked.Increment(ref CallbackCalls);
+            if (job.Id == "callback")
+            {
+                Interlocked.Increment(ref CallbackCalls);
+            }
             else if (Interlocked.Increment(ref MemberCalls) == 1 || RejectRetry)
+            {
                 return ValueTask.FromResult(RespireStreamWorkerResult.DeadLetter);
+            }
+
             return ValueTask.FromResult(RespireStreamWorkerResult.Ack);
         }
     }
@@ -183,10 +229,12 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         var id = await AddDead(admin);
         var username = "dashboard-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">dashboard-test-password", "~*", "+@all", "-" + denied]);
+
         try
         {
             await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Username = username, Password = "dashboard-test-password" });
+                with
+            { Username = username, Password = "dashboard-test-password" });
             var state = new DashboardState(client, DashboardSecurityTests.Options());
             await Assert.That(async () => await state.MutateAsync(0, id.ToString(), true, default)).Throws<RespireServerException>();
             await using var app = await DashboardSecurityTests.CreateApplication(client);
@@ -199,7 +247,8 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
             http.DefaultRequestHeaders.Add("Cookie", page.Headers.GetValues("Set-Cookie").First().Split(';')[0]);
             using var response = await http.PostAsync("/workers/0/retry", new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["id"] = id.ToString(), ["__RequestVerificationToken"] = System.Net.WebUtility.HtmlDecode(token),
+                ["id"] = id.ToString(),
+                ["__RequestVerificationToken"] = System.Net.WebUtility.HtmlDecode(token),
             }));
             await Assert.That(response.StatusCode).IsEqualTo(System.Net.HttpStatusCode.Forbidden);
             await Assert.That(await response.Content.ReadAsStringAsync()).Contains("Ask an administrator");
@@ -229,7 +278,8 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         http.DefaultRequestHeaders.Add("Cookie", page.Headers.GetValues("Set-Cookie").First().Split(';')[0]);
         using var response = await http.PostAsync(path + "/0/retry", new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            ["id"] = id.ToString(), ["__RequestVerificationToken"] = System.Net.WebUtility.HtmlDecode(token),
+            ["id"] = id.ToString(),
+            ["__RequestVerificationToken"] = System.Net.WebUtility.HtmlDecode(token),
         }));
         await Assert.That(response.StatusCode).IsEqualTo(System.Net.HttpStatusCode.SeeOther);
         await Assert.That(response.Headers.Location!.OriginalString).IsEqualTo(path + "/");
@@ -243,12 +293,16 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         await using var root = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var client = root.WithKeyPrefix("tenant:");
         await client.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
+
         using (await root.ExecuteAsync("XADD", ["tenant:{dash}:dead", "1-0", "_respire.source_id", "9-0",
             "_respire.group", "g", "_respire.attempt", "3", "_respire.reason", "explicit", "_respire.exception_type", "",
             new byte[] { 255, 0 }, new byte[] { 0, 255, 13, 10 }, "_respire.source_id", "original",
             "_respire.job.flow", "application-flow", "_respire.job.node", "application-node",
             "_respire.job.flow", new byte[] { 0, 255 },
-            "_respire.job.batch", "application-batch", "_respire.job.member", "application-member"])) { }
+            "_respire.job.batch", "application-batch", "_respire.job.member", "application-member"]))
+        {
+        }
+
         var state = new DashboardState(client, DashboardSecurityTests.Options());
         var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => state.MutateAsync(0, "1-0", true, default).AsTask()));
         await Assert.That(results.Sum()).IsEqualTo(1);
@@ -310,7 +364,11 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await client.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
         await client.Streams.AddAsync("{dash}:source", ("payload", "test"));
-        using (await client.ExecuteAsync("SET", ["{dash}:dead", "wrong-type"])) { }
+
+        using (await client.ExecuteAsync("SET", ["{dash}:dead", "wrong-type"]))
+        {
+        }
+
         var snapshot = await new DashboardState(client, DashboardSecurityTests.Options()).ReadAsync(default);
         await Assert.That(snapshot.Streams[0].Length).IsEqualTo(1);
         await Assert.That(snapshot.Streams[0].Groups.Length).IsEqualTo(1);
@@ -343,8 +401,14 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         var queue = new RespireJobQueue<string>(client, "dashboard", System.Text.Encoding.UTF8.GetBytes);
         var options = new RespireDashboardOptions();
-        options.Streams.Add(new() { Name = "jobs", Stream = queue.StreamKey,
-            Group = RespireJobQueue<string>.ConsumerGroup, DeadLetterStream = queue.DeadLetterStreamKey, IsJobQueue = true });
+        options.Streams.Add(new()
+        {
+            Name = "jobs",
+            Stream = queue.StreamKey,
+            Group = RespireJobQueue<string>.ConsumerGroup,
+            DeadLetterStream = queue.DeadLetterStreamKey,
+            IsJobQueue = true
+        });
         await client.Streams.CreateGroupAsync(queue.StreamKey, RespireJobQueue<string>.ConsumerGroup, RespireStreamId.Beginning);
         var id = await client.Streams.AddAsync(queue.DeadLetterStreamKey,
             ("_respire.source_id", "1-0"), ("_respire.group", RespireJobQueue<string>.ConsumerGroup),
@@ -369,11 +433,13 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     {
         await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
         await client.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
+
         for (var i = 0; i < 5; i++)
         {
             await client.Streams.AddAsync("{dash}:source", ("payload", "test"));
             await AddDead(client);
         }
+
         var options = DashboardSecurityTests.Options();
         options.EntryLimit = 2;
         var clock = new Clock();
@@ -402,8 +468,11 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     private sealed class Clock : TimeProvider
     {
         private long _timestamp;
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
         public override long GetTimestamp() => _timestamp;
+
         internal void Advance(TimeSpan elapsed) => _timestamp += elapsed.Ticks;
     }
 

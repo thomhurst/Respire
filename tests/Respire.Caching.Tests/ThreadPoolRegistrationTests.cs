@@ -13,7 +13,9 @@ public class ThreadPoolRegistrationTests
     [Arguments(true)]
     public async Task BuilderDefaults_MatchClientOptions(bool keyed)
     {
-        await using var provider = Register(keyed, _ => { });
+        await using var provider = Register(keyed, _ =>
+        {
+        });
         var options = Resolve(provider, keyed).Core.Options;
 
         await Assert.That(options.ThreadPoolMonitoring).IsTrue();
@@ -53,14 +55,23 @@ public class ThreadPoolRegistrationTests
     private static ServiceProvider Register(bool keyed, Action<RespireOptionsBuilder> configure)
     {
         var services = new ServiceCollection();
+
         void Configure(RespireOptionsBuilder options)
         {
             // Client construction is lazy; these tests never connect to Redis.
             options.Endpoints.Add(new RespireEndpoint("127.0.0.1", 1));
             configure(options);
         }
-        if (keyed) services.AddKeyedRespire("probe", Configure);
-        else services.AddRespire(Configure);
+
+        if (keyed)
+        {
+            services.AddKeyedRespire("probe", Configure);
+        }
+        else
+        {
+            services.AddRespire(Configure);
+        }
+
         return services.BuildServiceProvider();
     }
 

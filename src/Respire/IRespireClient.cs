@@ -32,57 +32,127 @@ public partial interface IRespireClient : IAsyncDisposable
     /// captured endpoint can be historical; host and port always come from one generation.</remarks>
     /// <exception cref="InvalidOperationException">A lazy Sentinel client has not resolved a validated
     /// primary yet. Use ConnectAsync or await the first command before reading its endpoint.</exception>
-    RespireEndpoint Endpoint { get; }
+    RespireEndpoint Endpoint
+    {
+        get;
+    }
 
     /// <summary>Whether at least one command connection is currently usable.</summary>
-    bool IsConnected { get; }
+    bool IsConnected
+    {
+        get;
+    }
 
     /// <summary>Raised when a command connection changes health.</summary>
     event Action<RespireConnectionStateChange>? ConnectionStateChanged;
 
     // Typed convenience facets, grouped by data type.
     /// <summary>String commands.</summary>
-    IRespireStringCommands Strings { get; }
+    IRespireStringCommands Strings
+    {
+        get;
+    }
+
     /// <summary>Generic key commands.</summary>
-    IRespireKeyCommands Keys { get; }
+    IRespireKeyCommands Keys
+    {
+        get;
+    }
+
     /// <summary>Distributed lock commands.</summary>
-    IRespireLockCommands Locks { get; }
+    IRespireLockCommands Locks
+    {
+        get;
+    }
+
     /// <summary>Hash commands.</summary>
-    IRespireHashCommands Hashes { get; }
+    IRespireHashCommands Hashes
+    {
+        get;
+    }
+
     /// <summary>List commands.</summary>
-    IRespireListCommands Lists { get; }
+    IRespireListCommands Lists
+    {
+        get;
+    }
 
     /// <summary>Redis sparse array commands.</summary>
-    IRespireArrayCommands Arrays { get; }
+    IRespireArrayCommands Arrays
+    {
+        get;
+    }
 
     /// <summary>Valkey 9.2 Path Hash commands, tested against RC1.</summary>
-    IRespirePathHashCommands PathHashes { get; }
+    IRespirePathHashCommands PathHashes
+    {
+        get;
+    }
 
     /// <summary>Set commands.</summary>
-    IRespireSetCommands Sets { get; }
+    IRespireSetCommands Sets
+    {
+        get;
+    }
+
     /// <summary>Sorted-set commands.</summary>
-    IRespireSortedSetCommands SortedSets { get; }
+    IRespireSortedSetCommands SortedSets
+    {
+        get;
+    }
+
     /// <summary>Stream commands.</summary>
-    IRespireStreamCommands Streams { get; }
+    IRespireStreamCommands Streams
+    {
+        get;
+    }
+
     /// <summary>Bitmap commands.</summary>
-    IRespireBitmapCommands Bitmaps { get; }
+    IRespireBitmapCommands Bitmaps
+    {
+        get;
+    }
+
     /// <summary>HyperLogLog commands.</summary>
-    IRespireHyperLogLogCommands HyperLogLog { get; }
+    IRespireHyperLogLogCommands HyperLogLog
+    {
+        get;
+    }
+
     /// <summary>Geospatial commands.</summary>
-    IRespireGeoCommands Geo { get; }
+    IRespireGeoCommands Geo
+    {
+        get;
+    }
+
     /// <summary>Redis vector-set commands.</summary>
-    IRespireVectorSetCommands VectorSets { get; }
+    IRespireVectorSetCommands VectorSets
+    {
+        get;
+    }
+
     /// <summary>Lua script commands.</summary>
-    IRespireScriptCommands Scripts { get; }
+    IRespireScriptCommands Scripts
+    {
+        get;
+    }
 
     /// <summary>Redis Functions (Redis 7+).</summary>
-    IRespireFunctionCommands Functions { get; }
+    IRespireFunctionCommands Functions
+    {
+        get;
+    }
+
     /// <summary>Server administration and introspection commands.</summary>
-    IRespireServerCommands Server { get; }
+    IRespireServerCommands Server
+    {
+        get;
+    }
 
     // Root shortcuts for the most common operations.
     /// <summary>Gets a UTF-8 string, or null when the key is absent. Redis: GET.</summary>
     ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default);
+
     /// <summary>Gets and deserializes a value, or default when the key is absent. Redis: GET.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -165,8 +235,10 @@ public partial interface IRespireClient : IAsyncDisposable
 
     /// <summary>Deletes keys and returns how many existed. Redis: DEL.</summary>
     ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys);
+
     /// <summary>Deletes keys and returns how many existed. Redis: DEL.</summary>
     ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
     /// <summary>Deletes one key with cancellation. Redis: DEL.</summary>
     [OverloadResolutionPriority(1)]
     ValueTask<long> DeleteAsync(RespireKey key, CancellationToken cancellationToken)
@@ -174,10 +246,13 @@ public partial interface IRespireClient : IAsyncDisposable
 
     /// <summary>Returns whether a key exists. Redis: EXISTS.</summary>
     ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default);
+
     /// <summary>Increments an integer and returns the new value. Redis: INCR/INCRBY.</summary>
     ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
+
     /// <summary>Decrements an integer and returns the new value. Redis: DECR/DECRBY.</summary>
     ValueTask<long> DecrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
+
     /// <summary>Sets or clears a key's expiry under an optional condition. Redis: PEXPIRE/PERSIST.</summary>
     ValueTask<bool> ExpireAsync(
         RespireKey key,
@@ -233,6 +308,7 @@ public partial interface IRespireClient : IAsyncDisposable
 
     /// <summary>Creates an explicit pipeline that queues commands until execution.</summary>
     RespireBatch CreateBatch();
+
     /// <summary>Creates an un-watched transaction.</summary>
     RespireTransaction CreateTransaction();
 

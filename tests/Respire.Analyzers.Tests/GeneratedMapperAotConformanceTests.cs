@@ -53,22 +53,40 @@ public class GeneratedMapperAotConformanceTests
     private static IEnumerable<string> ForbiddenCalls(Compilation compilation, SyntaxTree tree)
     {
         var semantic = compilation.GetSemanticModel(tree);
+
         foreach (var node in tree.GetRoot().DescendantNodes())
         {
             if (node is ExpressionSyntax expression && semantic.GetTypeInfo(expression).Type?.TypeKind == TypeKind.Dynamic)
+            {
                 yield return "Dynamic binding: " + node;
-            if (node is not (InvocationExpressionSyntax or ObjectCreationExpressionSyntax)) continue;
-            if (semantic.GetSymbolInfo(node).Symbol is not IMethodSymbol method) continue;
+            }
+
+            if (node is not (InvocationExpressionSyntax or ObjectCreationExpressionSyntax))
+            {
+                continue;
+            }
+
+            if (semantic.GetSymbolInfo(node).Symbol is not IMethodSymbol method)
+            {
+                continue;
+            }
+
             var type = method.ContainingType.ToDisplayString();
+
             if (method.ContainingNamespace.ToDisplayString().StartsWith("System.Reflection", StringComparison.Ordinal)
                 || type is "System.Type" or "System.Activator" or "System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver"
                 || method.GetAttributes().Any(attribute => attribute.AttributeClass?.Name
                     is "RequiresDynamicCodeAttribute" or "RequiresUnreferencedCodeAttribute"))
+            {
                 yield return "Reflection or dynamic code: " + method.ToDisplayString();
+            }
+
             if (type == "System.Text.Json.JsonSerializer"
                 && !method.Parameters.Any(parameter => parameter.Type.ToDisplayString()
                     .StartsWith("System.Text.Json.Serialization.Metadata.JsonTypeInfo", StringComparison.Ordinal)))
+            {
                 yield return "JSON serialization without explicit metadata: " + method.ToDisplayString();
+            }
         }
     }
 

@@ -13,7 +13,8 @@ public class CacheStampedeTests
 #pragma warning disable RESP010 // This validation-only client is owned and disposed by the test and must not connect to the unavailable endpoint.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", endpoint.Port)], ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", endpoint.Port)],
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         IRespireClient contract = client;
@@ -50,6 +51,7 @@ public class CacheStampedeTests
             await Assert.That(first.ClusterSlot).IsEqualTo(key.ClusterSlot);
             await Assert.That(first.ToBytes().SequenceEqual(RespireClient.CreateCacheAsideLockKey(key).ToBytes())).IsTrue();
         }
+
         await Assert.That(RespireClient.CreateCacheAsideLockKey("{same}:one").ToBytes()
             .SequenceEqual(RespireClient.CreateCacheAsideLockKey("{same}:two").ToBytes())).IsFalse();
     }
@@ -65,8 +67,12 @@ public class CacheStampedeTests
             new() { LockTimeout = TimeSpan.FromDays(100) }, new() { StaleWhileRevalidate = TimeSpan.FromTicks(-1) },
             new() { DistributedSingleFlight = false, StaleWhileRevalidate = TimeSpan.FromSeconds(1) },
         ];
+
         foreach (var options in invalid)
+        {
             await Assert.That(() => options.Validate()).Throws<ArgumentException>();
+        }
+
         new RespireCacheAsideOptions { WaitTimeout = TimeSpan.Zero }.Validate();
     }
 }

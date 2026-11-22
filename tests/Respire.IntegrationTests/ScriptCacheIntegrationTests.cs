@@ -22,16 +22,22 @@ public class ScriptCacheIntegrationTests
         (await client.Scripts.ExistsAsync(script.Sha1)).Should().Equal(false);
         (await client.Scripts.ExecuteStringAsync(script, ["key"])).Should().Be("value");
         (await client.Scripts.ExistsAsync(script.Sha1)).Should().Equal(true);
+
         foreach (var mode in new[] { RespireScriptFlushMode.Default, RespireScriptFlushMode.Sync, RespireScriptFlushMode.Async })
         {
             await client.Scripts.FlushAsync(mode);
             (await client.Scripts.ExistsAsync(script.Sha1)).Should().Equal(false);
             (await client.Scripts.LoadAsync(script)).Should().Be(script.Sha1);
         }
+
         var writes = RespireScript.Create("return redis.call('SET', KEYS[1], 'changed')", readOnly: true);
-        Func<Task> execute = async () => { using var result = await client.Scripts.ExecuteAsync(writes, ["key"]); };
+        Func<Task> execute = async () =>
+        {
+            using var result = await client.Scripts.ExecuteAsync(writes, ["key"]);
+        };
         await execute.Should().ThrowAsync<RespireServerException>();
         (await client.GetStringAsync("key")).Should().Be("value");
+
         using (var batch = client.CreateBatch())
         {
             var flush = batch.Scripts.Flush();
@@ -41,6 +47,7 @@ public class ScriptCacheIntegrationTests
             using var result = read.Result;
             result.AsString().Should().Be("value");
         }
+
         await using var transaction = client.CreateTransaction();
         var cleared = transaction.Scripts.Flush();
         var absent = transaction.Scripts.Exists(script.Sha1);

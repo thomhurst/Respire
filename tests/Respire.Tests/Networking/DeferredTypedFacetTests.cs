@@ -72,42 +72,48 @@ public class DeferredTypedFacetTests
                 _ = q.Hashes.Set("h", "f", guid, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", guid);
                 _ = q.SortedSets.Add("z", guid, 2);
-            }),
+            }
+            ),
             (instant, q =>
             {
                 _ = q.Hashes.Set("h", "f", instant);
                 _ = q.Hashes.Set("h", "f", instant, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", instant);
                 _ = q.SortedSets.Add("z", instant, 2);
-            }),
+            }
+            ),
             (duration, q =>
             {
                 _ = q.Hashes.Set("h", "f", duration);
                 _ = q.Hashes.Set("h", "f", duration, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", duration);
                 _ = q.SortedSets.Add("z", duration, 2);
-            }),
+            }
+            ),
             (memory, q =>
             {
                 _ = q.Hashes.Set("h", "f", memory);
                 _ = q.Hashes.Set("h", "f", memory, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", memory);
                 _ = q.SortedSets.Add("z", memory, 2);
-            }),
+            }
+            ),
             (segment, q =>
             {
                 _ = q.Hashes.Set("h", "f", segment);
                 _ = q.Hashes.Set("h", "f", segment, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", segment);
                 _ = q.SortedSets.Add("z", segment, 2);
-            }),
+            }
+            ),
             (key, q =>
             {
                 _ = q.Hashes.Set("h", "f", key);
                 _ = q.Hashes.Set("h", "f", key, RespireSetWhen.NotExists);
                 _ = q.Sets.Contains("s", key);
                 _ = q.SortedSets.Add("z", key, 2);
-            }),
+            }
+            ),
         ];
         var replies = Enumerable.Repeat(":1\r\n"u8.ToArray(), cases.Length * 8).ToArray();
         await using var server = new FakeRespServer(DeferredReplies(transaction, replies));
@@ -122,9 +128,11 @@ public class DeferredTypedFacetTests
                 _ = queue.SortedSets.Add("z", value, 2);
                 enqueue(queue);
             }
+
             await execute();
         });
         var commands = server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC").ToArray();
+
         for (var i = 0; i < commands.Length; i += 8)
         {
             await Assert.That(commands.Skip(i + 4).Take(4))

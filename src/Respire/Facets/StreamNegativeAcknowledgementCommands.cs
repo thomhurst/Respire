@@ -18,9 +18,16 @@ public enum RespireStreamNackMode
 public readonly record struct RespireStreamNackOptions
 {
     /// <summary>Overrides the mode's delivery count adjustment. Must be nonnegative.</summary>
-    public long? RetryCount { get; init; }
+    public long? RetryCount
+    {
+        get; init;
+    }
+
     /// <summary>Creates unowned pending entries for existing stream IDs absent from the group's PEL.</summary>
-    public bool Force { get; init; }
+    public bool Force
+    {
+        get; init;
+    }
 }
 
 public partial interface IRespireStreamCommands
@@ -58,7 +65,6 @@ internal sealed partial class StreamCommands
     public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode, RespireStreamNackOptions options, RespireStreamId ids, CancellationToken cancellationToken)
         => NegativeAcknowledgeAsync(key, group, mode, options, [ids], cancellationToken);
 
-
     private static readonly Verb XNack = new("XNACK");
 
     public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
@@ -76,7 +82,11 @@ internal sealed partial class StreamCommands
     public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, RespireStreamNackMode mode,
         RespireStreamNackOptions options, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
     {
-        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         return client.ConvertResponseAsync("XNACK", BuildNackCommand(client, key, group, mode, options, ids),
             cancellationToken, this, static (StreamCommands _, in RespValue value) => ParseNackCount(in value));
     }
@@ -86,7 +96,12 @@ internal sealed partial class StreamCommands
     {
         RespireValue.ThrowIfNull(group, nameof(group));
         RequireIds(ids);
-        if (options.RetryCount is < 0) throw new ArgumentOutOfRangeException(nameof(options));
+
+        if (options.RetryCount is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options));
+        }
+
         var token = mode switch
         {
             RespireStreamNackMode.Silent => "SILENT",
@@ -101,20 +116,33 @@ internal sealed partial class StreamCommands
         arguments[2] = "IDS";
         arguments[3] = ids.Length;
         var index = 4;
-        foreach (var id in ids) arguments[index++] = id.Value;
+
+        foreach (var id in ids)
+        {
+            arguments[index++] = id.Value;
+        }
+
         if (options.RetryCount is { } count)
         {
             arguments[index++] = "RETRYCOUNT";
             arguments[index++] = count;
         }
-        if (options.Force) arguments[index] = "FORCE";
+
+        if (options.Force)
+        {
+            arguments[index] = "FORCE";
+        }
+
         return new(XNack, client.Key(key), arguments);
     }
 
     internal static long ParseNackCount(in RespValue value)
     {
         if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
+        {
             throw new RespireProtocolException("XNACK must return a nonnegative integer count.");
+        }
+
         return value.AsInteger();
     }
 }

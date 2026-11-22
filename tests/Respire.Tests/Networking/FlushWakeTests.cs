@@ -22,7 +22,9 @@ public class FlushWakeTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         // Wait for the setup precondition; publication/release below controls the race itself.
         while (!connection.IsFlushLoopWaiting)
+        {
             await Task.Delay(1, deadline.Token);
+        }
 
         var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
@@ -38,8 +40,10 @@ public class FlushWakeTests
                 first.TrySetResult(reply.AsString());
             }
             catch (Exception error) { first.TrySetException(error); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         producer.Start();
+
         try
         {
             await published.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -55,18 +59,26 @@ public class FlushWakeTests
             await first.Task.WaitAsync(TimeSpan.FromSeconds(10));
             producer.Join(TimeSpan.FromSeconds(10));
         }
+
         await Assert.That(await first.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("PONG");
     }
 
     private readonly struct PausedProducer(TaskCompletionSource published, ManualResetEventSlim release) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer) => writer.WriteRaw(FakeRespServer.PingFrame);
+
         public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)
         {
             // This callback runs after the write gate is released and before ScheduleFlush.
             published.TrySetResult();
-            if (!release.Wait(TimeSpan.FromSeconds(15))) throw new TimeoutException("Producer was not released.");
+
+            if (!release.Wait(TimeSpan.FromSeconds(15)))
+            {
+                throw new TimeoutException("Producer was not released.");
+            }
+
             return admissionToken;
         }
     }
@@ -86,7 +98,9 @@ public class FlushWakeTests
                 for (var i = 0; i < 20; i++)
                 {
                     if (Thread.CurrentThread.IsThreadPoolThread)
+                    {
                         throw new InvalidOperationException("The writer must not be a pool thread.");
+                    }
                     // Each command starts a new batch on an idle connection, the dispatched path.
 #pragma warning disable RESP009 // A bounded wait on a dedicated non-pool thread exercises the idle connection's dispatched flush path.
                     using var reply = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame))
@@ -97,7 +111,8 @@ public class FlushWakeTests
             }
             catch (Exception error) { failure = error; }
             finally { finished.TrySetResult(); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         writer.Start();
 
         // Waiting for the dedicated writer must not occupy a pool worker needed by its replies.

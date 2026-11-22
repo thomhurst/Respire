@@ -18,14 +18,26 @@ public class CacheStampedeCancellationTests
         server.SuppressReply = command =>
         {
             if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)
-                || server.ReceivedArguments[^1].Length != 6) return false;
+                || server.ReceivedArguments[^1].Length != 6)
+            {
+                return false;
+            }
+
             releaseReceived.TrySetResult();
             return true;
         };
         server.ReplyOverride = (connection, command) =>
         {
-            if (command == "CLIENT ID") return Encoding.ASCII.GetBytes($":{connection + 1}\r\n");
-            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return FakeRespServer.OkReply;
+            if (command == "CLIENT ID")
+            {
+                return Encoding.ASCII.GetBytes($":{connection + 1}\r\n");
+            }
+
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            {
+                return FakeRespServer.OkReply;
+            }
+
             return server.ReceivedArguments[^1].Length == 5
                 ? "*4\r\n$-1\r\n:0\r\n:0\r\n$0\r\n\r\n"u8.ToArray()
                 : ":1\r\n"u8.ToArray();
@@ -33,26 +45,37 @@ public class CacheStampedeCancellationTests
 #pragma warning disable RESP010 // Each cancellation scenario owns and disposes its client to isolate blocked replies and caller cancellation.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
-            ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null, ThreadPoolMonitoring = false,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = null,
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var failure = new InvalidOperationException("factory failed");
         var pending = client.GetOrSetAsync<string>("key", new RespireCacheAsideOptions(), token =>
         {
-            if (outcome == "failure") throw failure;
+            if (outcome == "failure")
+            {
+                throw failure;
+            }
+
             if (outcome == "cancellation")
             {
                 cancellation.Cancel();
                 token.ThrowIfCancellationRequested();
             }
+
             return ValueTask.FromResult<string?>(null);
         }, TimeSpan.FromMinutes(1), cancellation.Token).AsTask();
         await releaseReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
         if (outcome == "null")
+        {
             await Assert.That(await pending.WaitAsync(TimeSpan.FromSeconds(10))).IsNull();
+        }
         else if (outcome == "failure")
         {
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
@@ -60,8 +83,10 @@ public class CacheStampedeCancellationTests
             await Assert.That(ReferenceEquals(error, failure)).IsTrue();
         }
         else
+        {
             await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
                 .Throws<OperationCanceledException>();
+        }
     }
 
     [Test]
@@ -80,9 +105,18 @@ public class CacheStampedeCancellationTests
         await using var server = new FakeRespServer(6, FakeRespServer.OkReply);
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             var args = server.ReceivedArguments[^1];
-            if (args.Length != 9) return false;
+
+            if (args.Length != 9)
+            {
+                return false;
+            }
+
             owner = Encoding.UTF8.GetString(args[6]);
             acquisitionConnection = server.ReceivedConnectionIds[^1];
             acquired.TrySetResult();
@@ -90,7 +124,11 @@ public class CacheStampedeCancellationTests
         };
         server.ReplyOverride = (connection, command) =>
         {
-            if (command == "CLIENT ID") return Encoding.ASCII.GetBytes($":{connection + 1}\r\n");
+            if (command == "CLIENT ID")
+            {
+                return Encoding.ASCII.GetBytes($":{connection + 1}\r\n");
+            }
+
             if (command.StartsWith("CLIENT KILL ID ", StringComparison.Ordinal))
             {
                 if (acquisitionConnection >= 0 && command == $"CLIENT KILL ID {acquisitionConnection + 1}")
@@ -98,22 +136,40 @@ public class CacheStampedeCancellationTests
                     server.CloseConnection(acquisitionConnection);
                     fenced = true;
                 }
+
                 return ":0\r\n"u8.ToArray();
             }
-            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return FakeRespServer.OkReply;
+
+            if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            {
+                return FakeRespServer.OkReply;
+            }
+
             var args = server.ReceivedArguments[^1];
-            if (args.Length == 5) return "*4\r\n$-1\r\n:0\r\n:0\r\n$0\r\n\r\n"u8.ToArray();
+
+            if (args.Length == 5)
+            {
+                return "*4\r\n$-1\r\n:0\r\n:0\r\n$0\r\n\r\n"u8.ToArray();
+            }
+
             releasedBeforeFence |= !fenced;
             Interlocked.Increment(ref releases);
-            if (owner == Encoding.UTF8.GetString(args[5])) owner = null;
+
+            if (owner == Encoding.UTF8.GetString(args[5]))
+            {
+                owner = null;
+            }
+
             return ":1\r\n"u8.ToArray();
         };
 #pragma warning disable RESP010 // Each cancellation scenario owns and disposes its client to isolate blocked replies and caller cancellation.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
-            CommandTimeout = TimeSpan.FromSeconds(30), ThreadPoolMonitoring = false,
+            CommandTimeout = TimeSpan.FromSeconds(30),
+            ThreadPoolMonitoring = false,
         });
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
@@ -124,15 +180,30 @@ public class CacheStampedeCancellationTests
             return ValueTask.FromResult<string?>("unexpected");
         }, TimeSpan.FromMinutes(1), cancellation.Token).AsTask();
         await acquired.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        if (successor) owner = "successor";
+
+        if (successor)
+        {
+            owner = "successor";
+        }
+
         if (timeout)
+        {
             await Assert.That(client.Core.Multiplexer.GetConnection().ExpireOldestCommandForTesting()).IsTrue();
+        }
         else
+        {
             cancellation.Cancel();
+        }
+
         if (timeout)
+        {
             await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10))).ThrowsExactly<RespireTimeoutException>();
+        }
         else
+        {
             await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10))).Throws<OperationCanceledException>();
+        }
+
         await Assert.That(fenced).IsTrue();
         await Assert.That(releasedBeforeFence).IsFalse();
         await Assert.That(releases).IsEqualTo(1);

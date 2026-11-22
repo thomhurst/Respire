@@ -35,13 +35,18 @@ public class AggregatePayloadTests
             + "\r\n" + (nested ? "*1\r\n" : "") + "$3\r\nend\r\n";
         var prefix = "*2\r\n|1\r\n+k\r\n$";
         var paddingLength = frameLength - prefix.Length - suffix.Length - 4;
+
         while (prefix.Length + paddingLength.ToString().Length + 4 + paddingLength + suffix.Length != frameLength)
+        {
             paddingLength = frameLength - prefix.Length - paddingLength.ToString().Length - 4 - suffix.Length;
+        }
+
         var input = Encoding.ASCII.GetBytes(prefix + paddingLength + "\r\n"
             + new string('a', paddingLength) + "\r\n" + suffix);
         var position = 0;
         await Assert.That(input.Length).IsEqualTo(frameLength);
         await Assert.That(RespParser.TryParseValue(input, ref position, out var value)).IsEqualTo(RespParseStatus.Done);
+
         using (value)
         using (var owned = value.ToOwned())
         {
@@ -50,7 +55,12 @@ public class AggregatePayloadTests
             MemoryMarshal.TryGetArray(first.AsMemory(), out var one);
             MemoryMarshal.TryGetArray(second.AsMemory(), out var two);
             await Assert.That(ReferenceEquals(one.Array, two.Array)).IsEqualTo(sharesFrame);
-            if (!sharesFrame) await Assert.That(one.Array!.Length).IsLessThan(frameLength);
+
+            if (!sharesFrame)
+            {
+                await Assert.That(one.Array!.Length).IsLessThan(frameLength);
+            }
+
             input.AsSpan().Fill(0);
             await Assert.That(position).IsEqualTo(frameLength);
             await Assert.That(first.AsString()).IsEqualTo(new string('x', firstLength));
@@ -82,18 +92,24 @@ public class AggregatePayloadTests
         ":9\r\n"u8.CopyTo(input.AsSpan(3 + frameLength));
         var position = 3;
         await Assert.That(RespParser.TryParseValue(input, ref position, out var value)).IsEqualTo(RespParseStatus.Done);
+
         using (value)
         using (var owned = value.ToOwned())
         {
             MemoryMarshal.TryGetArray(value.AsArray()[0].AsMemory(), out var one);
             MemoryMarshal.TryGetArray(value.AsArray()[1].AsArray()[0].AsMemory(), out var two);
+
             if (oversized)
             {
                 await Assert.That(ReferenceEquals(one.Array, two.Array)).IsFalse();
                 await Assert.That(one.Array!.Length).IsLessThan(frameLength);
                 await Assert.That(two.Array!.Length).IsLessThan(1024);
             }
-            else await Assert.That(one.Array).IsSameReferenceAs(two.Array);
+            else
+            {
+                await Assert.That(one.Array).IsSameReferenceAs(two.Array);
+            }
+
             await Assert.That(position).IsEqualTo(3 + frameLength);
             input.AsSpan().Fill(0);
             await Assert.That(value.AsArray()[0].AsString()).IsEqualTo(oneText);
@@ -128,6 +144,7 @@ public class AggregatePayloadTests
         var frame = Encoding.ASCII.GetBytes($"{marker}{(marker == '%' ? 1 : 2)}\r\n$3\r\none\r\n*2\r\n:7\r\n$3\r\ntwo\r\n");
         var pos = 0;
         await Assert.That(RespParser.TryParseValue(frame, ref pos, out var complete)).IsEqualTo(RespParseStatus.Done);
+
         using (complete)
         using (var owned = complete.ToOwned())
         using (var parser = new RespParseState(int.MaxValue))
@@ -135,6 +152,7 @@ public class AggregatePayloadTests
             pos = 0;
             await Assert.That(parser.TryParse(frame.AsSpan(0, 4), ref pos, out _, out _)).IsEqualTo(RespParseStatus.NeedMoreData);
             await Assert.That(parser.TryParse(frame, ref pos, out var fragmented, out _)).IsEqualTo(RespParseStatus.Done);
+
             using (fragmented)
             {
                 await Assert.That(complete.GetOwnedSize()).IsEqualTo(owned.GetOwnedSize());
@@ -154,6 +172,7 @@ public class AggregatePayloadTests
         root.CopyTo(input, 3 + attributes.Length);
         var pos = 3;
         await Assert.That(RespParser.TryParseValue(input, ref pos, out var value)).IsEqualTo(RespParseStatus.Done);
+
         using (value)
         {
             MemoryMarshal.TryGetArray(value.AsArray()[0].AsMemory(), out var payload);
@@ -195,6 +214,7 @@ public class AggregatePayloadTests
         byte[]? bytes;
         int number;
         int[]? numbers;
+
         try
         {
             text = client.DeserializeBorrowed<string>(in value.AsArray()[0]);
@@ -211,6 +231,7 @@ public class AggregatePayloadTests
             }
         }
         finally { value.Dispose(); }
+
         await Assert.That(text).IsEqualTo("one");
         await Assert.That(bytes).IsEquivalentTo("one"u8.ToArray());
         await Assert.That(number).IsEqualTo(42);
@@ -220,11 +241,13 @@ public class AggregatePayloadTests
     private static async Task<RespValue> ParseAggregateAsync(byte[] frame, bool fragmented)
     {
         var pos = 0;
+
         if (!fragmented)
         {
             await Assert.That(RespParser.TryParseValue(frame, ref pos, out var complete)).IsEqualTo(RespParseStatus.Done);
             return complete;
         }
+
         using var parser = new RespParseState(int.MaxValue);
         await Assert.That(parser.TryParse(frame.AsSpan(0, 4), ref pos, out _, out _)).IsEqualTo(RespParseStatus.NeedMoreData);
         await Assert.That(parser.TryParse(frame, ref pos, out var value, out _)).IsEqualTo(RespParseStatus.Done);
@@ -235,6 +258,7 @@ public class AggregatePayloadTests
     public async Task SeededAggregateCorpusMatchesFragmentedParser()
     {
         var random = new Random(962);
+
         for (var iteration = 0; iteration < 128; iteration++)
         {
             using var wire = new MemoryStream();
@@ -245,6 +269,7 @@ public class AggregatePayloadTests
             "+OK\r\n"u8.CopyTo(input.AsSpan(3 + frame.Length));
             var pos = 3;
             await Assert.That(RespParser.TryParseValue(input, ref pos, out var complete)).IsEqualTo(RespParseStatus.Done);
+
             using (complete)
             using (var parser = new RespParseState(int.MaxValue))
             {
@@ -252,6 +277,7 @@ public class AggregatePayloadTests
                 pos = 3;
                 var end = 3;
                 RespValue fragmented = default;
+
                 while (end < 3 + frame.Length)
                 {
                     end = Math.Min(3 + frame.Length, end + random.Next(1, 8));
@@ -259,6 +285,7 @@ public class AggregatePayloadTests
                     await Assert.That(status).IsEqualTo(end == 3 + frame.Length
                         ? RespParseStatus.Done : RespParseStatus.NeedMoreData);
                 }
+
                 using (fragmented)
                 {
                     await Assert.That(fragmented.Equals(complete)).IsTrue();
@@ -275,20 +302,34 @@ public class AggregatePayloadTests
         var marker = "*%~>"[random.Next(4)];
         var count = random.Next(1, 5);
         wire.Write(Encoding.ASCII.GetBytes($"{marker}{count}\r\n"));
+
         for (var index = 0; index < (marker == '%' ? count * 2 : count); index++)
         {
-            if (random.Next(4) == 0) wire.Write("|1\r\n+meta\r\n+ignored\r\n"u8);
+            if (random.Next(4) == 0)
+            {
+                wire.Write("|1\r\n+meta\r\n+ignored\r\n"u8);
+            }
+
             if (depth < 4 && random.Next(4) == 0)
             {
                 WriteAggregate(wire, random, depth + 1);
                 continue;
             }
+
             switch (random.Next(6))
             {
-                case 0: wire.Write("+OK\r\n"u8); break;
-                case 1: wire.Write("+value\r\n"u8); break;
-                case 2: wire.Write("$-1\r\n"u8); break;
-                case 3: wire.Write(Encoding.ASCII.GetBytes($":{random.NextInt64()}\r\n")); break;
+                case 0:
+                    wire.Write("+OK\r\n"u8);
+                    break;
+                case 1:
+                    wire.Write("+value\r\n"u8);
+                    break;
+                case 2:
+                    wire.Write("$-1\r\n"u8);
+                    break;
+                case 3:
+                    wire.Write(Encoding.ASCII.GetBytes($":{random.NextInt64()}\r\n"));
+                    break;
                 default:
                     var payload = new byte[random.Next(0, 80)];
                     random.NextBytes(payload);
@@ -314,18 +355,25 @@ public class AggregatePayloadTests
         ":9\r\n"u8.CopyTo(input.AsSpan(4 + frame.Length));
         var pos = 4;
         await Assert.That(RespParser.TryParseValue(input, ref pos, out var value)).IsEqualTo(RespParseStatus.Done);
+
         using (value)
         {
             await Assert.That(pos).IsEqualTo(4 + frame.Length);
             var payloads = Enumerable.Range(0, 4).Select(index => value.AsArray()[index].AsMemory()).ToArray();
+
             foreach (var payload in payloads)
+            {
                 await Assert.That(MemoryMarshal.TryGetArray(payload, out _)).IsTrue();
+            }
+
             MemoryMarshal.TryGetArray(payloads[0], out var first);
+
             foreach (var payload in payloads.Skip(1))
             {
                 MemoryMarshal.TryGetArray(payload, out var other);
                 await Assert.That(other.Array).IsSameReferenceAs(first.Array);
             }
+
             await Assert.That(first.Array).IsNotSameReferenceAs(input);
             using var owned = value.ToOwned();
             input.AsSpan().Fill(0);
@@ -345,6 +393,7 @@ public class AggregatePayloadTests
         var pos = 0;
         await Assert.That(RespParser.TryParseValue(frame, ref pos, out var value)).IsEqualTo(RespParseStatus.Done);
         using var owned = value.ToOwned();
+
         try
         {
             MemoryMarshal.TryGetArray(value.AsArray()[0].AsArray()[0].AsMemory(), out var one);
@@ -357,6 +406,7 @@ public class AggregatePayloadTests
             await Assert.That(pos).IsEqualTo(frame.Length);
         }
         finally { value.Dispose(); }
+
         frame.AsSpan().Fill(0);
         await Assert.That(owned.AsArray()[0].AsArray()[0].AsString()).IsEqualTo("one");
         await Assert.That(owned.AsArray()[0].AsArray()[1].GetErrorMessage()).IsEqualTo("ERR three");
@@ -369,6 +419,7 @@ public class AggregatePayloadTests
     public async Task EveryFragmentBoundaryMatchesCompleteAggregate(bool resumable)
     {
         var frame = "*4\r\n$3\r\none\r\n%1\r\n$3\r\ntwo\r\n$5\r\nthree\r\n$-1\r\n!8\r\nERR four\r\n"u8.ToArray();
+
         for (var split = 0; split < frame.Length; split++)
         {
             using var parser = new RespParseState(int.MaxValue);
@@ -378,10 +429,16 @@ public class AggregatePayloadTests
                 : RespParser.TryParseValue(frame.AsSpan(0, split), ref pos, out incomplete);
             incomplete.Dispose();
             await Assert.That(status).IsEqualTo(RespParseStatus.NeedMoreData);
-            if (!resumable) await Assert.That(pos).IsEqualTo(0);
+
+            if (!resumable)
+            {
+                await Assert.That(pos).IsEqualTo(0);
+            }
+
             status = resumable
                 ? parser.TryParse(frame, ref pos, out var complete, out _)
                 : RespParser.TryParseValue(frame, ref pos, out complete);
+
             using (complete)
             {
                 await Assert.That(status).IsEqualTo(RespParseStatus.Done);

@@ -18,10 +18,20 @@ internal static class ConnectionFailures
 
     internal static Exception? Combine(Exception? previous, Exception? current)
     {
-        if (previous is null) return current;
-        if (current is null || ReferenceEquals(previous, current)) return previous;
+        if (previous is null)
+        {
+            return current;
+        }
+
+        if (current is null || ReferenceEquals(previous, current))
+        {
+            return previous;
+        }
+
         if (previous is not AggregateException && current is not AggregateException)
+        {
             return new AggregateException(previous, current);
+        }
 
         var causes = new List<Exception>();
         Append(previous, causes);
@@ -32,9 +42,15 @@ internal static class ConnectionFailures
         {
             if (error is AggregateException aggregate)
             {
-                foreach (var cause in aggregate.InnerExceptions) Append(cause, causes);
+                foreach (var cause in aggregate.InnerExceptions)
+                {
+                    Append(cause, causes);
+                }
             }
-            else causes.Add(error);
+            else
+            {
+                causes.Add(error);
+            }
         }
     }
 }

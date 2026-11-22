@@ -26,20 +26,34 @@ public partial class ErrorMetricsTests
 #pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         Exception? failure = null;
+
         try
         {
             // None of these invalid inputs may return a response or reach connection setup.
             switch (route)
             {
-                case "load-source": _ = client.Functions.LoadAsync(" "); break;
-                case "load-library": _ = client.Functions.LoadAsync((RespireFunctionLibrary)null!); break;
-                case "delete": _ = client.Functions.DeleteAsync(" "); break;
-                case "flush": _ = client.Functions.FlushAsync((RespireFunctionFlushMode)99); break;
-                case "restore": _ = client.Functions.RestoreAsync(default, (RespireFunctionRestorePolicy)99); break;
-                default: _ = client.Functions.ExecuteAsync(null!); break;
+                case "load-source":
+                    _ = client.Functions.LoadAsync(" ");
+                    break;
+                case "load-library":
+                    _ = client.Functions.LoadAsync((RespireFunctionLibrary)null!);
+                    break;
+                case "delete":
+                    _ = client.Functions.DeleteAsync(" ");
+                    break;
+                case "flush":
+                    _ = client.Functions.FlushAsync((RespireFunctionFlushMode)99);
+                    break;
+                case "restore":
+                    _ = client.Functions.RestoreAsync(default, (RespireFunctionRestorePolicy)99);
+                    break;
+                default:
+                    _ = client.Functions.ExecuteAsync(null!);
+                    break;
             }
         }
         catch (Exception error) { failure = error; }
+
         await Assert.That(failure is ArgumentException).IsTrue();
         var item = capture.Items.Single();
         await Assert.That(item.Tags["error.type"]).IsEqualTo(failure!.GetType().FullName);
@@ -54,7 +68,7 @@ public partial class ErrorMetricsTests
         [Matrix(false, true)] bool conversionFailure, [Matrix(false, true)] bool lateSelection)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = lateSelection ? RespireMetricGroups.None : RespireMetricGroups.Resiliency });
+        { Groups = lateSelection ? RespireMetricGroups.None : RespireMetricGroups.Resiliency });
         // LOAD checks string consistency; the other mutations reject a non-OK reply.
         var reply = (conversionFailure, route) switch
         {
@@ -75,32 +89,57 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         async Task Execute()
         {
             switch (route)
             {
-                case "load": await client.Functions.LoadAsync("source", cancellationToken: deadline.Token); break;
-                case "delete": await client.Functions.DeleteAsync("sample", deadline.Token); break;
-                case "flush": await client.Functions.FlushAsync(cancellationToken: deadline.Token); break;
-                default: await client.Functions.RestoreAsync("binary"u8.ToArray(), cancellationToken: deadline.Token); break;
+                case "load":
+                    await client.Functions.LoadAsync("source", cancellationToken: deadline.Token);
+                    break;
+                case "delete":
+                    await client.Functions.DeleteAsync("sample", deadline.Token);
+                    break;
+                case "flush":
+                    await client.Functions.FlushAsync(cancellationToken: deadline.Token);
+                    break;
+                default:
+                    await client.Functions.RestoreAsync("binary"u8.ToArray(), cancellationToken: deadline.Token);
+                    break;
             }
         }
+
         using var capture = new Capture(throwOnMeasurement: true);
         var pending = Execute();
+
         while (!second.ReceivedCommands.Any(command => command.StartsWith("FUNCTION ", StringComparison.Ordinal)))
+        {
             await Task.Delay(1, deadline.Token);
-        if (lateSelection) RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+        }
+
+        if (lateSelection)
+        {
+            RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+        }
+
         await Assert.That(pending.IsCompleted).IsFalse();
         await Assert.That(capture.Items).IsEmpty();
         await second.SendRawAsync(reply);
         Exception? failure = null;
-        try { await pending.WaitAsync(deadline.Token); }
+
+        try
+        {
+            await pending.WaitAsync(deadline.Token);
+        }
         catch (Exception error) { failure = error; }
+
         await Assert.That(failure is RespireException).IsTrue();
         var item = capture.Items.Single();
         await Assert.That(item.Tags["error.type"]).IsEqualTo(failure!.GetType().FullName);
@@ -140,21 +179,49 @@ public partial class ErrorMetricsTests
         await using var server = new FakeRespServer(reply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var function = RespireFunction.Create("function");
+
         switch (route)
         {
-            case "execute": using (await InspectFunctionOwner(client.Functions.ExecuteAsync(function))) { } break;
-            case "integer": await InspectFunctionOwner(client.Functions.ExecuteIntegerAsync(function)); break;
-            case "string": await InspectFunctionOwner(client.Functions.ExecuteStringAsync(function)); break;
-            case "generic": await InspectFunctionOwner(client.Functions.ExecuteAsync<int>(function)); break;
-            case "load-source": await InspectFunctionOwner(client.Functions.LoadAsync("source")); break;
-            case "load-library": await InspectFunctionOwner(client.Functions.LoadAsync(RespireFunctionLibrary.Create("#!lua name=sample\nreturn 1"))); break;
-            case "list": await InspectFunctionOwner(client.Functions.ListAsync()); break;
-            case "delete": await InspectFunctionOwner(client.Functions.DeleteAsync("sample")); break;
-            case "flush": await InspectFunctionOwner(client.Functions.FlushAsync()); break;
-            case "dump": await InspectFunctionOwner(client.Functions.DumpAsync()); break;
-            case "restore": await InspectFunctionOwner(client.Functions.RestoreAsync(default)); break;
-            default: await InspectFunctionOwner(client.Functions.StatsAsync()); break;
+            case "execute":
+                using (await InspectFunctionOwner(client.Functions.ExecuteAsync(function)))
+                {
+                }
+                break;
+            case "integer":
+                await InspectFunctionOwner(client.Functions.ExecuteIntegerAsync(function));
+                break;
+            case "string":
+                await InspectFunctionOwner(client.Functions.ExecuteStringAsync(function));
+                break;
+            case "generic":
+                await InspectFunctionOwner(client.Functions.ExecuteAsync<int>(function));
+                break;
+            case "load-source":
+                await InspectFunctionOwner(client.Functions.LoadAsync("source"));
+                break;
+            case "load-library":
+                await InspectFunctionOwner(client.Functions.LoadAsync(RespireFunctionLibrary.Create("#!lua name=sample\nreturn 1")));
+                break;
+            case "list":
+                await InspectFunctionOwner(client.Functions.ListAsync());
+                break;
+            case "delete":
+                await InspectFunctionOwner(client.Functions.DeleteAsync("sample"));
+                break;
+            case "flush":
+                await InspectFunctionOwner(client.Functions.FlushAsync());
+                break;
+            case "dump":
+                await InspectFunctionOwner(client.Functions.DumpAsync());
+                break;
+            case "restore":
+                await InspectFunctionOwner(client.Functions.RestoreAsync(default));
+                break;
+            default:
+                await InspectFunctionOwner(client.Functions.StatsAsync());
+                break;
         }
+
         await Assert.That(capture.Items).IsEmpty();
     }
 
@@ -165,7 +232,12 @@ public partial class ErrorMetricsTests
         await Assert.That(source is DispatchResponseSource<T>).IsTrue();
         // Inspect after physical completion but before consuming the final caller response.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!pending.IsCompleted) await Task.Delay(1, deadline.Token);
+
+        while (!pending.IsCompleted)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         var observation = (ErrorObservation.FinalOwner)typeof(DispatchResponseSource<T>).GetField("_owner", flags)!.GetValue(source)!;
         await Assert.That(observation.IsEmpty).IsTrue();
         return await pending;
@@ -176,7 +248,13 @@ public partial class ErrorMetricsTests
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
         using var capture = new Capture();
-        for (var index = 0; index < 10; index++) { _ = MeasureFunctionOwner(false); _ = MeasureFunctionOwner(true); }
+
+        for (var index = 0; index < 10; index++)
+        {
+            _ = MeasureFunctionOwner(false);
+            _ = MeasureFunctionOwner(true);
+        }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (MeasureFunctionOwner(false), MeasureFunctionOwner(true)));
         await Assert.That(measured.Item1).IsEqualTo(0L);
         await Assert.That(measured.Item2).IsGreaterThanOrEqualTo(37_000L);
@@ -187,6 +265,7 @@ public partial class ErrorMetricsTests
     private static long MeasureFunctionOwner(bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
 #pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
@@ -195,9 +274,14 @@ public partial class ErrorMetricsTests
             var spanOwner = DispatchResponseSource<RespireResult>.Start();
 #pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             spanOwner.Attach(new ValueTask<RespireResult>(default(RespireResult))).GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
-            if (control) GC.KeepAlive(new byte[37]);
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

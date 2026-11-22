@@ -32,11 +32,17 @@ public class DecoratorTrackingWireTests
         using var cancellation = new CancellationTokenSource();
         ((DecoratorTrackingTests.ForwardingClient)proxy).Before = (method, args) =>
         {
-            if (method.Name != nameof(IRespireClient.RegisterKeyTrackingAsync)) return;
+            if (method.Name != nameof(IRespireClient.RegisterKeyTrackingAsync))
+            {
+                return;
+            }
             // A decorator can authorize and transform this operation before forwarding it.
             if (!((RespireKey)args[0]!).Equals((RespireKey)"logical")
                 || (CancellationToken)args[2]! != cancellation.Token)
+            {
                 throw new InvalidOperationException("Registration lost the caller's key or cancellation token.");
+            }
+
             args[0] = (RespireKey)"routed";
             intercepted++;
         };
@@ -44,6 +50,7 @@ public class DecoratorTrackingWireTests
         var command = hashField ? "HGET tenant:routed worker" : "GET tenant:routed";
         var cache = (ClientSideCacheCoordinator)client.ClientSideCache!;
         var mutation = mutating ? cache.BeginUnknownMutation() : default;
+
         try
         {
             // A resident result must not satisfy tracking registration. During a mutation
@@ -61,6 +68,7 @@ public class DecoratorTrackingWireTests
             await Assert.That(intercepted).IsEqualTo(2);
             await Assert.That(hook.Completed).IsEquivalentTo(new[] { hashField ? "HGET" : "GET", hashField ? "HGET" : "GET" });
             await Assert.That(cache.Count).IsEqualTo(mutating ? 0 : 1);
+
             if (mutating)
             {
                 before = server.CommandsSeen;
@@ -70,13 +78,17 @@ public class DecoratorTrackingWireTests
                 await Assert.That(server.ReceivedCommands.Skip(before)).IsEquivalentTo(ordinary, CollectionOrdering.Matching);
                 await Assert.That(cache.Count).IsEqualTo(0);
             }
+
             cache.Clear();
             await CoordinationCommandHooks.TrackAsync(proxy, "logical", field, cancellation.Token);
             await Assert.That(cache.Count).IsEqualTo(0);
         }
         finally
         {
-            if (mutating) cache.CompleteMutation(in mutation, succeeded: false);
+            if (mutating)
+            {
+                cache.CompleteMutation(in mutation, succeeded: false);
+            }
         }
     }
 
@@ -95,14 +107,22 @@ public class DecoratorTrackingWireTests
         {
             if (command.StartsWith(hashField ? "HGET " : "GET ", StringComparison.Ordinal))
             {
-                if (Interlocked.Increment(ref reads) == 1) firstRead.TrySetResult();
-                else secondRead.TrySetResult();
+                if (Interlocked.Increment(ref reads) == 1)
+                {
+                    firstRead.TrySetResult();
+                }
+                else
+                {
+                    secondRead.TrySetResult();
+                }
             }
+
             return true;
         };
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var read = ReadAsync(proxy, hashField, cancellation.Token);
         Task? registration = null;
+
         try
         {
             await firstRead.Task.WaitAsync(cancellation.Token);
@@ -114,9 +134,13 @@ public class DecoratorTrackingWireTests
         {
             await cancellation.CancelAsync();
             await Assert.That(async () => await read).Throws<OperationCanceledException>();
+
             if (registration is not null)
+            {
                 await Assert.That(async () => await registration).Throws<OperationCanceledException>();
+            }
         }
+
         await Assert.That(reads).IsEqualTo(2);
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
     }
@@ -133,7 +157,9 @@ public class DecoratorTrackingWireTests
         ((DecoratorTrackingTests.ForwardingClient)proxy).Before = (method, _) =>
         {
             if (rejectInDecorator && method.Name == nameof(IRespireClient.RegisterKeyTrackingAsync))
+            {
                 throw new UnauthorizedAccessException("Decorator policy.");
+            }
         };
         var before = server.CommandsSeen;
         await Assert.That(async () => await CoordinationCommandHooks.TrackAsync(proxy, "routed", null, default))
@@ -152,13 +178,20 @@ public class DecoratorTrackingWireTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
             ClientSideCache = kind == "disabled" ? null : new() { KeyPrefixes = ["tenant:"] },
         });
         var proxy = Decorate(kind == "bypass" ? client.WithoutClientCache() : client);
         var before = server.CommandsSeen;
         using var cancellation = new CancellationTokenSource();
-        if (kind == "canceled") cancellation.Cancel();
+
+        if (kind == "canceled")
+        {
+            cancellation.Cancel();
+        }
+
         var failure = await Assert.That(async () =>
             await proxy.RegisterKeyTrackingAsync(kind == "prefix" ? "outside:key" : "tenant:key", cancellationToken: cancellation.Token))
             .Throws<Exception>();
@@ -170,8 +203,14 @@ public class DecoratorTrackingWireTests
 
     private static async Task ReadAsync(IRespireClient client, bool hashField, CancellationToken token = default)
     {
-        if (hashField) _ = await client.Hashes.GetBytesAsync("routed", "worker", token);
-        else _ = await client.Strings.GetStringAsync("routed", token);
+        if (hashField)
+        {
+            _ = await client.Hashes.GetBytesAsync("routed", "worker", token);
+        }
+        else
+        {
+            _ = await client.Strings.GetStringAsync("routed", token);
+        }
     }
 
     private static IRespireClient Decorate(IRespireClient inner)
@@ -196,7 +235,9 @@ public class DecoratorTrackingWireTests
         RespireClientTrackingMode mode = RespireClientTrackingMode.OptIn)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
             ClientSideCache = new() { TrackingMode = mode, CoalesceConcurrentMisses = true },
             CommandHook = hook,
         });
@@ -204,9 +245,15 @@ public class DecoratorTrackingWireTests
     private sealed class RecordingHook : RespireCommandHook
     {
         internal bool Reject;
-        internal List<string> Completed { get; } = [];
+
+        internal List<string> Completed
+        {
+            get;
+        } = [];
+
         public override object? OnExecuting(RespireCommandContext context)
             => Reject ? throw new UnauthorizedAccessException("Hook policy.") : null;
+
         public override void OnCompleted(RespireCommandContext context, object? state,
             RespireCommandOutcome outcome, Exception? error) => Completed.Add(context.Command);
     }

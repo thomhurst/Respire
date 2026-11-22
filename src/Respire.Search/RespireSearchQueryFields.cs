@@ -13,14 +13,20 @@ public class RespireSearchQueryField<TFields>
     }
 
     /// <summary>The indexed field metadata.</summary>
-    public RespireSearchField Definition { get; }
+    public RespireSearchField Definition
+    {
+        get;
+    }
 
     /// <summary>The query alias, independent of the hash field or JSON path.</summary>
     public string Name => Definition.Alias ?? Definition.Identifier;
 
     internal void RequireIndexed()
     {
-        if (Definition.NoIndex) throw new InvalidOperationException($"Field '{Name}' is not indexed.");
+        if (Definition.NoIndex)
+        {
+            throw new InvalidOperationException($"Field '{Name}' is not indexed.");
+        }
     }
 }
 
@@ -54,7 +60,11 @@ public sealed class RespireSearchNumericField<TFields, TValue>(RespireSearchFiel
     /// <summary>Matches an inclusive range.</summary>
     public RespireSearchExpression Between(TValue minimum, TValue maximum)
     {
-        if (minimum.CompareTo(maximum) > 0) throw new ArgumentOutOfRangeException(nameof(minimum));
+        if (minimum.CompareTo(maximum) > 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(minimum));
+        }
+
         return Range(Format(minimum), Format(maximum));
     }
 

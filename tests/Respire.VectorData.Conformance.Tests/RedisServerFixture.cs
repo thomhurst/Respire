@@ -16,11 +16,15 @@ public sealed class RedisServerFixture : IAsyncLifetime
     private const string Image = "mirror.gcr.io/library/redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0";
     private IContainer? _container;
 
-    public string ConnectionString { get; private set; } = null!;
+    public string ConnectionString
+    {
+        get; private set;
+    } = null!;
 
     public async ValueTask InitializeAsync()
     {
         var externalConnection = Environment.GetEnvironmentVariable("RESPIRE_VECTOR_CONFORMANCE_CONNECTION");
+
         if (!string.IsNullOrWhiteSpace(externalConnection))
         {
             ConnectionString = externalConnection;
@@ -32,6 +36,7 @@ public sealed class RedisServerFixture : IAsyncLifetime
             .WithPortBinding(6379, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
             .Build(), [6379]).ConfigureAwait(false);
+
         try
         {
             ConnectionString = $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}";
@@ -52,9 +57,19 @@ public sealed class RedisServerFixture : IAsyncLifetime
             string[] commands = ["JSON.SET", "JSON.GET", "FT.CREATE", "FT.SEARCH", "FT.HYBRID", "FT.DROPINDEX", "FT._LIST", "HGETALL", "EVAL", "SCAN"];
             using var info = await client.ExecuteAsync(RespireCommands.Server.COMMAND_INFO,
                 commands.Select(command => (RespireValue)command).ToArray()).ConfigureAwait(false);
-            if (info.Count != commands.Length) throw new InvalidOperationException("COMMAND INFO returned incomplete capability metadata.");
+
+            if (info.Count != commands.Length)
+            {
+                throw new InvalidOperationException("COMMAND INFO returned incomplete capability metadata.");
+            }
+
             for (var i = 0; i < commands.Length; i++)
-                if (info[i].IsNull) throw new NotSupportedException($"Official VectorData conformance requires {commands[i]} on {protocol}.");
+            {
+                if (info[i].IsNull)
+                {
+                    throw new NotSupportedException($"Official VectorData conformance requires {commands[i]} on {protocol}.");
+                }
+            }
         }
     }
 
@@ -65,6 +80,7 @@ public sealed class RedisServerFixture : IAsyncLifetime
             _container = null;
             await container.DisposeAsync().ConfigureAwait(false);
         }
+
         GC.SuppressFinalize(this);
     }
 }

@@ -27,9 +27,13 @@ public class StringLcsIndexTests
         await using var root = await FakeRespServer.ConnectClientAsync(server.Port);
         var client = root.WithKeyPrefix("tenant:");
         var results = new List<RespireLcsIndexResult>();
+
         if (mode == "immediate")
         {
-            foreach (var option in options) results.Add(await client.Strings.LcsIndexAsync("first", "second", option));
+            foreach (var option in options)
+            {
+                results.Add(await client.Strings.LcsIndexAsync("first", "second", option));
+            }
         }
         else
         {
@@ -40,10 +44,19 @@ public class StringLcsIndexTests
             var pending = options.Select(option => queue.Strings.LcsIndex(first, second, option)).ToArray();
             Array.Fill(first, (byte)'x');
             Array.Fill(second, (byte)'x');
-            if (mode == "batch") await batch.ExecuteAsync();
-            else await transaction.CommitAsync();
+
+            if (mode == "batch")
+            {
+                await batch.ExecuteAsync();
+            }
+            else
+            {
+                await transaction.CommitAsync();
+            }
+
             results.AddRange(pending.Select(result => result.Result));
         }
+
         for (var i = 0; i < results.Count; i++)
         {
             await Assert.That(results[i].Length).IsEqualTo(6);
@@ -53,6 +66,7 @@ public class StringLcsIndexTests
             await Assert.That(results[i].Matches[1]).IsEqualTo(new RespireLcsMatch(new(2, 3), new(0, 1),
                 options[i]?.IncludeMatchLength == true ? 2 : null));
         }
+
         await Assert.That(server.ReceivedCommands.Where(command => command.StartsWith("LCS")).SequenceEqual([
             "LCS tenant:first tenant:second IDX",
             "LCS tenant:first tenant:second IDX MINMATCHLEN 4",
@@ -109,8 +123,11 @@ public class StringLcsIndexTests
             RespValue.Array(matches, RespValue.Array(RespValue.Array(
                 RespValue.Array(RespValue.Integer(2), RespValue.Integer(1)), range)), len, RespValue.Integer(2)),
             RespValue.Array(matches, RespValue.Array(RespValue.Array(range, range, RespValue.Integer(-1))), len, RespValue.Integer(2))];
+
         foreach (var value in invalid)
+        {
             await Assert.That(() => StringCommands.ParseLcsIndex(value)).Throws<RespireProtocolException>();
+        }
     }
 
     [Test]
@@ -123,9 +140,12 @@ public class StringLcsIndexTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
+
         if (mode == "immediate")
+        {
             await Assert.That(async () => await client.Strings.LcsIndexAsync("first", "second",
                 cancellationToken: cancellation.Token)).Throws<OperationCanceledException>();
+        }
         else if (mode == "batch")
         {
             using var batch = client.CreateBatch();
@@ -138,6 +158,7 @@ public class StringLcsIndexTests
             _ = transaction.Strings.LcsIndex("first", "second");
             await Assert.That(async () => await transaction.CommitAsync(cancellation.Token)).Throws<OperationCanceledException>();
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -149,7 +170,11 @@ public class StringLcsIndexTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("LCS")) return false;
+                if (!command.StartsWith("LCS"))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -170,7 +195,9 @@ public class StringLcsIndexTests
 #pragma warning disable RESP010
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -203,12 +230,18 @@ public class StringLcsIndexTests
 #pragma warning disable RESP010
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:{same}:");
-        if (mode == "immediate") await client.Strings.LcsIndexAsync("first", "second");
+
+        if (mode == "immediate")
+        {
+            await client.Strings.LcsIndexAsync("first", "second");
+        }
         else if (mode == "batch")
         {
             using var batch = client.CreateBatch();
@@ -221,6 +254,7 @@ public class StringLcsIndexTests
             _ = transaction.Strings.LcsIndex("first", "second");
             await transaction.CommitAsync();
         }
+
         await Assert.That(seed.ReceivedCommands.Single()).IsEqualTo("CLUSTER SLOTS");
         await Assert.That(owner.ReceivedCommands.Single(command => command.StartsWith("LCS")))
             .IsEqualTo("LCS tenant:{same}:first tenant:{same}:second IDX");

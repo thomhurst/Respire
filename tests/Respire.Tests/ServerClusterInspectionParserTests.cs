@@ -143,6 +143,7 @@ public class ServerClusterInspectionParserTests
             _ => info.ClusterSize,
         };
         await Assert.That(actual).IsEqualTo(long.MaxValue);
+
         foreach (var value in new[] { "-1", "+1", "9223372036854775808", "invalid" })
         {
             using var invalid = Text($"cluster_state:ok\r\n{field}:{value}\r\n");

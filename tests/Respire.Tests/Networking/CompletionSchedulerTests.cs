@@ -35,12 +35,25 @@ public class CompletionSchedulerTests
         var pending = source.Task.AsTask();
         var scheduler = new CompletionScheduler();
         scheduler.Add(source, RespValue.Error("ERR queue rejected"u8.ToArray()));
-        if (cancelBeforeFinal) await Assert.That(source.TrySetCanceled(new CancellationToken(true))).IsTrue();
-        scheduler.Add(source, RespValue.Integer(42));
-        if (!cancelBeforeFinal) await Assert.That(source.TrySetCanceled(new CancellationToken(true))).IsFalse();
-        scheduler.Flush();
+
         if (cancelBeforeFinal)
+        {
+            await Assert.That(source.TrySetCanceled(new CancellationToken(true))).IsTrue();
+        }
+
+        scheduler.Add(source, RespValue.Integer(42));
+
+        if (!cancelBeforeFinal)
+        {
+            await Assert.That(source.TrySetCanceled(new CancellationToken(true))).IsFalse();
+        }
+
+        scheduler.Flush();
+
+        if (cancelBeforeFinal)
+        {
             await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        }
         else
         {
             using var reply = await pending.WaitAsync(TimeSpan.FromSeconds(5));
@@ -117,6 +130,7 @@ public class CompletionSchedulerTests
         var resumed = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = Task.Run(async () => resumed.TrySetResult(
             await new CompletionScheduler.RunWhileAwaiting<int>(new ValueTask<int>(receive.Task), scheduler)));
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));

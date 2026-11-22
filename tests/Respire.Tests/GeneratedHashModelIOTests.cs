@@ -52,8 +52,11 @@ public class GeneratedHashModelIOTests
         await StoredHashModelHashMapper.SetAsync(client, key, new StoredHashModel("x", "", 0, null, null));
         await StoredHashModelHashMapper.GetAsync(client, key);
         await StoredHashModelHashMapper.GetPartialAsync(client, key, ["Count"]);
+
         foreach (var arguments in server.ReceivedArguments)
+        {
             await Assert.That(arguments[1]).IsEquivalentTo(new byte[] { 0xfe, 0, 0xff, 0, 0x80 });
+        }
     }
 
     [Test]
@@ -64,15 +67,22 @@ public class GeneratedHashModelIOTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command.StartsWith("HSET", StringComparison.Ordinal)) Array.Fill(bytes, (byte)0);
+                if (command.StartsWith("HSET", StringComparison.Ordinal))
+                {
+                    Array.Fill(bytes, (byte)0);
+                }
+
                 return null;
             },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await StoredHashModelHashMapper.SetAsync(client, bytes, new StoredHashModel("x", "", 0, null, null));
         await Assert.That(server.ReceivedArguments.Count).IsEqualTo(2);
+
         foreach (var arguments in server.ReceivedArguments)
+        {
             await Assert.That(arguments[1]).IsEquivalentTo(new byte[] { 0xff, 0, 0x80 });
+        }
     }
 
     [Test]
@@ -129,9 +139,13 @@ public class GeneratedHashModelIOTests
     {
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("localhost:1");
+
 #pragma warning restore RESP010
         foreach (string[] fields in new[] { Array.Empty<string>(), new[] { "unknown" }, new[] { "id" }, new[] { "Id", "Id" }, new[] { (string)null! } })
+        {
             await Assert.That(async () => await StoredHashModelHashMapper.GetPartialAsync(client, "key", fields)).Throws<ArgumentException>();
+        }
+
         await Assert.That(async () => await StoredHashModelHashMapper.SetAsync(client, new StoredHashModel("id", null!, 0, null, null))).Throws<ArgumentException>();
         await Assert.That(async () => await StoredHashModelHashMapper.GetPartialAsync(client, "key", null!)).Throws<ArgumentNullException>();
     }
@@ -155,7 +169,16 @@ public class GeneratedHashModelIOTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer("*1\r\n$-1\r\n"u8.ToArray())
         {
-            SuppressReply = command => { if (!command.StartsWith("HMGET", StringComparison.Ordinal)) return false; received.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("HMGET", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();

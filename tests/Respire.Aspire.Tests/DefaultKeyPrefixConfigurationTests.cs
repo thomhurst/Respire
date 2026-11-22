@@ -1,8 +1,8 @@
 using System.Text;
-using Respire.Aspire;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Respire.Aspire;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -31,10 +31,17 @@ public class DefaultKeyPrefixConfigurationTests
     {
         var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings { DisableDefaults = true });
         var values = new Dictionary<string, string?> { ["ConnectionStrings:cache"] = "localhost,keyPrefix=parsed%3A" };
+
         if (mode != "absent")
+        {
             values["Aspire:Respire:Options:KeyPrefix"] = mode == "empty-global" ? "" : "global:%";
+        }
+
         if (mode is "named" or "empty-named" or "callback" or "binary-callback")
+        {
             values["Aspire:Respire:cache:Options:KeyPrefix"] = mode == "empty-named" ? "" : "named:";
+        }
+
         builder.Configuration.AddInMemoryCollection(values);
         var expectedConfigured = mode switch
         {
@@ -45,6 +52,7 @@ public class DefaultKeyPrefixConfigurationTests
         };
         byte[] binary = [255, 0];
         RespireOptions? observed = null;
+
         RespireOptions Configure(IServiceProvider _, RespireOptions options)
         {
             observed = options;
@@ -55,8 +63,16 @@ public class DefaultKeyPrefixConfigurationTests
                 _ => options,
             };
         }
-        if (keyed) builder.AddKeyedRespireClient("cache", configureOptions: Configure);
-        else builder.AddRespireClient("cache", configureOptions: Configure);
+
+        if (keyed)
+        {
+            builder.AddKeyedRespireClient("cache", configureOptions: Configure);
+        }
+        else
+        {
+            builder.AddRespireClient("cache", configureOptions: Configure);
+        }
+
         using var host = builder.Build();
         var client = keyed ? host.Services.GetRequiredKeyedService<IRespireClient>("cache")
             : host.Services.GetRequiredService<IRespireClient>();

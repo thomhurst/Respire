@@ -8,33 +8,88 @@ namespace Respire;
 public sealed record RespireClientIncludeFilters
 {
     /// <summary>Include this connection class.</summary>
-    public RespireClientType? Type { get; init; }
+    public RespireClientType? Type
+    {
+        get; init;
+    }
+
     /// <summary>Include any of these positive IDs; an empty list omits this selector.</summary>
-    public IReadOnlyList<long> Ids { get; init; } = [];
+    public IReadOnlyList<long> Ids
+    {
+        get; init;
+    } = [];
+
     /// <summary>Match the ACL username.</summary>
-    public string? User { get; init; }
+    public string? User
+    {
+        get; init;
+    }
+
     /// <summary>Match the remote address and port.</summary>
-    public string? Address { get; init; }
+    public string? Address
+    {
+        get; init;
+    }
+
     /// <summary>Match the local address and port.</summary>
-    public string? LocalAddress { get; init; }
+    public string? LocalAddress
+    {
+        get; init;
+    }
+
     /// <summary>Match connections at least this old, in positive whole seconds (MAXAGE).</summary>
-    public long? MaximumAgeSeconds { get; init; }
+    public long? MaximumAgeSeconds
+    {
+        get; init;
+    }
+
     /// <summary>Match the connection name. Requires Valkey 9+.</summary>
-    public string? Name { get; init; }
+    public string? Name
+    {
+        get; init;
+    }
+
     /// <summary>Match connections idle for this many positive whole seconds. Requires Valkey 9+.</summary>
-    public long? IdleSeconds { get; init; }
+    public long? IdleSeconds
+    {
+        get; init;
+    }
+
     /// <summary>Match a nonempty set of flags. Requires Valkey 9+.</summary>
-    public string? Flags { get; init; }
+    public string? Flags
+    {
+        get; init;
+    }
+
     /// <summary>Match the library name. Requires Valkey 9+.</summary>
-    public string? LibraryName { get; init; }
+    public string? LibraryName
+    {
+        get; init;
+    }
+
     /// <summary>Match the library version. Requires Valkey 9+.</summary>
-    public string? LibraryVersion { get; init; }
+    public string? LibraryVersion
+    {
+        get; init;
+    }
+
     /// <summary>Match a nonnegative database number. Requires Valkey 9+.</summary>
-    public int? Database { get; init; }
+    public int? Database
+    {
+        get; init;
+    }
+
     /// <summary>Match a nonempty set of capabilities. Requires Valkey 9+.</summary>
-    public string? Capabilities { get; init; }
+    public string? Capabilities
+    {
+        get; init;
+    }
+
     /// <summary>Match the remote IP address. Requires Valkey 9+.</summary>
-    public string? Ip { get; init; }
+    public string? Ip
+    {
+        get; init;
+    }
 
     internal static void AppendArguments(RespireClientFilterOptions options, ref ClientFilterArguments writer)
     {
@@ -45,7 +100,12 @@ public sealed record RespireClientIncludeFilters
         writer.Add("USER", selectors.User);
         writer.Add("ADDR", selectors.Address);
         writer.Add("LADDR", selectors.LocalAddress);
-        if (options.SkipMe is { } skip) writer.Add("SKIPME", skip ? "yes" : "no", isSelector: false);
+
+        if (options.SkipMe is { } skip)
+        {
+            writer.Add("SKIPME", skip ? "yes" : "no", isSelector: false);
+        }
+
         writer.AddNumber("MAXAGE", selectors.MaximumAgeSeconds, nameof(selectors.MaximumAgeSeconds), positive: true);
         writer.Add("NAME", selectors.Name);
         writer.AddNumber("IDLE", selectors.IdleSeconds, nameof(selectors.IdleSeconds), positive: true);

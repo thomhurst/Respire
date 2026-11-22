@@ -249,20 +249,19 @@ public abstract class DataTypeTests<TKey, TRecord>(DataTypeTests<TKey, TRecord>.
         }
     }
 
-    protected virtual object? GenerateEmptyProperty(VectorStoreProperty property)
-        => property.Type switch
-        {
-            null => throw new InvalidOperationException($"Property '{property.Name}' has no type defined."),
+    protected virtual object? GenerateEmptyProperty(VectorStoreProperty property) => property.Type switch
+    {
+        null => throw new InvalidOperationException($"Property '{property.Name}' has no type defined."),
 
-            // For value types, we create an instance with the default value.
-            // This is necessary for relational providers where non-nullable columns are created.
-            var t when t.IsValueType => Activator.CreateInstance(t),
+        // For value types, we create an instance with the default value.
+        // This is necessary for relational providers where non-nullable columns are created.
+        var t when t.IsValueType => Activator.CreateInstance(t),
 
-            // In some cases (Azure AI Search), array fields must be non-null
-            var t when t.IsArray => Array.CreateInstance(t.GetElementType()!, 0),
+        // In some cases (Azure AI Search), array fields must be non-null
+        var t when t.IsArray => Array.CreateInstance(t.GetElementType()!, 0),
 
-            _ => null
-        };
+        _ => null
+    };
 
     private async Task TestFiltering<TTestType>(
         VectorStoreCollection<TKey, TRecord> collection,
@@ -309,15 +308,33 @@ public abstract class DataTypeTests<TKey, TRecord>(DataTypeTests<TKey, TRecord>.
         protected override string CollectionNameBase => nameof(DataTypeTests<int>);
 
         public virtual bool IsNullSupported => true;
+
         public virtual bool IsNullFilteringSupported => true;
 
-        public virtual Type[] UnsupportedDefaultTypes { get; } = [];
+        public virtual Type[] UnsupportedDefaultTypes
+        {
+            get;
+        } = [];
 
-        public virtual TKey MainRecordKey { get; protected set; } = default!;
-        public virtual TKey OtherRecordKey { get; protected set; } = default!;
-        public virtual TKey NullRecordKey { get; protected set; } = default!;
+        public virtual TKey MainRecordKey
+        {
+            get; protected set;
+        } = default!;
 
-        public virtual float[] Vector { get; } = [1, 2, 3];
+        public virtual TKey OtherRecordKey
+        {
+            get; protected set;
+        } = default!;
+
+        public virtual TKey NullRecordKey
+        {
+            get; protected set;
+        } = default!;
+
+        public virtual float[] Vector
+        {
+            get;
+        } = [1, 2, 3];
 
         private readonly IList<VectorStoreDataProperty> _defaultDataProperties;
 
@@ -435,6 +452,7 @@ public abstract class DataTypeTests<TKey, TRecord>(DataTypeTests<TKey, TRecord>.
             {
                 properties.Add(new VectorStoreDataProperty(nameof(DefaultRecord.TimeOnly), typeof(TimeOnly)) { IsIndexed = true });
             }
+
 #endif
             if (!UnsupportedDefaultTypes.Contains(typeof(string[])))
             {
@@ -460,34 +478,94 @@ public abstract class DataTypeTests<TKey>
 {
     public class RecordBase : TestRecord<TKey>
     {
-        public float[] Vector { get; set; } = default!;
+        public float[] Vector
+        {
+            get; set;
+        } = default!;
     }
 
     public class DefaultRecord : RecordBase
     {
-        public byte Byte { get; set; }
-        public short Short { get; set; }
-        public int Int { get; set; }
-        public long Long { get; set; }
+        public byte Byte
+        {
+            get; set;
+        }
 
-        public float Float { get; set; }
-        public double Double { get; set; }
-        public decimal Decimal { get; set; }
+        public short Short
+        {
+            get; set;
+        }
 
-        public string? String { get; set; }
-        public bool Bool { get; set; }
-        public Guid Guid { get; set; }
+        public int Int
+        {
+            get; set;
+        }
 
-        public DateTime DateTime { get; set; }
-        public DateTimeOffset DateTimeOffset { get; set; }
+        public long Long
+        {
+            get; set;
+        }
+
+        public float Float
+        {
+            get; set;
+        }
+
+        public double Double
+        {
+            get; set;
+        }
+
+        public decimal Decimal
+        {
+            get; set;
+        }
+
+        public string? String
+        {
+            get; set;
+        }
+
+        public bool Bool
+        {
+            get; set;
+        }
+
+        public Guid Guid
+        {
+            get; set;
+        }
+
+        public DateTime DateTime
+        {
+            get; set;
+        }
+
+        public DateTimeOffset DateTimeOffset
+        {
+            get; set;
+        }
 
 #if NET
-        public DateOnly DateOnly { get; set; }
-        public TimeOnly TimeOnly { get; set; }
+        public DateOnly DateOnly
+        {
+            get; set;
+        }
+
+        public TimeOnly TimeOnly
+        {
+            get; set;
+        }
 #endif
 
-        public string[] StringArray { get; set; } = null!;
+        public string[] StringArray
+        {
+            get; set;
+        } = null!;
 
-        public int? NullableInt { get; set; }
+        public int? NullableInt
+        {
+            get; set;
+        }
     }
 }

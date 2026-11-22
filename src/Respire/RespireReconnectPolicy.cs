@@ -11,15 +11,31 @@ namespace Respire;
 public sealed record RespireReconnectPolicy
 {
     /// <summary>Delay before the first connection replacement or discovery fallback attempt. Defaults to 250 milliseconds.</summary>
-    public TimeSpan InitialDelay { get; init; } = TimeSpan.FromMilliseconds(250);
+    public TimeSpan InitialDelay
+    {
+        get; init;
+    } = TimeSpan.FromMilliseconds(250);
+
     /// <summary>Exponential delay multiplier. Must be finite and at least one.</summary>
-    public double BackoffMultiplier { get; init; } = 2;
+    public double BackoffMultiplier
+    {
+        get; init;
+    } = 2;
+
     /// <summary>Maximum actual delay, including jitter. Defaults to five seconds; at most one day.</summary>
     /// <remarks>Sentinel fallback delays are bounded by caller cancellation, not the subsequent
     /// per-candidate ConnectTimeout or CommandTimeout. Supply a caller deadline to bound total resolution time.</remarks>
-    public TimeSpan MaxDelay { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan MaxDelay
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(5);
+
     /// <summary>Symmetric random variation as a fraction of the exponential delay, from zero to one.</summary>
-    public double JitterRatio { get; init; } = 0.2;
+    public double JitterRatio
+    {
+        get; init;
+    } = 0.2;
+
     /// <summary>Maximum replacement attempts per command slot, dedicated rent, pub/sub episode, Cluster discovery round, or Sentinel resolution; null applies no policy limit.</summary>
     /// <remarks>Defaults to null. A slot that exhausts this limit remains unavailable until the client
     /// is recreated; there is no automatic cooldown or reset. Successful replacement resets the count
@@ -35,7 +51,10 @@ public sealed record RespireReconnectPolicy
     /// Sentinel resolution counts fallback candidates after the first; a new explicit resolution starts fresh.
     /// With null, all available Sentinel candidates may incur backoff and their own timeouts. Supply caller
     /// cancellation with a deadline to bound total resolution time; this setting does not provide one.</remarks>
-    public int? MaxAttempts { get; init; }
+    public int? MaxAttempts
+    {
+        get; init;
+    }
 
     internal bool IsExhausted(int attempts) => MaxAttempts is { } maximum && attempts >= maximum;
 
@@ -44,7 +63,9 @@ public sealed record RespireReconnectPolicy
         if (InitialDelay < TimeSpan.Zero || MaxDelay < InitialDelay || MaxDelay > TimeSpan.FromDays(1)
             || !double.IsFinite(BackoffMultiplier) || BackoffMultiplier < 1
             || !double.IsFinite(JitterRatio) || JitterRatio is < 0 or > 1 || MaxAttempts is <= 0)
+        {
             throw new RespireConfigurationException("ReconnectPolicy requires 0 <= InitialDelay <= MaxDelay <= one day, a finite BackoffMultiplier >= 1, JitterRatio in [0, 1], and a positive or null MaxAttempts.");
+        }
     }
 
     internal TimeSpan GetDelay(int attempt)

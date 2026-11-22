@@ -17,9 +17,12 @@ public class SetManyIfNotExistsIntegrationTests(VersionedServerFixture servers)
         var server = await servers.LeaseAsync(image);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [server.Endpoint], Database = server.Database, Connections = 1,
+            Endpoints = [server.Endpoint],
+            Database = server.Database,
+            Connections = 1,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
         });
+
         foreach (var mode in new[] { "immediate", "batch", "transaction" })
         {
             var view = client.WithKeyPrefix($"{mode}:");
@@ -50,7 +53,11 @@ public class SetManyIfNotExistsIntegrationTests(VersionedServerFixture servers)
     private static async Task<bool> Run(IRespireClient client, string mode,
         params (RespireKey Key, RespireValue Value)[] pairs)
     {
-        if (mode == "immediate") return await client.Strings.SetManyIfNotExistsAsync(pairs, CancellationToken.None);
+        if (mode == "immediate")
+        {
+            return await client.Strings.SetManyIfNotExistsAsync(pairs, CancellationToken.None);
+        }
+
         if (mode == "batch")
         {
             using var batch = client.CreateBatch();
@@ -58,6 +65,7 @@ public class SetManyIfNotExistsIntegrationTests(VersionedServerFixture servers)
             await batch.ExecuteAsync();
             return pending.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var result = transaction.Strings.SetManyIfNotExists(pairs);
         await transaction.CommitAsync();

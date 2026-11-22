@@ -33,6 +33,7 @@ public class DistributedLockerTests(RedisTestContainer fixture)
             .Throws<OperationCanceledException>();
         await Assert.That(during!.CancellationToken).IsEqualTo(contender.Token);
         await lifetime.CancelAsync();
+
         if (releaseOnCancellation)
         {
             await owner.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -47,6 +48,7 @@ public class DistributedLockerTests(RedisTestContainer fixture)
             await Assert.That(await client.GetBytesAsync(owner.LeaseKey)).IsNotNull();
             await Assert.That(await AcquireAsync(locker, name, TimeSpan.Zero)).IsNull();
         }
+
         await Task.WhenAll(locker.DisposeAsync().AsTask(), locker.DisposeAsync().AsTask(),
             ReleaseAsync(locker, name, owner, lifetime.Token).AsTask()).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(owner.OwnershipCancellationToken.IsCancellationRequested).IsTrue();
@@ -59,8 +61,11 @@ public class DistributedLockerTests(RedisTestContainer fixture)
     internal static async Task WaitPastLeaseExpiryAsync(TimeSpan leaseDuration)
     {
         var started = Stopwatch.GetTimestamp();
+
         while (Stopwatch.GetElapsedTime(started) <= leaseDuration)
+        {
             await Task.Delay(10);
+        }
     }
 
     [Test]
@@ -95,6 +100,7 @@ public class DistributedLockerTests(RedisTestContainer fixture)
         await using var client = await ConnectAsync(protocol);
         await using var first = new RespireFusionCacheDistributedLocker(client);
         await using var second = new RespireFusionCacheDistributedLocker(client);
+
         foreach (var timeout in new[] { Timeout.InfiniteTimeSpan, TimeSpan.MaxValue })
         {
             var name = Guid.NewGuid().ToString();
@@ -146,13 +152,16 @@ public class DistributedLockerTests(RedisTestContainer fixture)
         var owner = (RespireFusionCacheLock)(await AcquireAsync(first, name, TimeSpan.Zero, caller.Token))!;
         var factoryStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var factoryCanComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         async Task<int> BackgroundFactory()
         {
             factoryStarted.TrySetResult();
             await factoryCanComplete.Task;
             return 42;
         }
+
         var background = BackgroundFactory();
+
         try
         {
             await factoryStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -167,6 +176,7 @@ public class DistributedLockerTests(RedisTestContainer fixture)
             await ReleaseAsync(first, name, owner, caller.Token);
         }
         finally { factoryCanComplete.TrySetResult(); }
+
         await Assert.That(await background.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(42);
     }
 
@@ -228,7 +238,12 @@ public class DistributedLockerTests(RedisTestContainer fixture)
         await Assert.That(owner.OwnershipLost).IsFalse();
         await client.DeleteAsync(owner.LeaseKey);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!owner.OwnershipCancellationToken.IsCancellationRequested) await Task.Delay(10, timeout.Token);
+
+        while (!owner.OwnershipCancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         await owner.DisposeAsync();
         await Assert.That(owner.OwnershipLost).IsTrue();
         var next = (RespireFusionCacheLock)(await AcquireAsync(locker, name, TimeSpan.Zero))!;
@@ -290,7 +305,9 @@ public class DistributedLockerTests(RedisTestContainer fixture)
 
     private Task<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString) with
     {
-        Protocol = (RespireProtocol)protocol, Connections = 1, MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+        Protocol = (RespireProtocol)protocol,
+        Connections = 1,
+        MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
     }).AsTask();
 
     internal static ValueTask<object?> AcquireAsync(RespireFusionCacheDistributedLocker locker, string cacheName, TimeSpan timeout,

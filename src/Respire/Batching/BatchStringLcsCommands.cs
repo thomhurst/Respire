@@ -18,6 +18,7 @@ internal sealed partial class BatchStringCommands
     {
         // Construction observes its own failures; only enqueue failures belong to this catch.
         var command = StringCommands.LcsIndexCommand(sink.Client, firstKey, secondKey, options);
+
         try
         {
             return sink.Add<CmdN, RespireLcsIndexResult>("LCS", command, firstKey, secondKey,

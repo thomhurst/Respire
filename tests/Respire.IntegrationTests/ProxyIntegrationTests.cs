@@ -59,8 +59,10 @@ public class ProxyIntegrationTests
         var password = authenticate ? "proxy-password" : null;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(redisHost, tls ? 6380 : 6379)], Connections = 1,
-            Protocol = RespireProtocol.Resp3, UseTls = tls,
+            Endpoints = [new(redisHost, tls ? 6380 : 6379)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            UseTls = tls,
             TlsOptions = new SslClientAuthenticationOptions
             {
                 RemoteCertificateValidationCallback = (_, received, _, errors) =>

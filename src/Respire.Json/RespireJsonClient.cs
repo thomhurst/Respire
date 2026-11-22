@@ -115,8 +115,12 @@ public sealed class RespireJsonClient
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         using var result = await DispatchAsync(GetCommand, [key, path.Value], cancellationToken).ConfigureAwait(false);
         var values = DeserializeValues(result, path, jsonTypeInfo);
+
         if (values.Length > 1)
+        {
             throw new InvalidOperationException("The JSONPath matched multiple values; use GetManyAsync.");
+        }
+
         return values.Length == 0 ? default : values[0];
     }
 
@@ -319,7 +323,11 @@ public sealed class RespireJsonClient
         CancellationToken cancellationToken = default,
         RespireJsonFloatingPointType? floatingPointType = null)
     {
-        if (utf8Json.IsEmpty) throw new ArgumentException("JSON must not be empty.", nameof(utf8Json));
+        if (utf8Json.IsEmpty)
+        {
+            throw new ArgumentException("JSON must not be empty.", nameof(utf8Json));
+        }
+
         var token = ConditionToken(condition);
         var floatingPointToken = FloatingPointToken(floatingPointType);
         return await SetCoreAsync(key, utf8Json, path, token, cancellationToken, floatingPointToken).ConfigureAwait(false);
@@ -356,18 +364,30 @@ public sealed class RespireJsonClient
     {
         ArgumentNullException.ThrowIfNull(keys);
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
-        if (keys.Count == 0) throw new ArgumentException("At least one key is required.", nameof(keys));
+
+        if (keys.Count == 0)
+        {
+            throw new ArgumentException("At least one key is required.", nameof(keys));
+        }
+
         var count = keys.Count;
         var arguments = new RespireValue[checked(count + 1)];
-        for (var index = 0; index < count; index++) arguments[index] = keys[index];
+
+        for (var index = 0; index < count; index++)
+        {
+            arguments[index] = keys[index];
+        }
+
         arguments[^1] = path.Value;
         using var result = await DispatchAsync(MultiGetCommand, arguments, cancellationToken).ConfigureAwait(false);
         var values = new RespireJsonGetResult<T>[]?[result.Count];
+
         for (var index = 0; index < values.Length; index++)
         {
             var item = result[index];
             values[index] = item.IsNull ? null : DeserializeJsonText(item.AsSpan(), path, jsonTypeInfo);
         }
+
         return values;
     }
 
@@ -395,7 +415,12 @@ public sealed class RespireJsonClient
     {
         ArgumentNullException.ThrowIfNull(entries);
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
-        if (entries.Count == 0) throw new ArgumentException("At least one entry is required.", nameof(entries));
+
+        if (entries.Count == 0)
+        {
+            throw new ArgumentException("At least one entry is required.", nameof(entries));
+        }
+
         using var buffer = RentBuffer(jsonTypeInfo.Options);
         var arguments = SerializeEntries(entries, jsonTypeInfo, buffer);
         using var result = await DispatchAsync(MultiSetCommand, arguments, cancellationToken).ConfigureAwait(false);
@@ -407,10 +432,11 @@ public sealed class RespireJsonClient
         var count = entries.Count;
         var arguments = new RespireValue[checked(count * 3)];
         int[]? rentedEndOffsets = null;
-        // stackalloc-audit[f8b001ffa28dbec8]: init: the first loop writes endOffsets[index] for every index below count;
+        // stackalloc-audit[a71c3323c8e6659b]: init: the first loop writes endOffsets[index] for every index below count;
         // read: the second loop reads the same indexes, after the first loop completes; failure: a serializer throw
         // exits through finally before the second loop reads anything.
         Span<int> endOffsets = count <= MaxStackAllocatedOffsets ? stackalloc int[count] : (rentedEndOffsets = ArrayPool<int>.Shared.Rent(count));
+
         try
         {
             for (var index = 0; index < count; index++)
@@ -423,24 +449,38 @@ public sealed class RespireJsonClient
             // Growth returns previous rentals, so capture slices only after every value is serialized.
             var serialized = buffer.Bytes.WrittenMemory;
             var start = 0;
+
             for (var index = 0; index < count; index++)
             {
                 arguments[index * 3 + 2] = serialized.Slice(start, endOffsets[index] - start);
                 start = endOffsets[index];
             }
+
             return arguments;
         }
         finally
         {
-            if (rentedEndOffsets is not null) ArrayPool<int>.Shared.Return(rentedEndOffsets);
+            if (rentedEndOffsets is not null)
+            {
+                ArrayPool<int>.Shared.Return(rentedEndOffsets);
+            }
         }
     }
 
     private SerializationBuffer RentBuffer(JsonSerializerOptions options)
     {
         var buffer = Interlocked.Exchange(ref _availableBuffer, null);
-        if (buffer is null) return new SerializationBuffer(this, options);
-        if (ReferenceEquals(buffer.Options, options)) return buffer;
+
+        if (buffer is null)
+        {
+            return new SerializationBuffer(this, options);
+        }
+
+        if (ReferenceEquals(buffer.Options, options))
+        {
+            return buffer;
+        }
+
         buffer.Release();
         return new SerializationBuffer(this, options);
     }
@@ -452,8 +492,15 @@ public sealed class RespireJsonClient
     // Each private lease has exactly one using scope; Release only destroys an idle or rejected return.
     private sealed class SerializationBuffer(RespireJsonClient owner, JsonSerializerOptions options) : IDisposable
     {
-        internal JsonSerializerOptions Options { get; } = options;
-        internal PooledByteBufferWriter Bytes { get; } = new();
+        internal JsonSerializerOptions Options
+        {
+            get;
+        } = options;
+
+        internal PooledByteBufferWriter Bytes
+        {
+            get;
+        } = new();
         private Utf8JsonWriter? _writer;
 
         internal ReadOnlyMemory<byte> Serialize<T>(T value, JsonTypeInfo<T> jsonTypeInfo)
@@ -469,8 +516,11 @@ public sealed class RespireJsonClient
         {
             _writer?.Reset(Bytes); // Drop uncommitted memory before returning and clearing the rental.
             Bytes.Reset();
+
             if (Interlocked.CompareExchange(ref owner._availableBuffer, this, null) is not null)
+            {
                 Release();
+            }
         }
 
         internal void Release()
@@ -539,11 +589,24 @@ public sealed class RespireJsonClient
         RespireKey key, RespireJsonPath path = default, CancellationToken cancellationToken = default)
     {
         using var result = await DispatchAsync(DebugCommand, ["MEMORY", key, path.Value], cancellationToken).ConfigureAwait(false);
-        if (result.IsNull) return [];
+
+        if (result.IsNull)
+        {
+            return [];
+        }
+
         if (result.Type is not (RespireDataType.Array or RespireDataType.Set))
+        {
             return [result.AsInteger()];
+        }
+
         var sizes = new long[result.Count];
-        for (var index = 0; index < sizes.Length; index++) sizes[index] = result[index].AsInteger();
+
+        for (var index = 0; index < sizes.Length; index++)
+        {
+            sizes[index] = result[index].AsInteger();
+        }
+
         return sizes;
     }
 
@@ -577,7 +640,11 @@ public sealed class RespireJsonClient
     // the Commands property uses its original generated implementation and raw-result boundary.
     private ValueTask<RespireResult> DispatchAsync(RespireCommand command, RespireValue[] arguments, CancellationToken token)
     {
-        if (token.IsCancellationRequested) return ValueTask.FromCanceled<RespireResult>(token);
+        if (token.IsCancellationRequested)
+        {
+            return ValueTask.FromCanceled<RespireResult>(token);
+        }
+
         return _client is RespireClient client && client.Core.Options.CommandHook is not null
             ? client.ExecuteOwnedCommandUnhookedAsync(command, arguments, RespireCommandFlags.None, token)
             : _client.ExecuteAsync(command, arguments, cancellationToken: token);
@@ -588,7 +655,12 @@ public sealed class RespireJsonClient
         var values = (options ?? new RespireJsonGetOptions()).ToArguments();
         var arguments = new RespireValue[checked(values.Length + 1)];
         arguments[0] = key;
-        for (var index = 0; index < values.Length; index++) arguments[index + 1] = values[index];
+
+        for (var index = 0; index < values.Length; index++)
+        {
+            arguments[index + 1] = values[index];
+        }
+
         return arguments;
     }
 
@@ -622,7 +694,9 @@ public sealed class RespireJsonClient
         ReadOnlySpan<byte> json, RespireJsonPath path, JsonTypeInfo<T> jsonTypeInfo)
     {
         if (!path.UsesJsonPath)
+        {
             return [new RespireJsonGetResult<T>(true, JsonSerializer.Deserialize(json, jsonTypeInfo))];
+        }
 
         // The reply wraps the matches in an array, which uses one depth level on top of the caller's limit.
         var maxDepth = jsonTypeInfo.Options.MaxDepth;
@@ -630,14 +704,18 @@ public sealed class RespireJsonClient
         {
             MaxDepth = (int)Math.Min((long)(maxDepth == 0 ? DefaultMaxDepth : maxDepth) + 1, int.MaxValue),
         });
+
         if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray)
+        {
             throw new JsonException("RedisJSON returned a non-array response for a JSONPath request.");
+        }
 
         // The match count is unknown until the end of the array, so matches are collected in a pooled buffer
         // and copied once into an exactly sized result.
         var pool = ArrayPool<RespireJsonGetResult<T>>.Shared;
         var buffer = pool.Rent(4);
         var count = 0;
+
         try
         {
             while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
@@ -649,10 +727,15 @@ public sealed class RespireJsonClient
                     ReturnBuffer(pool, buffer);
                     buffer = larger;
                 }
+
                 buffer[count++] = new RespireJsonGetResult<T>(true, JsonSerializer.Deserialize(ref reader, jsonTypeInfo));
             }
+
             if (reader.TokenType != JsonTokenType.EndArray)
+            {
                 throw new JsonException("RedisJSON returned an incomplete JSONPath array.");
+            }
+
             return buffer.AsSpan(0, count).ToArray();
         }
         finally

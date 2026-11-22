@@ -9,8 +9,17 @@ public sealed partial class RespireBatch
     private PipelineHookScope CreateHookScope(RespirePipelineHook hook, CancellationToken token, string? acknowledgement = null)
     {
         var commands = new string[_ops.Count + (acknowledgement is null ? 0 : 1)];
-        for (var i = 0; i < _ops.Count; i++) commands[i] = _ops[i].Operation;
-        if (acknowledgement is not null) commands[^1] = acknowledgement;
+
+        for (var i = 0; i < _ops.Count; i++)
+        {
+            commands[i] = _ops[i].Operation;
+        }
+
+        if (acknowledgement is not null)
+        {
+            commands[^1] = acknowledgement;
+        }
+
         return new(hook, isTransaction: false, commands, token);
     }
 
@@ -21,17 +30,32 @@ public sealed partial class RespireBatch
             ? new AggregateCommandHookScope(commandHook, _ops, token) : null;
         using var importUsage = EnterObservedOperation();
         _sent = true;
+
         try
         {
-            try { scope?.Enter(); members?.Enter(); }
+            try
+            {
+                scope?.Enter();
+                members?.Enter();
+            }
             catch (Exception error)
             {
                 scope?.Fail(error);
-                foreach (var op in _ops) op.Fail(error);
+
+                foreach (var op in _ops)
+                {
+                    op.Fail(error);
+                }
                 // An empty result cannot carry a failure. Empty admission rejection therefore throws.
-                if (_ops.Count == 0) { ErrorObservation.FinishFinal(default, error); throw; }
+                if (_ops.Count == 0)
+                {
+                    ErrorObservation.FinishFinal(default, error);
+                    throw;
+                }
+
                 return new RespireBatchResult(_ops.Count, CollectFailures(_ops));
             }
+
             var result = await TryExecuteCoreAsync(token, admitted: true).ConfigureAwait(false);
             scope?.Fail(result.FirstError);
             return result;
@@ -50,15 +74,25 @@ public sealed partial class RespireBatch
         using var scope = hook is null ? null : CreateHookScope(hook, token, operation);
         using var members = _client.Core.Options.CommandHook is { } commandHook
             ? new AggregateCommandHookScope(commandHook, _ops, token, operation) : null;
+
         try
         {
-            try { scope?.Enter(); members?.Enter(); }
+            try
+            {
+                scope?.Enter();
+                members?.Enter();
+            }
             catch (Exception error)
             {
-                foreach (var op in _ops) op.Fail(error);
+                foreach (var op in _ops)
+                {
+                    op.Fail(error);
+                }
+
                 DeferredOperation.ReportErrors(_ops);
                 throw;
             }
+
             return await ExecuteAcknowledgementCoreAsync(operation, acknowledgement, convert, token,
                 admitted: true, admittedSlot: slot).ConfigureAwait(false);
         }

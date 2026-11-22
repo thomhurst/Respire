@@ -328,8 +328,16 @@ public class FailoverGroupTests
         var secondProbe = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         primary.SuppressReply = command =>
         {
-            if (command != "PING" || Volatile.Read(ref primaryFailed) == 0) return false;
-            if (Interlocked.Increment(ref failedProbes) != 2) return false;
+            if (command != "PING" || Volatile.Read(ref primaryFailed) == 0)
+            {
+                return false;
+            }
+
+            if (Interlocked.Increment(ref failedProbes) != 2)
+            {
+                return false;
+            }
+
             secondProbe.TrySetResult();
             return true;
         };
@@ -433,7 +441,11 @@ public class FailoverGroupTests
         var primaryPings = 0;
         primary.ReplyOverride = (_, command) =>
         {
-            if (command != "PING") return null;
+            if (command != "PING")
+            {
+                return null;
+            }
+
             var mode = Volatile.Read(ref primaryMode);
             var fail = mode == 1 || (mode == 2 && Interlocked.Increment(ref primaryPings) % 2 == 0);
             return fail ? "-ERR primary unavailable\r\n"u8.ToArray() : null;
@@ -471,7 +483,11 @@ public class FailoverGroupTests
         var topPings = 0;
         top.ReplyOverride = (_, command) =>
         {
-            if (command != "PING") return null;
+            if (command != "PING")
+            {
+                return null;
+            }
+
             var mode = Volatile.Read(ref topMode);
             var fail = mode == 1 || (mode == 2 && Interlocked.Increment(ref topPings) % 2 == 0);
             return fail ? "-ERR top unavailable\r\n"u8.ToArray() : null;
@@ -643,6 +659,7 @@ public class FailoverGroupTests
         await using var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, 0)],
             FastOptions() with { ProbeInterval = TimeSpan.FromMinutes(1), CircuitOpenDuration = TimeSpan.FromSeconds(1) }, clock);
         server.ReplyOverride = (_, _) => "-ERR unavailable\r\n"u8.ToArray();
+
         if (recoveryProbe)
         {
             await group.ForTests.ProbeAsync(0);
@@ -977,20 +994,29 @@ public class FailoverGroupTests
         using var registration = group.ForTests.StopToken.Register(() =>
         {
             selectionClosedDuringCallback = !group.IsConnected;
-            if (callbackThrows) throw callbackFailure;
+
+            if (callbackThrows)
+            {
+                throw callbackFailure;
+            }
         });
 
         var firstDisposal = group.DisposeAsync().AsTask();
         var repeatedDisposal = group.DisposeAsync().AsTask();
         await Assert.That(ReferenceEquals(firstDisposal, repeatedDisposal)).IsTrue();
         AggregateException? observed = null;
-        try { await firstDisposal.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+        try
+        {
+            await firstDisposal.WaitAsync(TimeSpan.FromSeconds(5));
+        }
         catch (AggregateException error) { observed = error; }
 
         await Assert.That(selectionClosedDuringCallback).IsTrue();
         await Assert.That(client.IsConnected).IsFalse();
         await Task.WhenAll(firstServer.PeerClosed, secondServer.PeerClosed).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(() => group.ActiveClient).ThrowsExactly<ObjectDisposedException>();
+
         if (callbackThrows)
         {
             await Assert.That(observed).IsNotNull();
@@ -1243,7 +1269,11 @@ public class FailoverGroupTests
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!condition()) await Task.Delay(10, timeout.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 
     private static MeterListener ObserveFailedProbe(RespireEndpoint endpoint, Action observer)
@@ -1252,18 +1282,25 @@ public class FailoverGroupTests
         listener.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.failover.probes")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             bool host = false, port = false, failed = false;
+
             foreach (var tag in tags)
             {
                 host |= tag.Key == "server.address" && Equals(tag.Value, endpoint.Host);
                 port |= tag.Key == "server.port" && Equals(tag.Value, endpoint.Port);
                 failed |= tag.Key == "respire.failover.probe.result" && Equals(tag.Value, "failure");
             }
-            if (host && port && failed) observer();
+
+            if (host && port && failed)
+            {
+                observer();
+            }
         });
         listener.Start();
         return listener;
@@ -1271,18 +1308,33 @@ public class FailoverGroupTests
 
     private sealed class CapturingLogger : ILoggerFactory
     {
-        public System.Collections.Concurrent.ConcurrentQueue<(string Category, string Message, Exception? Error)> Warnings { get; } = new();
+        public System.Collections.Concurrent.ConcurrentQueue<(string Category, string Message, Exception? Error)> Warnings
+        {
+            get;
+        } = new();
+
         public ILogger CreateLogger(string categoryName) => new CategoryLogger(this, categoryName);
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
 
         private sealed class CategoryLogger(CapturingLogger owner, string category) : ILogger
         {
             public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
             public bool IsEnabled(LogLevel logLevel) => true;
+
             public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
             {
-                if (logLevel == LogLevel.Warning) owner.Warnings.Enqueue((category, formatter(state, exception), exception));
+                if (logLevel == LogLevel.Warning)
+                {
+                    owner.Warnings.Enqueue((category, formatter(state, exception), exception));
+                }
             }
         }
     }
@@ -1293,10 +1345,13 @@ public class FailoverGroupTests
         private long _utcTicks = utcNow.UtcTicks;
 
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
         public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _utcTicks), TimeSpan.Zero);
+
         public override long GetTimestamp() => Volatile.Read(ref _timestamp);
 
         public void Advance(TimeSpan duration) => Interlocked.Add(ref _timestamp, duration.Ticks);
+
         public void AdvanceUtc(TimeSpan duration) => Interlocked.Add(ref _utcTicks, duration.Ticks);
     }
 }

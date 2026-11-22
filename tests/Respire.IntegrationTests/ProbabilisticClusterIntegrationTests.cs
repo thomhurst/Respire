@@ -17,7 +17,8 @@ public class ProbabilisticClusterIntegrationTests(BloomRedisClusterFixture fixtu
         var cluster = fixture.Cluster;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Protocol = (RespireProtocol)protocol,
+            UseCluster = true,
+            Protocol = (RespireProtocol)protocol,
             Endpoints = [new(cluster.Host, cluster.Port(0))],
         });
         var prefix = $"probabilistic:{Guid.NewGuid():N}:";
@@ -27,8 +28,12 @@ public class ProbabilisticClusterIntegrationTests(BloomRedisClusterFixture fixtu
         await probabilistic.CuckooAddAsync("cuckoo", "item");
         await probabilistic.TopKReserveAsync("topk", 2);
         await probabilistic.TopKAddAsync("topk", ["item"]);
+
         foreach (var key in new[] { "{cms}:source", "{cms}:destination", "{other}:source" })
+        {
             await probabilistic.CountMinInitializeByDimensionsAsync(key, 100, 5);
+        }
+
         await probabilistic.CountMinIncrementAsync("{cms}:source", new Dictionary<RespireValue, long> { ["item"] = 3 });
         await probabilistic.CountMinMergeAsync("{cms}:destination", ["{cms}:source"]);
         await probabilistic.TDigestCreateAsync("{digest}:source");

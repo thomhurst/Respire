@@ -15,6 +15,7 @@ public abstract class RespireValueCodec : IRespireValueCodec
 {
     /// <summary>Number of bytes preceding the encoded payload in either supported frame version.</summary>
     public const int HeaderLength = 18;
+
     private static ReadOnlySpan<byte> Magic => "RVC\0"u8;
 
     /// <summary>Constructs a custom codec with a stable algorithm ID from 16 through 255 and a snapshot of its settings.</summary>
@@ -28,14 +29,24 @@ public abstract class RespireValueCodec : IRespireValueCodec
     internal RespireValueCodec(byte algorithmId, RespireValueCodecOptions? options, bool allowReservedAlgorithm)
     {
         if (algorithmId == 0 || (!allowReservedAlgorithm && algorithmId < 16))
+        {
             throw new ArgumentOutOfRangeException(nameof(algorithmId), "Custom codec algorithm IDs must be between 16 and 255.");
+        }
+
         options ??= new();
         ArgumentOutOfRangeException.ThrowIfNegative(options.MinimumLength);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaximumDecodedLength);
+
         if (options.FrameVersion is not (1 or 2))
+        {
             throw new ArgumentOutOfRangeException(nameof(options), "Frame version must be 1 or 2.");
+        }
+
         if (options.MaximumDecodedLength > Array.MaxLength - HeaderLength)
+        {
             throw new ArgumentOutOfRangeException(nameof(options), "Maximum decoded length leaves no room for framing.");
+        }
+
         AlgorithmId = algorithmId;
         MinimumLength = options.MinimumLength;
         MaximumDecodedLength = options.MaximumDecodedLength;
@@ -43,18 +54,34 @@ public abstract class RespireValueCodec : IRespireValueCodec
     }
 
     /// <summary>The stable identifier of this codec's compressed payload format.</summary>
-    public byte AlgorithmId { get; }
+    public byte AlgorithmId
+    {
+        get;
+    }
+
     /// <summary>The minimum original length before attempting compression.</summary>
-    public int MinimumLength { get; }
+    public int MinimumLength
+    {
+        get;
+    }
+
     /// <summary>The maximum allowed original or decoded length.</summary>
-    public int MaximumDecodedLength { get; }
+    public int MaximumDecodedLength
+    {
+        get;
+    }
+
     /// <summary>The version written by this codec. Decoding accepts both versions regardless of this setting.</summary>
-    public byte FrameVersion { get; }
+    public byte FrameVersion
+    {
+        get;
+    }
 
     /// <inheritdoc/>
     public byte[] Encode(ReadOnlySpan<byte> payload)
     {
         byte[]? scratch = null;
+
         try
         {
             var encoded = CompressIfSmaller(payload, out var algorithm, ref scratch);
@@ -64,7 +91,10 @@ public abstract class RespireValueCodec : IRespireValueCodec
         }
         finally
         {
-            if (scratch is not null) ArrayPool<byte>.Shared.Return(scratch, clearArray: true);
+            if (scratch is not null)
+            {
+                ArrayPool<byte>.Shared.Return(scratch, clearArray: true);
+            }
         }
     }
 
@@ -73,6 +103,7 @@ public abstract class RespireValueCodec : IRespireValueCodec
     {
         ArgumentNullException.ThrowIfNull(destination);
         byte[]? scratch = null;
+
         try
         {
             var encoded = CompressIfSmaller(payload, out var algorithm, ref scratch);
@@ -82,24 +113,35 @@ public abstract class RespireValueCodec : IRespireValueCodec
         }
         finally
         {
-            if (scratch is not null) ArrayPool<byte>.Shared.Return(scratch, clearArray: true);
+            if (scratch is not null)
+            {
+                ArrayPool<byte>.Shared.Return(scratch, clearArray: true);
+            }
         }
     }
 
     private ReadOnlySpan<byte> CompressIfSmaller(ReadOnlySpan<byte> payload, out byte algorithm, ref byte[]? scratch)
     {
         if (payload.Length > MaximumDecodedLength)
+        {
             throw new ArgumentOutOfRangeException(nameof(payload), "Value exceeds the codec's maximum decoded length.");
+        }
+
         algorithm = 0;
+
         if (payload.Length >= MinimumLength && !payload.IsEmpty)
         {
             // A result as large as the input is discarded, so never reserve expansion space.
             scratch = ArrayPool<byte>.Shared.Rent(payload.Length - 1);
             var destination = scratch.AsSpan(0, payload.Length - 1);
+
             if (TryCompress(payload, destination, out var written))
             {
                 if ((uint)written > (uint)destination.Length)
+                {
                     throw new InvalidDataException("Codec returned an invalid compressed length.");
+                }
+
                 payload = destination[..written];
                 algorithm = AlgorithmId;
             }
@@ -122,7 +164,12 @@ public abstract class RespireValueCodec : IRespireValueCodec
     public byte[] Decode(ReadOnlySpan<byte> payload)
     {
         var encoded = ValidateFrame(payload, out var algorithm, out var length);
-        if (algorithm == 0) return encoded.ToArray();
+
+        if (algorithm == 0)
+        {
+            return encoded.ToArray();
+        }
+
         var decoded = new byte[length];
         Decompress(encoded, decoded);
         return decoded;
@@ -134,34 +181,69 @@ public abstract class RespireValueCodec : IRespireValueCodec
     {
         ArgumentNullException.ThrowIfNull(destination);
         var encoded = ValidateFrame(payload, out var algorithm, out var length);
-        if (length == 0) return;
+
+        if (length == 0)
+        {
+            return;
+        }
+
         var decoded = destination.GetSpan(length)[..length];
-        if (algorithm == 0) encoded.CopyTo(decoded);
-        else Decompress(encoded, decoded);
+
+        if (algorithm == 0)
+        {
+            encoded.CopyTo(decoded);
+        }
+        else
+        {
+            Decompress(encoded, decoded);
+        }
+
         destination.Advance(length);
     }
 
     private ReadOnlySpan<byte> ValidateFrame(ReadOnlySpan<byte> payload, out byte algorithm, out int length)
     {
         if (payload.Length < HeaderLength || !payload[..4].SequenceEqual(Magic))
+        {
             throw new InvalidDataException("Value is not a complete Respire codec frame.");
-        if (payload[4] is not (1 or 2)) throw new InvalidDataException("Unsupported Respire codec frame version.");
+        }
+
+        if (payload[4] is not (1 or 2))
+        {
+            throw new InvalidDataException("Unsupported Respire codec frame version.");
+        }
+
         algorithm = payload[5];
+
         if (algorithm != 0 && algorithm != AlgorithmId)
+        {
             throw new InvalidDataException($"Codec algorithm {algorithm} is not supported by this decoder.");
+        }
+
         var declaredLength = BinaryPrimitives.ReadUInt32LittleEndian(payload[6..]);
+
         if (declaredLength > MaximumDecodedLength)
+        {
             throw new InvalidDataException("Decoded value exceeds the codec's maximum decoded length.");
+        }
+
         length = (int)declaredLength;
         var encoded = payload[HeaderLength..];
+
         if (algorithm == 0 ? encoded.Length != length : encoded.Length >= length)
+        {
             throw new InvalidDataException("Codec payload length does not match its frame.");
-        // stackalloc-audit[810944128b7f8231]: init: WriteChecksum stores all 8 bytes (a UInt64 or the first 8 hash bytes);
+        }
+        // stackalloc-audit[b8304b2503ee31a4]: init: WriteChecksum stores all 8 bytes (a UInt64 or the first 8 hash bytes);
         // read: SequenceEqual compares exactly those 8 bytes; failure: a hashing exception propagates before any read.
         Span<byte> checksum = stackalloc byte[8];
         WriteChecksum(encoded, checksum, payload[4]);
+
         if (!checksum.SequenceEqual(payload.Slice(10, 8)))
+        {
             throw new InvalidDataException("Codec payload checksum does not match its frame.");
+        }
+
         return encoded;
     }
 
@@ -176,7 +258,12 @@ public abstract class RespireValueCodec : IRespireValueCodec
     {
         var compressed = Compress(payload);
         bytesWritten = 0;
-        if (compressed.Length > destination.Length) return false;
+
+        if (compressed.Length > destination.Length)
+        {
+            return false;
+        }
+
         compressed.CopyTo(destination);
         bytesWritten = compressed.Length;
         return true;

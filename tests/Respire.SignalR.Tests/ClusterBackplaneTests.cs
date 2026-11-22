@@ -9,11 +9,17 @@ namespace Respire.SignalR.Tests;
 public sealed class SignalRClusterFixture : IAsyncInitializer, IAsyncDisposable
 {
     private RedisClusterTestContainer? _cluster;
+
     public string ConnectionString => $"redis://{_cluster!.Host}:{_cluster.Port(0)}?protocol=3";
+
     public async Task InitializeAsync() => _cluster = await RedisClusterTestContainer.StartAsync();
+
     public async ValueTask DisposeAsync()
     {
-        if (_cluster is not null) await _cluster.DisposeAsync();
+        if (_cluster is not null)
+        {
+            await _cluster.DisposeAsync();
+        }
     }
 }
 
@@ -40,7 +46,8 @@ public class ClusterBackplaneTests(SignalRClusterFixture fixture)
         await using var local = await first.ConnectAsync("local", messagePack);
         await using var remote = await second.ConnectAsync("remote", messagePack);
         await first.Manager.SendAllAsync("message", ["all"]);
-        await local.ExpectAsync("all"); await remote.ExpectAsync("all");
+        await local.ExpectAsync("all");
+        await remote.ExpectAsync("all");
         // Distinct hash tags route subscriptions and publishes to every primary.
         foreach (var tag in new[] { "a", "b", "c" })
         {
@@ -50,6 +57,7 @@ public class ClusterBackplaneTests(SignalRClusterFixture fixture)
             await remote.ExpectAsync(group);
             await first.Manager.RemoveFromGroupAsync(remote.Id, group);
         }
+
         await first.Manager.SendConnectionAsync(remote.Id, "message", ["connection"]);
         await remote.ExpectAsync("connection");
         using var handler = remote.Connection.On("answer", [typeof(string)],

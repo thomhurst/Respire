@@ -11,18 +11,25 @@ namespace Respire.IntegrationTests;
 public sealed class KeyNotificationRedisContainer : IAsyncInitializer, IAsyncDisposable
 {
     private RedisContainer? _container;
+
     private RedisContainer Container => _container ?? throw new InvalidOperationException("Redis container has not been initialized.");
+
     public RespireOptions Options(int protocol) => new()
     {
         Endpoints = [new(Container.Hostname, Container.GetMappedPublicPort(6379))],
         Database = TestContext.Current!.Isolation.UniqueId,
-        Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
+        Protocol = (RespireProtocol)protocol,
+        Connections = 1,
+        AllowAdmin = true,
     };
+
     public string ConnectionString =>
         $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}/{TestContext.Current!.Isolation.UniqueId}";
+
     public async Task InitializeAsync() => _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:8.8-alpine")
         .WithCommand("redis-server", "--databases", "4096", "--notify-keyspace-events", "KEAmoncSTIV")
         .Build(), [RedisBuilder.RedisPort]);
+
     public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
 
@@ -48,6 +55,7 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
             RespireChannel.KeyEvent(RespireKeyNotificationType.Set, options.Database),
             RespireChannel.KeyEvent(RespireKeyNotificationType.Set),
         ];
+
         foreach (var descriptor in channels)
         {
             // A prefixed view must not rewrite the descriptor's physical key.
@@ -80,6 +88,7 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
             RespireChannel.SubKeySpaceEvent(RespireKeyNotificationType.HSet, key, options.Database),
             RespireChannel.SubKeySpaceEvent(RespireKeyNotificationType.HSet, key),
         ];
+
         foreach (var descriptor in descriptors)
         {
             await using var subscription = await client.SubscribeAsync(descriptor);
@@ -88,7 +97,11 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
             notification.Database.Should().Be(options.Database);
             var fields = notification.GetSubKeys().ToArray();
             fields[0].ToArray().Should().Equal(field);
-            if (notification.Kind == RespireKeyNotificationKind.SubKeySpaceItem) fields.Length.Should().Be(1);
+
+            if (notification.Kind == RespireKeyNotificationKind.SubKeySpaceItem)
+            {
+                fields.Length.Should().Be(1);
+            }
             else
             {
                 fields.Length.Should().Be(2);
@@ -106,18 +119,42 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
         await using var client = await RespireClient.ConnectAsync(options);
         var key = Encoding.UTF8.GetBytes($"fields:{Guid.NewGuid():N}");
         await using var subscription = await client.SubscribeAsync(RespireChannel.SubKeySpaceSingleKey(key, options.Database));
-        using (var reply = await client.ExecuteAsync("HSET", key, "a", "1", "b", "2")) { }
+
+        using (var reply = await client.ExecuteAsync("HSET", key, "a", "1", "b", "2"))
+        {
+        }
+
         await ReadMatchingAsync(subscription, key, RespireKeyNotificationType.HSet);
-        using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "60000", "FIELDS", "2", "a", "b")) { }
+
+        using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "60000", "FIELDS", "2", "a", "b"))
+        {
+        }
+
         var expires = await ReadMatchingAsync(subscription, key, RespireKeyNotificationType.HExpire);
         expires.GetSubKeys().Count.Should().Be(2);
-        using (var reply = await client.ExecuteAsync("HPERSIST", key, "FIELDS", "2", "a", "b")) { }
+
+        using (var reply = await client.ExecuteAsync("HPERSIST", key, "FIELDS", "2", "a", "b"))
+        {
+        }
+
         (await ReadMatchingAsync(subscription, key, RespireKeyNotificationType.HPersist)).GetSubKeys().Count.Should().Be(2);
-        using (var reply = await client.ExecuteAsync("HDEL", key, "a", "b")) { }
+
+        using (var reply = await client.ExecuteAsync("HDEL", key, "a", "b"))
+        {
+        }
+
         (await ReadMatchingAsync(subscription, key, RespireKeyNotificationType.HDel)).GetSubKeys().Count.Should().Be(2);
-        using (var reply = await client.ExecuteAsync("HSET", key, "a", "1")) { }
+
+        using (var reply = await client.ExecuteAsync("HSET", key, "a", "1"))
+        {
+        }
+
         await ReadMatchingAsync(subscription, key, RespireKeyNotificationType.HSet);
-        using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "10", "FIELDS", "1", "a")) { }
+
+        using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "10", "FIELDS", "1", "a"))
+        {
+        }
+
         var expired = await ReadMatchingAsync(subscription, key, RespireKeyNotificationType.HExpired);
         expired.GetSubKeys().FirstOrDefault().Span.SequenceEqual("a"u8).Should().BeTrue();
     }
@@ -130,13 +167,25 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
         var options = fixture.Options(protocol);
         await using var client = await RespireClient.ConnectAsync(options);
         var key = Encoding.UTF8.GetBytes($"lifetime:{Guid.NewGuid():N}");
+
         foreach (var type in new[] { RespireKeyNotificationType.HDel, RespireKeyNotificationType.HExpire,
             RespireKeyNotificationType.HPersist, RespireKeyNotificationType.HExpired })
         {
-            using (var reply = await client.ExecuteAsync("DEL", key)) { }
-            using (var reply = await client.ExecuteAsync("HSET", key, "a", "1", "b", "2")) { }
+            using (var reply = await client.ExecuteAsync("DEL", key))
+            {
+            }
+
+            using (var reply = await client.ExecuteAsync("HSET", key, "a", "1", "b", "2"))
+            {
+            }
+
             if (type == RespireKeyNotificationType.HPersist)
-                using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "60000", "FIELDS", "2", "a", "b")) { }
+            {
+                using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "60000", "FIELDS", "2", "a", "b"))
+                {
+                }
+            }
+
             var descriptor = layout switch
             {
                 0 => RespireChannel.SubKeySpaceSingleKey(key, options.Database),
@@ -145,21 +194,31 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
                 _ => RespireChannel.SubKeySpaceEvent(type, key, options.Database),
             };
             await using var subscription = await client.SubscribeAsync(descriptor);
+
             switch (type)
             {
                 case RespireKeyNotificationType.HDel:
-                    using (var reply = await client.ExecuteAsync("HDEL", key, "a", "b")) { }
+                    using (var reply = await client.ExecuteAsync("HDEL", key, "a", "b"))
+                    {
+                    }
                     break;
                 case RespireKeyNotificationType.HPersist:
-                    using (var reply = await client.ExecuteAsync("HPERSIST", key, "FIELDS", "2", "a", "b")) { }
+                    using (var reply = await client.ExecuteAsync("HPERSIST", key, "FIELDS", "2", "a", "b"))
+                    {
+                    }
                     break;
                 case RespireKeyNotificationType.HExpired:
-                    using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "10", "FIELDS", "1", "a")) { }
+                    using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "10", "FIELDS", "1", "a"))
+                    {
+                    }
                     break;
                 default:
-                    using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "60000", "FIELDS", "2", "a", "b")) { }
+                    using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "60000", "FIELDS", "2", "a", "b"))
+                    {
+                    }
                     break;
             }
+
             var notification = await ReadMatchingAsync(subscription, key, type);
             notification.GetSubKeys().Count.Should().Be(layout == 2 || type == RespireKeyNotificationType.HExpired ? 1 : 2);
             notification.GetSubKeys().FirstOrDefault().Span.SequenceEqual("a"u8).Should().BeTrue();
@@ -175,6 +234,7 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
         await using var client = await RespireClient.ConnectAsync(options);
         var key = Encoding.UTF8.GetBytes($"events:{Guid.NewGuid():N}");
         await using var subscription = await client.SubscribeAsync(RespireChannel.KeySpaceSingleKey(key, options.Database));
+
         foreach (var scenario in new (string Command, RespireValue[] Args, RespireKeyNotificationType Type)[]
         {
             ("SET", [key, "value"], RespireKeyNotificationType.Set),
@@ -194,7 +254,11 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
             using var reply = await client.ExecuteAsync(scenario.Command, scenario.Args);
             await ReadMatchingAsync(subscription, key, scenario.Type);
         }
-        using (var reply = await client.ExecuteAsync("SET", key, "expires", "PX", "10")) { }
+
+        using (var reply = await client.ExecuteAsync("SET", key, "expires", "PX", "10"))
+        {
+        }
+
         await ReadMatchingAsync(subscription, key, RespireKeyNotificationType.Expired);
     }
 
@@ -224,11 +288,16 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
         byte[] key, RespireKeyNotificationType type)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         await foreach (var message in subscription.WithCancellation(timeout.Token))
         {
             if (message.TryParseKeyNotification(out var notification) && notification.Type == type
-                && notification.KeyBytes.Span.SequenceEqual(key)) return notification;
+                && notification.KeyBytes.Span.SequenceEqual(key))
+            {
+                return notification;
+            }
         }
+
         throw new InvalidOperationException($"Subscription ended before {type} was delivered.");
     }
 }
@@ -236,10 +305,14 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
 public sealed class KeyNotificationLegacyRedisContainer : IAsyncInitializer, IAsyncDisposable
 {
     private RedisContainer? _container;
+
     private RedisContainer Container => _container ?? throw new InvalidOperationException("Redis container has not been initialized.");
+
     public string ConnectionString => $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}";
+
     public async Task InitializeAsync() => _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15")
         .WithCommand("redis-server", "--notify-keyspace-events", "KEA").Build(), [RedisBuilder.RedisPort]);
+
     public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
 
@@ -258,7 +331,10 @@ public class KeyNotificationLegacyIntegrationTests(KeyNotificationLegacyRedisCon
         var descriptor = RespireChannel.SubKeySpaceSingleKey(key, 0);
         await using var subkeys = await client.SubscribeAsync(descriptor);
         await using var keys = await client.SubscribeAsync(RespireChannel.KeySpacePrefix(prefix, 0));
-        using (var reply = await client.ExecuteAsync("HSET", key, "field", "value")) { }
+
+        using (var reply = await client.ExecuteAsync("HSET", key, "field", "value"))
+        {
+        }
         // The subsequent ordinary publish is an ordered barrier on the same Pub/Sub
         // connection. No timeout-based absence assertion or retry is needed.
         (await client.PublishAsync(new RespireChannel(descriptor.Bytes), "barrier")).Should().Be(1);

@@ -24,13 +24,23 @@ public class StandaloneReplicaReadyTests
         var router = client.Core.ReadRouter;
         await router.GetConnectionAsync(RespireReadFrom.Replica, default, default);
         using var caller = new CancellationTokenSource();
-        if (dispose) await client.DisposeAsync();
-        else await caller.CancelAsync();
+
+        if (dispose)
+        {
+            await client.DisposeAsync();
+        }
+        else
+        {
+            await caller.CancelAsync();
+        }
 
         // Deliberately outside the assertion delegate: acquisition must return its failure.
         var pending = router.GetConnectionAsync(RespireReadFrom.Replica, caller.Token, default);
+
         if (dispose)
+        {
             await Assert.That(async () => await pending).Throws<ObjectDisposedException>();
+        }
         else
         {
             var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
@@ -52,6 +62,7 @@ public class StandaloneReplicaReadyTests
         var connection = await client.Core.ReadRouter.GetConnectionAsync(policy, default, observation: default);
         replica.SuppressReply = command => command.StartsWith("GET", StringComparison.Ordinal);
         var pending = view.GetStringAsync("parked");
+
         try
         {
             await Assert.That(connection.InspectForTests().Inflight.TryPeek(out var source)).IsTrue();
@@ -60,10 +71,16 @@ public class StandaloneReplicaReadyTests
         finally
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            while (!replica.ReceivedCommands.Contains("GET parked")) await Task.Delay(1, deadline.Token);
+
+            while (!replica.ReceivedCommands.Contains("GET parked"))
+            {
+                await Task.Delay(1, deadline.Token);
+            }
+
             await replica.SendRawAsync("$5\r\nhello\r\n"u8.ToArray());
             await Assert.That(await pending).IsEqualTo("hello");
         }
+
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("GET", StringComparison.Ordinal))).IsFalse();
     }
 
@@ -90,6 +107,7 @@ public class StandaloneReplicaReadyTests
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(connection);
         var publication = Volatile.Read(ref ReadyPublication(router));
         await Assert.That(publication).IsNotNull();
+
         for (var i = 0; i < 32; i++)
         {
             await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(connection);
@@ -148,8 +166,12 @@ public class StandaloneReplicaReadyTests
         var router = client.Core.ReadRouter;
         var prepared = await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         var before = Volatile.Read(ref ReplicaCursor(router));
+
         for (var i = 0; i < 4; i++)
+        {
             await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsSameReferenceAs(prepared);
+        }
+
         await Assert.That(Volatile.Read(ref ReplicaCursor(router))).IsEqualTo(unchecked(before + 4));
         Volatile.Write(ref PublishedReplicas(router), [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)]);
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsNull();
@@ -168,7 +190,9 @@ public class StandaloneReplicaReadyTests
         {
             ReconnectPolicy = new()
             {
-                InitialDelay = TimeSpan.FromHours(1), MaxDelay = TimeSpan.FromHours(1), JitterRatio = 0,
+                InitialDelay = TimeSpan.FromHours(1),
+                MaxDelay = TimeSpan.FromHours(1),
+                JitterRatio = 0,
             },
         });
         var router = client.Core.ReadRouter;
@@ -217,19 +241,39 @@ public class StandaloneReplicaReadyTests
     {
         await using var primary = Server();
         await using var replica = Server();
-        if (reason == "unlinked") replica.ReplyOverride = (_, command) => command == "ROLE"
+
+        if (reason == "unlinked")
+        {
+            replica.ReplyOverride = (_, command) => command == "ROLE"
             ? "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$10\r\nconnecting\r\n:0\r\n"u8.ToArray()
             : command.StartsWith("GET", StringComparison.Ordinal) ? "$5\r\nhello\r\n"u8.ToArray() : null;
+        }
+
         await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
         var router = client.Core.ReadRouter;
         var selected = await router.GetReplicaFromEndpointsAsync(Options(primary, replica).ReplicaEndpoints.ToArray(), default, observation: default);
-        if (reason == "expired") router.RoleRevalidationInterval = TimeSpan.Zero;
-        if (reason == "cooldown") selected.Replica!.MarkFailed();
-        if (reason == "retired") await selected.Connection.Multiplexer!.RetireAsync();
+
+        if (reason == "expired")
+        {
+            router.RoleRevalidationInterval = TimeSpan.Zero;
+        }
+
+        if (reason == "cooldown")
+        {
+            selected.Replica!.MarkFailed();
+        }
+
+        if (reason == "retired")
+        {
+            await selected.Connection.Multiplexer!.RetireAsync();
+        }
+
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.ReplicaPreferred, default)).IsNull();
         // Cooldown falls back to primary; expired or unlinked role state still follows the selector.
         if (reason != "retired")
+        {
             await Assert.That(await client.WithReadFrom(RespireReadFrom.ReplicaPreferred).GetStringAsync("fallback")).IsEqualTo("hello");
+        }
     }
 
     [Test]
@@ -246,8 +290,11 @@ public class StandaloneReplicaReadyTests
         await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         await Assert.That(client.Core.ReadRouter.TryAcquireReadyConnection(policy, default)).IsNull();
         await Assert.That(await client.WithReadFrom(policy).GetStringAsync("policy")).IsEqualTo("hello");
+
         if (policy is RespireReadFrom.Primary or RespireReadFrom.PrimaryPreferred)
+        {
             await Assert.That(primary.ReceivedCommands).Contains("GET policy");
+        }
     }
 
     [Test]
@@ -264,7 +311,12 @@ public class StandaloneReplicaReadyTests
         await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default);
         await Assert.That(router.TryAcquireReadyConnection(RespireReadFrom.Replica, default)).IsNull();
         var ports = new int[8];
-        for (var i = 0; i < ports.Length; i++) ports[i] = (await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default)).Port;
+
+        for (var i = 0; i < ports.Length; i++)
+        {
+            ports[i] = (await router.GetConnectionAsync(RespireReadFrom.Replica, default, observation: default)).Port;
+        }
+
         await Assert.That(ports.Count(port => port == first.Port)).IsEqualTo(4);
         await Assert.That(ports.Count(port => port == second.Port)).IsEqualTo(4);
     }
@@ -290,24 +342,39 @@ public class StandaloneReplicaReadyTests
                 lock (activities)
                 {
                     activities.Add(activity);
-                    if (activities.Count >= 4) activitiesStopped.TrySetResult();
+
+                    if (activities.Count >= 4)
+                    {
+                        activitiesStopped.TrySetResult();
+                    }
                 }
             },
         } : null;
-        if (listener is not null) ActivitySource.AddActivityListener(listener);
+
+        if (listener is not null)
+        {
+            ActivitySource.AddActivityListener(listener);
+        }
+
         await Assert.That(await view.GetStringAsync("string")).IsEqualTo("hello");
         await Assert.That(await view.GetBytesAsync("bytes")).IsEquivalentTo("hello"u8.ToArray());
         await Assert.That(await view.Strings.LengthAsync("length")).IsEqualTo(5L);
         await using var stream = await view.Strings.GetStreamAsync("stream");
         using var reader = new StreamReader(stream!);
         await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("hello");
+
         if (listen)
         {
             // The receive loop publishes stream EOF before invoking its telemetry callback.
             // Observe callback completion explicitly rather than racing ReadToEndAsync.
             await activitiesStopped.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Activity[] stopped;
-            lock (activities) stopped = activities.ToArray();
+
+            lock (activities)
+            {
+                stopped = activities.ToArray();
+            }
+
             await Assert.That(stopped.Length).IsEqualTo(4);
             await Assert.That(stopped.All(activity => Equals(activity.GetTagItem("server.port"), replica.Port))).IsTrue();
         }
@@ -330,23 +397,52 @@ public class StandaloneReplicaReadyTests
         await view.GetStringAsync("warm");
         replica.SuppressReply = command => command == "GET parked";
         using var caller = new CancellationTokenSource();
-        if (failure == "cancelled-before") caller.Cancel();
+
+        if (failure == "cancelled-before")
+        {
+            caller.Cancel();
+        }
+
         var pending = view.GetStringAsync("parked", caller.Token).AsTask();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         if (failure != "cancelled-before")
-            while (!replica.ReceivedCommands.Contains("GET parked")) await Task.Delay(1, deadline.Token);
-        if (failure == "cancelled-after") caller.Cancel();
-        if (failure == "disposed") await client.DisposeAsync();
+        {
+            while (!replica.ReceivedCommands.Contains("GET parked"))
+            {
+                await Task.Delay(1, deadline.Token);
+            }
+        }
+
+        if (failure == "cancelled-after")
+        {
+            caller.Cancel();
+        }
+
+        if (failure == "disposed")
+        {
+            await client.DisposeAsync();
+        }
+
         if (failure == "timeout")
+        {
             await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<RespireTimeoutException>();
+        }
         else if (failure.StartsWith("cancelled", StringComparison.Ordinal))
         {
             await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
             await Assert.That(pending.IsCanceled).IsTrue();
         }
-        else await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<RespireConnectionException>();
+        else
+        {
+            await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<RespireConnectionException>();
+        }
+
         if (failure == "cancelled-before")
+        {
             await Assert.That(replica.ReceivedCommands.Contains("GET parked")).IsFalse();
+        }
+
         if (failure is "cancelled-after" or "timeout")
         {
             // The cancelled caller does not remove its FIFO response. Drain that late reply
@@ -377,10 +473,19 @@ public class StandaloneReplicaReadyTests
     internal static int? RunIsolatedAllocationProbe()
     {
         var runtime = Environment.GetEnvironmentVariable(AllocationProbeMode);
-        if (runtime is null) return null;
+
+        if (runtime is null)
+        {
+            return null;
+        }
+
         try
         {
-            if (runtime != Environment.Version.ToString()) throw new InvalidOperationException("Probe runtime differs from parent.");
+            if (runtime != Environment.Version.ToString())
+            {
+                throw new InvalidOperationException("Probe runtime differs from parent.");
+            }
+
 #pragma warning disable RESP009 // The child entry point completes the isolated measurement before starting the test runner.
             MeasurePreparedDispatchAsync(Environment.GetEnvironmentVariable("RESPIRE_REPLICA_DISPATCH_SHAPE")
                 ?? throw new InvalidOperationException("Missing dispatch shape.")).GetAwaiter().GetResult();
@@ -415,15 +520,25 @@ public class StandaloneReplicaReadyTests
             _ => (Func<long>)(() => MeasureReplies(replica, connection, () => view.Strings.LengthAsync("parked"), true)),
         };
         // Warm generic dispatch and both completion ownership transitions.
-        for (var pass = 0; pass < 8; pass++) _ = send();
+        for (var pass = 0; pass < 8; pass++)
+        {
+            _ = send();
+        }
+
         _ = control();
         var measured = AllocationMeasurement.WithoutConcurrentGc(() => (send(), control()));
         Console.WriteLine($"REPLICA_DISPATCH {shape}: {measured.Item1} B; allocation control {measured.Item2} B for 32 calls.");
+
         if (measured.Item2 - measured.Item1 < 32L * 37)
+        {
             throw new InvalidOperationException("Dispatch positive control did not observe the escaping allocations.");
+        }
+
 #if !DEBUG
         if (measured.Item1 != 0)
+        {
             throw new InvalidOperationException($"Expected zero prepared dispatch allocations; observed {measured.Item1} bytes.");
+        }
 #endif
     }
 
@@ -431,25 +546,38 @@ public class StandaloneReplicaReadyTests
     private static long MeasureReplies<T>(FakeRespServer server, RespireConnection connection, Func<ValueTask<T>> send, bool allocate)
     {
         long total = 0;
+
         for (var i = 0; i < 32; i++)
         {
             var commands = server.CommandsSeen;
             var dispatchBytes = MeasureDispatch(send, allocate, out var pending);
             total += dispatchBytes;
+
             if (!connection.InspectForTests().Inflight.TryPeek(out var source))
+            {
                 throw new InvalidOperationException("The measured read did not publish a reply source.");
+            }
+
             if (!SpinWait.SpinUntil(() => server.CommandsSeen > commands, TimeSpan.FromSeconds(10)))
+            {
                 throw new TimeoutException("Replica did not receive the measured command.");
+            }
+
             var response = typeof(T) == typeof(long) ? ":5\r\n"u8.ToArray() : "$5\r\nhello\r\n"u8.ToArray();
 #pragma warning disable RESP009 // Keep the measurement loop on one thread while releasing each deliberately parked reply.
             server.SendRawAsync(response).GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
             // Complete both ownership transitions before the next measured rental.
             if (!SpinWait.SpinUntil(() => pending.IsCompleted && source!.InspectForTests().ReferenceCount <= 1,
                 TimeSpan.FromSeconds(10)))
+            {
                 throw new TimeoutException("Replica completion did not release receive ownership.");
+            }
+
             GC.KeepAlive(pending.GetAwaiter().GetResult());
         }
+
         return total;
     }
 
@@ -458,7 +586,12 @@ public class StandaloneReplicaReadyTests
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         pending = send();
-        if (allocate) GC.KeepAlive(new byte[37]);
+
+        if (allocate)
+        {
+            GC.KeepAlive(new byte[37]);
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -479,7 +612,9 @@ public class StandaloneReplicaReadyTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = replicas.Select(server => new RespireEndpoint("127.0.0.1", server.Port)).ToArray(),
-            Connections = 1, Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false,
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            ThreadPoolMonitoring = false,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(10),
         };
 }

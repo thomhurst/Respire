@@ -116,9 +116,15 @@ public class GeoPolygonCommandTests
             .Throws<RespireServerException>().WithMessage("ERR syntax error");
         await Assert.That(async () => await client.Geo.SearchStoreAsync("dest", "places", origin, RespireGeoSearchShape.Box(1, 1)))
             .Throws<RespireServerException>().WithMessage("ERR syntax error");
-        await Assert.That(async () => { using var reply = await client.ExecuteAsync(RespireCommands.Geo.GEOSEARCH, ["places", "invalid"]); })
+        await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync(RespireCommands.Geo.GEOSEARCH, ["places", "invalid"]);
+            })
             .Throws<RespireServerException>().WithMessage("ERR syntax error");
-        await Assert.That(async () => { using var reply = await client.ExecuteAsync(RespireCommands.Geo.GEOSEARCHSTORE, ["dest", "places", "invalid"]); })
+        await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync(RespireCommands.Geo.GEOSEARCHSTORE, ["dest", "places", "invalid"]);
+            })
             .Throws<RespireServerException>().WithMessage("ERR syntax error");
         using var batch = client.CreateBatch();
         var search = batch.Geo.Search("places", origin, RespireGeoSearchShape.Box(1, 1));

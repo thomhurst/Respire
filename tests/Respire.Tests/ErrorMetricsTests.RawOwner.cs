@@ -15,7 +15,7 @@ public partial class ErrorMetricsTests
         [Matrix(false, true)] bool fireAndForget, [Matrix(false, true)] bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         await using var server = new FakeRespServer(4, FakeRespServer.OkReply);
         await using var root = await FakeRespServer.ConnectClientAsync(server.Port);
         var client = root.WithKeyPrefix("tenant:");
@@ -27,6 +27,7 @@ public partial class ErrorMetricsTests
         await Assert.That(async () => await pending).ThrowsExactly<NotSupportedException>();
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(sent);
         await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 1 : 0);
+
         if (enabled)
         {
             var item = capture.Items.Single();
@@ -50,7 +51,10 @@ public partial class ErrorMetricsTests
             : client.ExecuteAsync(RespireCommands.String.GET, ["key"], flags);
         await Assert.That(pending.IsCompleted).IsTrue();
         await Assert.That(capture.Items.Count).IsEqualTo(0);
-        await Assert.That(async () => { using var result = await pending; }).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(async () =>
+        {
+            using var result = await pending;
+        }).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
     }
 
@@ -74,22 +78,40 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         async Task Execute()
         {
             switch (route)
             {
-                case "raw": using (await client.ExecuteAsync("BLPOP", ["key", 1], cancellationToken: deadline.Token)) break;
-                case "catalog": using (await client.ExecuteAsync(RespireCommands.List.BLPOP, ["key", 1], cancellationToken: deadline.Token)) break;
-                case "interpolated": using (await client.ExecuteAsync($"BLPOP key {1}", cancellationToken: deadline.Token)) break;
-                default: await client.Lists.PopAsync(["key"], TimeSpan.FromSeconds(1), cancellationToken: deadline.Token); break;
+                case "raw":
+                    using (await client.ExecuteAsync("BLPOP", ["key", 1], cancellationToken: deadline.Token))
+                    {
+                        break;
+                    }
+                case "catalog":
+                    using (await client.ExecuteAsync(RespireCommands.List.BLPOP, ["key", 1], cancellationToken: deadline.Token))
+                    {
+                        break;
+                    }
+                case "interpolated":
+                    using (await client.ExecuteAsync($"BLPOP key {1}", cancellationToken: deadline.Token))
+                    {
+                        break;
+                    }
+                default:
+                    await client.Lists.PopAsync(["key"], TimeSpan.FromSeconds(1), cancellationToken: deadline.Token);
+                    break;
             }
         }
+
         var error = await Assert.That(Execute).ThrowsExactly<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo(failAsking ? "NOPERM" : "WRONGTYPE");
         var items = capture.Items.ToArray();
@@ -113,7 +135,11 @@ public partial class ErrorMetricsTests
             ReplyOverride = (_, command) => command == "ASKING" ? FakeRespServer.OkReply : null,
             SuppressReply = command =>
             {
-                if (!command.StartsWith("BLPOP ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("BLPOP ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 accepted.TrySetResult();
                 return cancel;
             },
@@ -127,8 +153,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            CommandTimeout = TimeSpan.FromMilliseconds(100), ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(100),
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            CommandTimeout = TimeSpan.FromMilliseconds(100),
+            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(100),
             Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
@@ -136,10 +165,14 @@ public partial class ErrorMetricsTests
         using var cancellation = new CancellationTokenSource();
         var pending = client.ExecuteAsync("BLPOP", ["key", 1], cancellationToken: cancellation.Token).AsTask();
         await accepted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
         if (cancel)
         {
             cancellation.Cancel();
-            var error = await Assert.That(async () => { using var result = await pending; }).Throws<OperationCanceledException>();
+            var error = await Assert.That(async () =>
+            {
+                using var result = await pending;
+            }).Throws<OperationCanceledException>();
             await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
             await Assert.That(pending.IsCanceled).IsTrue();
         }
@@ -148,9 +181,11 @@ public partial class ErrorMetricsTests
             using var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(result.IsNull).IsTrue();
         }
+
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(cancel ? 2 : 1);
         await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsTrue();
+
         if (cancel)
         {
             await Assert.That((bool)items[1].Tags["redis.client.errors.internal"]!).IsFalse();
@@ -164,7 +199,7 @@ public partial class ErrorMetricsTests
     public async Task BlockingAskingCapacityFailureHasOneFinalOwner(bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         await using var target = new FakeRespServer(4, FakeRespServer.OkReply);
         var slot = ClusterHash.GetSlot("key");
         await using var seed = new FakeRespServer(4, Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"))
@@ -179,8 +214,11 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, ClusterTopologyRefreshInterval = null,
-            MaxInflightCommands = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            MaxInflightCommands = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         using var capture = new Capture(throwOnMeasurement: true);
@@ -195,6 +233,7 @@ public partial class ErrorMetricsTests
             || command.StartsWith("BLPOP ", StringComparison.Ordinal))).IsFalse();
         var items = capture.Items.ToArray();
         await Assert.That(items.Length).IsEqualTo(enabled ? 2 : 0);
+
         if (enabled)
         {
             await Assert.That((bool)items[0].Tags["redis.client.errors.internal"]!).IsTrue();
@@ -202,6 +241,7 @@ public partial class ErrorMetricsTests
             await Assert.That((bool)items[1].Tags["redis.client.errors.internal"]!).IsFalse();
             await Assert.That(items[1].Tags["redis.client.operation.retry_attempts"]).IsEqualTo(1);
         }
+
         using var reply = await client.ExecuteAsync("PING", [], cancellationToken: deadline.Token);
         await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 2 : 0);
     }

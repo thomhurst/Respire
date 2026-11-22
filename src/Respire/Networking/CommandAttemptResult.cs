@@ -21,7 +21,10 @@ internal enum CommandWriteOutcome : byte
 internal readonly struct CommandAttemptResult(
     RespValue response, CommandWriteOutcome writeOutcome, ExceptionDispatchInfo? failure = null)
 {
-    internal CommandWriteOutcome WriteOutcome { get; } = writeOutcome;
+    internal CommandWriteOutcome WriteOutcome
+    {
+        get;
+    } = writeOutcome;
 
     internal RespValue GetResult()
     {

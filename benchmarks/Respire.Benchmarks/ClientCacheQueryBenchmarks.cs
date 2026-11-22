@@ -31,13 +31,19 @@ public class ClientCacheQueryBenchmarks
     [GlobalSetup]
     public async Task Setup()
     {
-        if (s_lockContentions is null) throw new NotSupportedException("Query contention diagnostics require the runtime lock counter.");
+        if (s_lockContentions is null)
+        {
+            throw new NotSupportedException("Query contention diagnostics require the runtime lock counter.");
+        }
+
         ReportMemory("before-connect");
+
         try
         {
             var host = Environment.GetEnvironmentVariable("REDIS_HOST");
             var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort)
                 ? configuredPort : 6379;
+
             if (string.IsNullOrEmpty(host))
             {
                 _container = new RedisBuilder("redis:8.10").Build();
@@ -45,9 +51,12 @@ public class ClientCacheQueryBenchmarks
                 host = _container.Hostname;
                 port = _container.GetMappedPublicPort(6379);
             }
+
             var options = new RespireOptions
             {
-                Endpoints = [new(host, port)], Connections = 1, Protocol = RespireProtocol.Resp3,
+                Endpoints = [new(host, port)],
+                Connections = 1,
+                Protocol = RespireProtocol.Resp3,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             };
             _cacheOff = await RespireClient.ConnectAsync(options);
@@ -56,12 +65,23 @@ public class ClientCacheQueryBenchmarks
             {
                 ClientSideCache = new() { CoalesceConcurrentMisses = true },
             });
+
             foreach (var key in _readKeys.Concat(_writeKeys))
-                if (!await _cacheOff.SetAsync(key, _value)) throw new InvalidOperationException("Seed SET failed.");
+            {
+                if (!await _cacheOff.SetAsync(key, _value))
+                {
+                    throw new InvalidOperationException("Seed SET failed.");
+                }
+            }
+
             ReportMemory("connected-idle");
+
             if (await SetConcurrent50() != Callers * Rounds
                 || await SetConcurrent50CacheOff() != Callers * Rounds)
+            {
                 throw new InvalidOperationException("SET fixture validation failed.");
+            }
+
             await ValidateQueries("unrelated-sharing", _sharing, writes: true, affected: false);
             await ValidateQueries("unrelated-independent", _independent, writes: true, affected: false);
             await ValidateQueries("affected-sharing", _sharing, writes: true, affected: true);
@@ -69,8 +89,13 @@ public class ClientCacheQueryBenchmarks
             // Historical key cardinality must not retain pending generations. These
             // temporary missing-key strings and replies have no fixture-owned roots.
             for (var index = 0; index < 1_500; index++)
+            {
                 if (await _sharing.Strings.LengthAsync("cache:query:churn:" + index) != 0)
+                {
                     throw new InvalidOperationException("Churn key unexpectedly exists.");
+                }
+            }
+
             _sharing.ClientSideCache!.Clear();
             _independent.ClientSideCache!.Clear();
             ReportMemory("after-churn");
@@ -105,34 +130,53 @@ public class ClientCacheQueryBenchmarks
 
     private async Task<long> Run(RespireClient client, bool queries, bool writes, bool affected)
     {
-        if (queries) client.ClientSideCache!.Clear();
+        if (queries)
+        {
+            client.ClientSideCache!.Clear();
+        }
+
         var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         for (var index = 0; index < Callers; index++)
         {
             var worker = index;
             _workers[index] = writes ? Task.Run(async () =>
             {
                 await start.Task;
+
                 for (var round = 0; round < Rounds; round++)
-                    if (!await client.SetAsync(_writeKeys[worker], _value)) throw new InvalidOperationException("SET failed.");
+                {
+                    if (!await client.SetAsync(_writeKeys[worker], _value))
+                    {
+                        throw new InvalidOperationException("SET failed.");
+                    }
+                }
+
                 return (long)Rounds;
             }) : Task.FromResult(0L);
             _workers[Callers + index] = queries ? Task.Run(async () =>
             {
                 await start.Task;
                 long length = 0;
+
                 for (var round = 0; round < Rounds; round++)
                 {
                     var key = affected ? _writeKeys[worker] : _readKeys[worker * Rounds + round];
                     var first = await client.Strings.LengthAsync(key);
                     var reused = await client.Strings.LengthAsync(key);
+
                     if (first != _value.Length || reused != _value.Length)
+                    {
                         throw new InvalidOperationException("STRLEN returned an unexpected value.");
+                    }
+
                     length += first + reused;
                 }
+
                 return length;
             }) : Task.FromResult(0L);
         }
+
         start.SetResult();
         return (await Task.WhenAll(_workers)).Sum();
     }
@@ -144,8 +188,12 @@ public class ClientCacheQueryBenchmarks
         using var queryContentions = await QueryGateContentionProbe.CreateAsync(client.ClientSideCache!);
         var before = client.ClientSideCache!.GetStatistics();
         var beforeContentions = s_lockContentions!();
+
         if (await Run(client, queries: true, writes, affected) != Callers * Rounds * (2 * _value.Length + (writes ? 1 : 0)))
+        {
             throw new InvalidOperationException("Mixed fixture validation failed.");
+        }
+
         var lockContentions = s_lockContentions() - beforeContentions;
         var after = client.ClientSideCache.GetStatistics();
         // Runtime delivery can lag joined producers. Report the bounded drain outcome;
@@ -153,9 +201,13 @@ public class ClientCacheQueryBenchmarks
         var observationsDrained = await queryContentions.DrainAsync();
         Console.WriteLine("QUERY_VALIDATION " + JsonSerializer.Serialize(new
         {
-            workload, queryCalls = 2 * Callers * Rounds, writes = writes ? Callers * Rounds : 0,
-            hits = after.Hits - before.Hits, misses = after.Misses - before.Misses,
-            residentEntries = after.Count, managedLockContentions = lockContentions,
+            workload,
+            queryCalls = 2 * Callers * Rounds,
+            writes = writes ? Callers * Rounds : 0,
+            hits = after.Hits - before.Hits,
+            misses = after.Misses - before.Misses,
+            residentEntries = after.Count,
+            managedLockContentions = lockContentions,
             queryGateContentionsObserved = queryContentions.Count,
             queryGateCompletedWaitsObserved = queryContentions.CompletedWaits,
             queryGateWaitMillisecondsObserved = queryContentions.WaitMilliseconds,
@@ -176,35 +228,55 @@ public class ClientCacheQueryBenchmarks
         private long _completedWaits;
         private double _waitNanoseconds;
         private double _maximumWaitNanoseconds;
+
         internal long Count => Interlocked.Read(ref _count);
+
         internal long CompletedWaits => Interlocked.Read(ref _completedWaits);
+
         internal int OutstandingWaits => _waitingThreads.Count;
+
         internal double WaitMilliseconds => Volatile.Read(ref _waitNanoseconds) / 1_000_000;
+
         internal double MaximumWaitMilliseconds => Volatile.Read(ref _maximumWaitNanoseconds) / 1_000_000;
 
         private QueryGateContentionProbe()
         {
             // EventListener discovers sources in its base constructor, before these fields exist.
             Volatile.Write(ref _ready, 1);
-            foreach (var source in EventSource.GetSources()) OnEventSourceCreated(source);
+
+            foreach (var source in EventSource.GetSources())
+            {
+                OnEventSourceCreated(source);
+            }
         }
 
         protected override void OnEventSourceCreated(EventSource source)
         {
             if (Volatile.Read(ref _ready) != 0 && source.Name == "Microsoft-Windows-DotNETRuntime")
+            {
                 EnableEvents(source, EventLevel.Informational, (EventKeywords)0x4000);
+            }
         }
 
         protected override void OnEventWritten(EventWrittenEventArgs args)
         {
-            if (args.EventSource.Name != "Microsoft-Windows-DotNETRuntime" || args.Payload is not { Count: >= 3 }) return;
+            if (args.EventSource.Name != "Microsoft-Windows-DotNETRuntime" || args.Payload is not { Count: >= 3 })
+            {
+                return;
+            }
+
             if (args.EventId == 91 && _waitingThreads.TryRemove(args.OSThreadId, out _))
             {
                 var duration = Convert.ToDouble(args.Payload[2], System.Globalization.CultureInfo.InvariantCulture);
                 AddWait(duration);
                 return;
             }
-            if (args.EventId != 81) return;
+
+            if (args.EventId != 81)
+            {
+                return;
+            }
+
             var lockId = args.Payload[2] switch
             {
                 nint pointer => pointer,
@@ -212,9 +284,18 @@ public class ClientCacheQueryBenchmarks
                 ulong value => (nint)unchecked((long)value),
                 _ => 0,
             };
-            if (lockId == 0) return;
+
+            if (lockId == 0)
+            {
+                return;
+            }
+
             var target = Volatile.Read(ref _target);
-            if (target == 0) _warmLockIds.Enqueue(lockId);
+
+            if (target == 0)
+            {
+                _warmLockIds.Enqueue(lockId);
+            }
             else if (lockId == target)
             {
                 _waitingThreads.TryAdd(args.OSThreadId, 0);
@@ -225,11 +306,19 @@ public class ClientCacheQueryBenchmarks
         private void AddWait(double duration)
         {
             var total = Volatile.Read(ref _waitNanoseconds);
+
             while (Interlocked.CompareExchange(ref _waitNanoseconds, total + duration, total) != total)
+            {
                 total = Volatile.Read(ref _waitNanoseconds);
+            }
+
             var maximum = Volatile.Read(ref _maximumWaitNanoseconds);
+
             while (duration > maximum && Interlocked.CompareExchange(ref _maximumWaitNanoseconds, duration, maximum) != maximum)
+            {
                 maximum = Volatile.Read(ref _maximumWaitNanoseconds);
+            }
+
             Interlocked.Increment(ref _completedWaits);
         }
 
@@ -238,15 +327,26 @@ public class ClientCacheQueryBenchmarks
             var started = Stopwatch.GetTimestamp();
             var quietSince = started;
             var observed = Count;
+
             while (OutstandingWaits != 0 || Stopwatch.GetElapsedTime(quietSince) < TimeSpan.FromMilliseconds(100))
             {
-                if (Stopwatch.GetElapsedTime(started) >= TimeSpan.FromSeconds(1)) return false;
+                if (Stopwatch.GetElapsedTime(started) >= TimeSpan.FromSeconds(1))
+                {
+                    return false;
+                }
+
                 await Task.Delay(10);
                 var current = Count;
-                if (current == observed) continue;
+
+                if (current == observed)
+                {
+                    continue;
+                }
+
                 observed = current;
                 quietSince = Stopwatch.GetTimestamp();
             }
+
             return true;
         }
 
@@ -259,6 +359,7 @@ public class ClientCacheQueryBenchmarks
             var lockId = gate.GetType().GetProperty("LockIdForEvents", BindingFlags.Instance | BindingFlags.NonPublic)
                 ?? throw new NotSupportedException("Pinned runtime lock identity is missing.");
             var listener = new QueryGateContentionProbe();
+
             try
             {
                 await listener.CalibrateAsync(gate, enter, exit, lockId);
@@ -275,17 +376,27 @@ public class ClientCacheQueryBenchmarks
             var holding = Task.Factory.StartNew(() =>
             {
                 enter.Invoke(gate, null);
+
                 try
                 {
                     held.Set();
-                    if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Query gate positive control was not released.");
+
+                    if (!release.Wait(TimeSpan.FromSeconds(10)))
+                    {
+                        throw new TimeoutException("Query gate positive control was not released.");
+                    }
                 }
                 finally { exit.Invoke(gate, null); }
             }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
             Task? waiting = null;
+
             try
             {
-                if (!held.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Query gate holder did not start.");
+                if (!held.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("Query gate holder did not start.");
+                }
+
                 waiting = Task.Factory.StartNew(() =>
                 {
                     waiterStarted.SetResult(Thread.CurrentThread);
@@ -293,14 +404,25 @@ public class ClientCacheQueryBenchmarks
                     exit.Invoke(gate, null);
                 }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
                 var thread = await waiterStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
                 if (!SpinWait.SpinUntil(() => (thread.ThreadState & System.Threading.ThreadState.WaitSleepJoin) != 0,
                         TimeSpan.FromSeconds(10)))
+                {
                     throw new TimeoutException("Query gate positive control did not park.");
+                }
+
                 var identity = (nint)lockId.GetValue(gate)!;
+
                 if (!SpinWait.SpinUntil(() => _warmLockIds.Contains(identity), TimeSpan.FromSeconds(10)))
+                {
                     throw new InvalidOperationException("Runtime contention events did not identify the controlled query gate.");
+                }
+
                 Volatile.Write(ref _target, identity);
-                while (_warmLockIds.TryDequeue(out _)) { }
+
+                while (_warmLockIds.TryDequeue(out _))
+                {
+                }
             }
             finally
             {
@@ -315,7 +437,12 @@ public class ClientCacheQueryBenchmarks
         // Reflection is outside measured methods, after every producer has joined.
         // The same copied fixture supports baselines without the new pending index.
         var pending = PendingDependencies(_sharing?.ClientSideCache) + PendingDependencies(_independent?.ClientSideCache);
-        if (pending != 0) throw new InvalidOperationException("Completed workload retained pending dependency keys.");
+
+        if (pending != 0)
+        {
+            throw new InvalidOperationException("Completed workload retained pending dependency keys.");
+        }
+
         var sharingIdle = IdleQueryStorage(_sharing?.ClientSideCache);
         var independentIdle = IdleQueryStorage(_independent?.ClientSideCache);
         GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
@@ -323,19 +450,27 @@ public class ClientCacheQueryBenchmarks
         using var process = Process.GetCurrentProcess();
         Console.WriteLine("RECEIVE_MEMORY " + JsonSerializer.Serialize(new
         {
-            stage, pendingDependencyKeys = pending, churnKeys = 1_500,
+            stage,
+            pendingDependencyKeys = pending,
+            churnKeys = 1_500,
             idleQueryLeases = sharingIdle.Leases + independentIdle.Leases,
             idleQueryStates = sharingIdle.States + independentIdle.States,
             retainedIdleDependencies = sharingIdle.RetainedDependencies + independentIdle.RetainedDependencies,
             cacheEntries = (_sharing?.ClientSideCache?.Count ?? 0) + (_independent?.ClientSideCache?.Count ?? 0),
-            managedBytes = GC.GetTotalMemory(false), pohBytes = info.GenerationInfo[4].SizeAfterBytes,
-            pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes, workingSetBytes = process.WorkingSet64,
+            managedBytes = GC.GetTotalMemory(false),
+            pohBytes = info.GenerationInfo[4].SizeAfterBytes,
+            pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes,
+            workingSetBytes = process.WorkingSet64,
         }));
     }
 
     private static (int Leases, int States, int RetainedDependencies) IdleQueryStorage(object? cache)
     {
-        if (cache is null) return default;
+        if (cache is null)
+        {
+            return default;
+        }
+
         const BindingFlags members = BindingFlags.Instance | BindingFlags.NonPublic;
         var type = cache.GetType();
         // Support both the private storage value and earlier heads with coordinator-owned lists.
@@ -344,66 +479,135 @@ public class ClientCacheQueryBenchmarks
         var storageType = storage.GetType();
         var leaseField = storageType.GetField(storageField is null ? "_idleQueryLeases" : "_leases", members);
         var stateField = storageType.GetField(storageField is null ? "_idleQueryStates" : "_states", members);
+
         if (leaseField is null && stateField is null)
         {
             // The same copied fixture runs against the pre-pooling baseline.
             if (type.GetNestedType("TestInspection", BindingFlags.NonPublic)?.GetProperty("IdleQueryStorage", members) is not null)
+            {
                 throw new InvalidOperationException("Idle storage diagnostic exists but pooled storage is missing.");
+            }
+
             return default;
         }
-        if (leaseField is null || stateField is null) throw new InvalidOperationException("Incomplete query storage diagnostics.");
+
+        if (leaseField is null || stateField is null)
+        {
+            throw new InvalidOperationException("Incomplete query storage diagnostics.");
+        }
+
         var leases = 0;
         var states = 0;
         var retained = 0;
+
         for (var state = stateField.GetValue(storage); state is not null; state = state.GetType().GetField("Next", members)!.GetValue(state))
         {
-            if (++states > 256) throw new InvalidOperationException("Query state pool exceeds its per-client bound.");
-            if (state.GetType().GetField("Key", members)!.GetValue(state) is not RespireKey key || !key.Equals(default(RespireKey))) retained++;
+            if (++states > 256)
+            {
+                throw new InvalidOperationException("Query state pool exceeds its per-client bound.");
+            }
+
+            if (state.GetType().GetField("Key", members)!.GetValue(state) is not RespireKey key || !key.Equals(default(RespireKey)))
+            {
+                retained++;
+            }
         }
+
         for (var lease = leaseField.GetValue(storage); lease is not null; lease = lease.GetType().GetField("Next", members)!.GetValue(lease))
         {
-            if (++leases > 64) throw new InvalidOperationException("Query lease pool exceeds its per-client bound.");
+            if (++leases > 64)
+            {
+                throw new InvalidOperationException("Query lease pool exceeds its per-client bound.");
+            }
+
             var leaseType = lease.GetType();
             var capacity = (int)leaseType.GetProperty("Capacity", members)!.GetValue(lease)!;
-            if (capacity > 16) throw new InvalidOperationException("Large stamp storage was retained.");
+
+            if (capacity > 16)
+            {
+                throw new InvalidOperationException("Large stamp storage was retained.");
+            }
+
             var dependency = leaseType.GetMethod("GetDependency", members)!;
+
             for (var index = 0; index < capacity; index++)
             {
                 var stamp = dependency.Invoke(lease, [index])!;
                 // The positional record exposes its State property publicly.
-                if (stamp.GetType().GetProperty("State")!.GetValue(stamp) is not null) retained++;
+                if (stamp.GetType().GetProperty("State")!.GetValue(stamp) is not null)
+                {
+                    retained++;
+                }
             }
         }
-        if (retained != 0) throw new InvalidOperationException("Idle query storage retained dependency keys or states.");
+
+        if (retained != 0)
+        {
+            throw new InvalidOperationException("Idle query storage retained dependency keys or states.");
+        }
+
         return (leases, states, retained);
     }
 
     private static int PendingDependencies(object? cache)
     {
-        if (cache is null) return 0;
+        if (cache is null)
+        {
+            return 0;
+        }
+
         var type = cache.GetType();
         var field = type.GetField("_queryDependencies", BindingFlags.Instance | BindingFlags.NonPublic);
+
         if (field is null)
         {
             // The pre-fencing baseline lacks both the index and its inspection diagnostic.
             // A renamed index in a fencing implementation must fail rather than report zero.
             var inspection = type.GetNestedType("TestInspection", BindingFlags.NonPublic);
+
             if (inspection?.GetProperty("PendingQueryDependencyCount", BindingFlags.Instance | BindingFlags.NonPublic) is not null)
+            {
                 throw new InvalidOperationException("Query dependency diagnostic exists but its pending index is missing.");
+            }
+
             return 0;
         }
+
         if (field.GetValue(cache) is not ICollection dependencies)
+        {
             throw new InvalidOperationException("Pending query dependency index is not a collection.");
+        }
+
         return dependencies.Count;
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_sharing is not null) { await _sharing.DisposeAsync(); _sharing = null!; }
-        if (_independent is not null) { await _independent.DisposeAsync(); _independent = null!; }
-        if (_cacheOff is not null) { await _cacheOff.DisposeAsync(); _cacheOff = null!; }
-        if (_container is not null) { await _container.DisposeAsync(); _container = null; }
+        if (_sharing is not null)
+        {
+            await _sharing.DisposeAsync();
+            _sharing = null!;
+        }
+
+        if (_independent is not null)
+        {
+            await _independent.DisposeAsync();
+            _independent = null!;
+        }
+
+        if (_cacheOff is not null)
+        {
+            await _cacheOff.DisposeAsync();
+            _cacheOff = null!;
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+            _container = null;
+        }
+
         ReportMemory("after-dispose");
     }
 }

@@ -28,6 +28,7 @@ public class StreamReadTests
         RespireStreamReadResult[] result;
         using var batch = surface == 1 ? view.CreateBatch() : null;
         await using var transaction = surface == 2 ? view.CreateTransaction() : null;
+
         if (surface == 0)
         {
             var pending = view.Streams.ReadAsync(streams, count: 2).AsTask();
@@ -41,10 +42,19 @@ public class StreamReadTests
             var pending = queue.Streams.Read(streams, count: 2);
             Array.Fill(key, (byte)'x');
             streams[1] = ("wrong", "99-0");
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             result = pending.Result;
         }
+
         await client.DisposeAsync();
         await Assert.That(result.Select(x => x.Key.ToString())).IsEquivalentTo(["{a}:one", "{a}:two"], CollectionOrdering.Matching);
         await Assert.That(result[0].Entries[0].Id).IsEqualTo((RespireStreamId)"1-0");
@@ -63,15 +73,17 @@ public class StreamReadTests
         await Assert.That(async () => await client.Streams.ReadAsync("key", count: 0)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Streams.ReadAsync("key", waitFor: TimeSpan.FromSeconds(-2)))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Streams.ReadAsync("key", ">" )).Throws<ArgumentException>();
+        await Assert.That(async () => await client.Streams.ReadAsync("key", ">")).Throws<ArgumentException>();
         await Assert.That(async () => await client.Streams.ReadAsync([("a", "0"), ("a", "0")])).Throws<ArgumentException>();
         await Assert.That(async () => await client.Streams.ReadAsync([("{a}:one", "0"), ("{b}:two", "0")]))
             .ThrowsExactly<RespireCrossSlotException>();
+
         foreach (var streams in new[] { batch.Streams, transaction.Streams })
         {
             await Assert.That(() => streams.Read([])).Throws<ArgumentException>();
             await Assert.That(() => streams.Read([("{a}:one", "0"), ("{b}:two", "0")])).ThrowsExactly<RespireCrossSlotException>();
         }
+
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands).IsEmpty();
@@ -126,10 +138,13 @@ public class StreamReadTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromMilliseconds(25),
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CommandTimeout = TimeSpan.FromMilliseconds(25),
         });
 #pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         if (enumerate)
         {
             await using var reader = client.Streams.ReadAllAsync("events", cancellationToken: timeout.Token).GetAsyncEnumerator();
@@ -141,6 +156,7 @@ public class StreamReadTests
             var entries = await client.Streams.ReadAsync("events", waitFor: TimeSpan.FromSeconds(1), cancellationToken: timeout.Token);
             await Assert.That(entries[0].Id).IsEqualTo((RespireStreamId)"1-0");
         }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
     }
 
@@ -152,16 +168,27 @@ public class StreamReadTests
         {
             CloseConnectionAfterCommand = 2,
         };
-        server.SuppressReply = _ => { if (server.CommandsSeen < 3) return false; reconnecting.TrySetResult(); return true; };
+        server.SuppressReply = _ =>
+        {
+            if (server.CommandsSeen < 3)
+            {
+                return false;
+            }
+
+            reconnecting.TrySetResult();
+            return true;
+        };
         await using var client = Create(server.Port);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var reader = client.Streams.ReadAllAsync([("one", "0"), ("two", "0")], cancellationToken: timeout.Token).GetAsyncEnumerator();
+
         foreach (var id in new[] { "1-0", "2-0", "5-0" })
         {
             await Assert.That(await reader.MoveNextAsync()).IsTrue();
             await Assert.That(reader.Current.Entry.Id).IsEqualTo((RespireStreamId)id);
             await Assert.That(server.CommandsSeen).IsEqualTo(1);
         }
+
         var next = reader.MoveNextAsync().AsTask();
         await reconnecting.Task.WaitAsync(timeout.Token);
         await Assert.That(server.ReceivedCommands.Skip(1)).IsEquivalentTo(
@@ -177,7 +204,16 @@ public class StreamReadTests
     {
         var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(3, Entries(["7-0"])) { CloseConnectionAfterCommand = 2 };
-        server.SuppressReply = _ => { if (server.CommandsSeen < 3) return false; reconnecting.TrySetResult(); return true; };
+        server.SuppressReply = _ =>
+        {
+            if (server.CommandsSeen < 3)
+            {
+                return false;
+            }
+
+            reconnecting.TrySetResult();
+            return true;
+        };
         await using var client = Create(server.Port);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var reader = client.Streams.ReadAllAsync("events", RespireStreamId.New, cancellationToken: timeout.Token).GetAsyncEnumerator();
@@ -210,15 +246,27 @@ public class StreamReadTests
         var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer
         {
-            SuppressReply = _ => { reading.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                reading.TrySetResult();
+                return true;
+            },
         };
         await using var client = Create(server.Port);
         using var cancel = new CancellationTokenSource();
         await using var reader = client.Streams.ReadAllAsync("events").GetAsyncEnumerator(cancel.Token);
         var next = reader.MoveNextAsync().AsTask();
         await reading.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        if (disposeClient) await client.DisposeAsync();
-        else cancel.Cancel();
+
+        if (disposeClient)
+        {
+            await client.DisposeAsync();
+        }
+        else
+        {
+            cancel.Cancel();
+        }
+
         await Assert.That(async () => await next.WaitAsync(TimeSpan.FromSeconds(5))).Throws<Exception>();
         await Assert.That(next.IsCompleted).IsTrue();
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
@@ -231,7 +279,11 @@ public class StreamReadTests
         var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("XREAD ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("XREAD ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             reading.TrySetResult();
             return true;
         };
@@ -259,7 +311,9 @@ public class StreamReadTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Connections = 1, Password = "test-secret", Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Password = "test-secret",
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         await using var reader = client.Streams.ReadAllAsync("events").GetAsyncEnumerator();
@@ -282,7 +336,11 @@ public class StreamReadTests
         await using var seed = new FakeRespServer(2, redirect);
         seed.SuppressReply = command =>
         {
-            if (command != "CLUSTER SLOTS") return false;
+            if (command != "CLUSTER SLOTS")
+            {
+                return false;
+            }
+
             _ = seed.SendRawAsync("*0\r\n"u8.ToArray());
             return true;
         };
@@ -317,23 +375,31 @@ public class StreamReadTests
     internal static byte[] Reply(bool map, params (string Key, string[] Ids)[] streams)
     {
         var bytes = new List<byte>(Encoding.ASCII.GetBytes($"{(map ? '%' : '*')}{streams.Length}\r\n"));
+
         foreach (var stream in streams)
         {
-            if (!map) bytes.AddRange("*2\r\n"u8.ToArray());
+            if (!map)
+            {
+                bytes.AddRange("*2\r\n"u8.ToArray());
+            }
+
             bytes.AddRange(Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(stream.Key)}\r\n{stream.Key}\r\n"));
             bytes.AddRange(Entries(stream.Ids));
         }
+
         return bytes.ToArray();
     }
 
     internal static byte[] Entries(string[] ids)
     {
         var bytes = new List<byte>(Encoding.ASCII.GetBytes($"*{ids.Length}\r\n"));
+
         foreach (var id in ids)
         {
             bytes.AddRange(Encoding.ASCII.GetBytes($"*2\r\n${id.Length}\r\n{id}\r\n*2\r\n$5\r\nfield\r\n$2\r\n"));
             bytes.AddRange([0xff, 0, 13, 10]);
         }
+
         return bytes.ToArray();
     }
 }

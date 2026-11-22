@@ -19,18 +19,34 @@ public class ReceiveDeadlineTests
         var receiver = new Thread(() =>
         {
             started.Set();
-            try { state.Receive(); }
+
+            try
+            {
+                state.Receive();
+            }
             catch (Exception error) { failure = error; }
             finally { finished.Set(); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         bool completed;
+
         lock (state.Gate)
         {
             receiver.Start();
-            if (!started.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Receiver did not start.");
+
+            if (!started.Wait(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("Receiver did not start.");
+            }
+
             completed = finished.Wait(TimeSpan.FromSeconds(5));
         }
-        if (!receiver.Join(TimeSpan.FromSeconds(5))) throw new TimeoutException("Receiver did not finish.");
+
+        if (!receiver.Join(TimeSpan.FromSeconds(5)))
+        {
+            throw new TimeoutException("Receiver did not finish.");
+        }
+
         await Assert.That(failure).IsNull();
         await Assert.That(completed).IsTrue();
         await Assert.That(state.Received).IsEqualTo(1L);
@@ -48,20 +64,36 @@ public class ReceiveDeadlineTests
         var receiver = new Thread(() =>
         {
             started.Set();
-            try { state.Receive(); }
+
+            try
+            {
+                state.Receive();
+            }
             catch (Exception error) { failure = error; }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         bool counted;
         long newTimestamp;
+
         lock (state.Gate)
         {
             receiver.Start();
-            if (!started.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Receiver did not start.");
+
+            if (!started.Wait(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("Receiver did not start.");
+            }
+
             counted = SpinWait.SpinUntil(() => state.Received == 1, TimeSpan.FromSeconds(5));
             state.Send(1); // Reentrant gate: final-reply cleanup is still blocked.
             newTimestamp = state.Timestamp;
         }
-        if (!receiver.Join(TimeSpan.FromSeconds(5))) throw new TimeoutException("Receiver did not finish.");
+
+        if (!receiver.Join(TimeSpan.FromSeconds(5)))
+        {
+            throw new TimeoutException("Receiver did not finish.");
+        }
+
         await Assert.That(failure).IsNull();
         await Assert.That(counted).IsTrue();
         await Assert.That(newTimestamp).IsGreaterThan(oldTimestamp);
@@ -79,10 +111,15 @@ public class ReceiveDeadlineTests
         state.Receive();
         state.Send(1);
         await Assert.That(state.Timestamp).IsEqualTo(0L);
+
         lock (state.Gate)
         {
-            if (state.Claim(1)) throw new InvalidOperationException("An idle connection claimed a timeout.");
+            if (state.Claim(1))
+            {
+                throw new InvalidOperationException("An idle connection claimed a timeout.");
+            }
         }
+
         state.Send(1);
         await Assert.That(state.Timestamp).IsGreaterThan(0L);
         state.Receive();
@@ -98,11 +135,13 @@ public class ReceiveDeadlineTests
         state.Receive();
         bool stale;
         bool current;
+
         lock (state.Gate)
         {
             stale = state.Claim(0);
             current = state.Claim(1);
         }
+
         await Assert.That(stale).IsFalse();
         await Assert.That(current).IsTrue();
         var timestamp = state.Timestamp;
@@ -112,9 +151,13 @@ public class ReceiveDeadlineTests
         await Assert.That(state.Received).IsEqualTo(-1L);
         await Assert.That(state.Sent).IsEqualTo(2L);
         await Assert.That(state.Timestamp).IsEqualTo(timestamp);
+
         lock (state.Gate)
         {
-            if (state.Claim(-1)) throw new InvalidOperationException("A committed timeout was claimed twice.");
+            if (state.Claim(-1))
+            {
+                throw new InvalidOperationException("A committed timeout was claimed twice.");
+            }
         }
     }
 
@@ -128,24 +171,47 @@ public class ReceiveDeadlineTests
             using var start = new ManualResetEventSlim();
             using var ready = new CountdownEvent(2);
             var claimed = false;
-            var receiver = new Thread(() => { ready.Signal(); start.Wait(); state.Receive(); }) { IsBackground = true };
+            var receiver = new Thread(() =>
+            {
+                ready.Signal();
+                start.Wait();
+                state.Receive();
+            })
+            { IsBackground = true };
             var watcher = new Thread(() =>
             {
                 ready.Signal();
                 start.Wait();
-                lock (state.Gate) claimed = state.Claim(0);
-            }) { IsBackground = true };
+
+                lock (state.Gate)
+                {
+                    claimed = state.Claim(0);
+                }
+            })
+            { IsBackground = true };
             receiver.Start();
             watcher.Start();
+
             try
             {
-                if (!ready.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Participants did not start.");
+                if (!ready.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException("Participants did not start.");
+                }
             }
             finally { start.Set(); }
+
             if (!receiver.Join(TimeSpan.FromSeconds(5)) || !watcher.Join(TimeSpan.FromSeconds(5)))
+            {
                 throw new TimeoutException("Participants did not finish.");
+            }
+
             await Assert.That(state.Received).IsEqualTo(claimed ? -1L : 1L);
-            if (!claimed) await Assert.That(state.Timestamp).IsEqualTo(0L);
+
+            if (!claimed)
+            {
+                await Assert.That(state.Timestamp).IsEqualTo(0L);
+            }
         }
     }
 
@@ -159,13 +225,36 @@ public class ReceiveDeadlineTests
         private readonly FieldInfo _sent = StateType.GetField("SentReplyCount", Members)!;
         private readonly FieldInfo _received = StateType.GetField("ReceivedReplyCount", Members)!;
         private readonly FieldInfo _timestamp = StateType.GetField("DeadlineTimestamp", Members)!;
-        public Lock Gate { get; }
-        public Action<int> Send { get; }
-        public Action Receive { get; }
-        public Action Restart { get; }
-        public Func<long, bool> Claim { get; }
+
+        public Lock Gate
+        {
+            get;
+        }
+
+        public Action<int> Send
+        {
+            get;
+        }
+
+        public Action Receive
+        {
+            get;
+        }
+
+        public Action Restart
+        {
+            get;
+        }
+
+        public Func<long, bool> Claim
+        {
+            get;
+        }
+
         public long Sent => (long)_sent.GetValue(_state)!;
+
         public long Received => (long)_received.GetValue(_state)!;
+
         public long Timestamp => (long)_timestamp.GetValue(_state)!;
 
         public DeadlineState()

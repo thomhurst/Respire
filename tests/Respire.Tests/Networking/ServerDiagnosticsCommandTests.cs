@@ -81,8 +81,17 @@ public class ServerDiagnosticsCommandTests
         await using var seed = new FakeRespServer(2, Array());
         seed.SuppressReply = command =>
         {
-            if (command == "CLUSTER SLOTS") { _ = seed.SendRawAsync(Slots(seed.Port)); return true; }
-            if (command != "CLUSTER NODES") return false;
+            if (command == "CLUSTER SLOTS")
+            {
+                _ = seed.SendRawAsync(Slots(seed.Port));
+                return true;
+            }
+
+            if (command != "CLUSTER NODES")
+            {
+                return false;
+            }
+
             discovering.TrySetResult();
             return true;
         };
@@ -90,7 +99,9 @@ public class ServerDiagnosticsCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var original = await client.Core.Cluster!.GetConnectionAsync(42, default, discovery: null, observation: default);
@@ -105,8 +116,11 @@ public class ServerDiagnosticsCommandTests
         await Assert.That(results.Single(item => item.Endpoint.Port == seed.Port).Value).IsEmpty();
         await Assert.That(results.Single(item => item.Endpoint.Port == replica.Port).Error).IsTypeOf<RespireServerException>();
         await Assert.That(ReferenceEquals(original, await client.Core.Cluster.GetConnectionAsync(42, default, discovery: null, observation: default))).IsTrue();
+
         foreach (var node in new[] { seed, replica })
+        {
             await Assert.That(node.ReceivedCommands).Contains("LATENCY HISTOGRAM get config|get");
+        }
     }
 
     [Test]
@@ -115,7 +129,16 @@ public class ServerDiagnosticsCommandTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
-            SuppressReply = command => { if (command != "MEMORY DOCTOR") return false; received.TrySetResult(); return true; },
+            SuppressReply = command =>
+            {
+                if (command != "MEMORY DOCTOR")
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
@@ -150,7 +173,10 @@ public class ServerDiagnosticsCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            AllowAdmin = true,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -159,6 +185,7 @@ public class ServerDiagnosticsCommandTests
         using var value = RespValue.BulkString("value");
         cache.CompleteRead(in inserted, in value, allowInsert: true);
         var reading = cache.BeginRead(in pending);
+
         if (allNodes)
         {
             _ = await client.Server.LatencyDoctorOnAllNodesAsync();
@@ -177,6 +204,7 @@ public class ServerDiagnosticsCommandTests
             _ = await client.Server.SlowLogLengthAsync();
             await client.Server.PurgeMemoryAsync();
         }
+
         cache.CompleteRead(in reading, in value, allowInsert: true);
         await Assert.That(cache.Count).IsEqualTo(2);
     }
@@ -210,11 +238,17 @@ public class ServerDiagnosticsCommandTests
 
     private static ValueTask<RespireClient> Connect(FakeRespServer server, bool admin)
         => RespireClient.ConnectAsync(new RespireOptions { Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = admin });
+
     private static byte[] Bulk(string value) => Bulk(Encoding.UTF8.GetBytes(value));
+
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];
+
     private static byte[] Integer(long value) => Encoding.ASCII.GetBytes($":{value}\r\n");
+
     private static byte[] Array(params byte[][] values) => [.. Encoding.ASCII.GetBytes($"*{values.Length}\r\n"), .. values.SelectMany(value => value)];
+
     private static byte[] Map(bool resp3, params byte[][] values) => resp3
         ? [.. Encoding.ASCII.GetBytes($"%{values.Length / 2}\r\n"), .. values.SelectMany(value => value)] : Array(values);
+
     private static byte[] Slots(int port) => Array(Array(Integer(0), Integer(16383), Array(Bulk("127.0.0.1"), Integer(port), Bulk("self"))));
 }

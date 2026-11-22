@@ -128,6 +128,7 @@ internal static class PrimitiveCodec
     internal static bool TryDeserialize<T>(ReadOnlySpan<byte> payload, out T? result)
     {
         var kind = TypeCache<T>.Kind;
+
         if (kind != PrimitiveKind.None
             && TypeCache<T>.IsNullable
             && TrimJsonWhitespace(payload).SequenceEqual("null"u8))
@@ -297,12 +298,14 @@ internal static class PrimitiveCodec
             try
             {
                 var reader = new Utf8JsonReader(payload);
+
                 if (!reader.Read() || reader.TokenType != JsonTokenType.String)
                 {
                     throw InvalidValue<char>();
                 }
 
                 var value = reader.GetString();
+
                 if (value?.Length != 1 || reader.Read())
                 {
                     throw InvalidValue<char>();
@@ -375,6 +378,7 @@ internal static class PrimitiveCodec
         where TValue : IUtf8SpanParsable<TValue>
     {
         payload = ValidateNumber<TValue>(payload);
+
         if (TValue.TryParse(payload, CultureInfo.InvariantCulture, out var value))
         {
             return value;
@@ -386,6 +390,7 @@ internal static class PrimitiveCodec
     private static float ParseFiniteSingle(ReadOnlySpan<byte> payload)
     {
         payload = ValidateNumber<float>(payload);
+
         if (float.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
             && float.IsFinite(value))
         {
@@ -398,6 +403,7 @@ internal static class PrimitiveCodec
     private static double ParseFiniteDouble(ReadOnlySpan<byte> payload)
     {
         payload = ValidateNumber<double>(payload);
+
         if (double.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
             && double.IsFinite(value))
         {
@@ -420,6 +426,7 @@ internal static class PrimitiveCodec
         // stackalloc-audit[fac1cdf44afd8c1a]: init: TryFormat writes the first written bytes; read: only
         // text[..written]; failure: a failed format or parse throws invalid data without reading the buffer.
         Span<byte> text = stackalloc byte[32];
+
         if (value.TryFormat(text, out var written, "G15", CultureInfo.InvariantCulture)
             && decimal.TryParse(text[..written], NumberStyles.Float, CultureInfo.InvariantCulture, out var result))
         {
@@ -432,6 +439,7 @@ internal static class PrimitiveCodec
     private static decimal ParseDecimal(ReadOnlySpan<byte> payload)
     {
         payload = ValidateNumber<decimal>(payload);
+
         if (decimal.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
         {
             return value;
@@ -444,50 +452,104 @@ internal static class PrimitiveCodec
     {
         // The normal wire form needs only JSON's number grammar, not a JSON reader.
         // Keep the existing reader for whitespace and unusual/malformed inputs.
-        if (IsCanonicalNumber(payload)) return payload;
+        if (IsCanonicalNumber(payload))
+        {
+            return payload;
+        }
+
         payload = TrimJsonWhitespace(payload);
+
         try
         {
             var reader = new Utf8JsonReader(payload);
+
             if (reader.Read() && reader.TokenType == JsonTokenType.Number && reader.BytesConsumed == payload.Length)
+            {
                 return payload;
+            }
         }
         catch (JsonException)
         {
             // Keep the primitive codec's FormatException contract for malformed payloads.
         }
+
         throw InvalidValue<T>();
     }
 
     private static bool IsCanonicalNumber(ReadOnlySpan<byte> payload)
     {
         var index = 0;
-        if (payload.IsEmpty) return false;
-        if (payload[0] == (byte)'-' && ++index == payload.Length) return false;
 
-        if (payload[index] == (byte)'0') index++;
+        if (payload.IsEmpty)
+        {
+            return false;
+        }
+
+        if (payload[0] == (byte)'-' && ++index == payload.Length)
+        {
+            return false;
+        }
+
+        if (payload[index] == (byte)'0')
+        {
+            index++;
+        }
         else
         {
-            if (payload[index] < (byte)'1' || payload[index] > (byte)'9') return false;
-            do { index++; }
+            if (payload[index] < (byte)'1' || payload[index] > (byte)'9')
+            {
+                return false;
+            }
+
+            do
+            {
+                index++;
+            }
             while (index < payload.Length && IsDigit(payload[index]));
         }
-        if (index == payload.Length) return true;
+
+        if (index == payload.Length)
+        {
+            return true;
+        }
 
         if (payload[index] == (byte)'.')
         {
             var start = ++index;
-            while (index < payload.Length && IsDigit(payload[index])) index++;
-            if (index == start) return false;
+
+            while (index < payload.Length && IsDigit(payload[index]))
+            {
+                index++;
+            }
+
+            if (index == start)
+            {
+                return false;
+            }
         }
+
         if (index < payload.Length && payload[index] is (byte)'e' or (byte)'E')
         {
             index++;
-            if (index < payload.Length && payload[index] is (byte)'+' or (byte)'-') index++;
+
+            if (index < payload.Length && payload[index] is (byte)'+' or (byte)'-')
+            {
+                index++;
+            }
+
             var start = index;
-            while (index < payload.Length && IsDigit(payload[index])) index++;
-            if (index == start) return false;
+
+            while (index < payload.Length && IsDigit(payload[index]))
+            {
+                index++;
+            }
+
+            if (index == start)
+            {
+                return false;
+            }
         }
+
         return index == payload.Length;
     }
 
@@ -523,19 +585,71 @@ internal static class PrimitiveCodec
 
     private static PrimitiveKind GetKind(Type type)
     {
-        if (type == typeof(bool)) return PrimitiveKind.Boolean;
-        if (type == typeof(char)) return PrimitiveKind.Character;
-        if (type == typeof(byte)) return PrimitiveKind.Byte;
-        if (type == typeof(sbyte)) return PrimitiveKind.SByte;
-        if (type == typeof(short)) return PrimitiveKind.Int16;
-        if (type == typeof(ushort)) return PrimitiveKind.UInt16;
-        if (type == typeof(int)) return PrimitiveKind.Int32;
-        if (type == typeof(uint)) return PrimitiveKind.UInt32;
-        if (type == typeof(long)) return PrimitiveKind.Int64;
-        if (type == typeof(ulong)) return PrimitiveKind.UInt64;
-        if (type == typeof(float)) return PrimitiveKind.Single;
-        if (type == typeof(double)) return PrimitiveKind.Double;
-        if (type == typeof(decimal)) return PrimitiveKind.Decimal;
+        if (type == typeof(bool))
+        {
+            return PrimitiveKind.Boolean;
+        }
+
+        if (type == typeof(char))
+        {
+            return PrimitiveKind.Character;
+        }
+
+        if (type == typeof(byte))
+        {
+            return PrimitiveKind.Byte;
+        }
+
+        if (type == typeof(sbyte))
+        {
+            return PrimitiveKind.SByte;
+        }
+
+        if (type == typeof(short))
+        {
+            return PrimitiveKind.Int16;
+        }
+
+        if (type == typeof(ushort))
+        {
+            return PrimitiveKind.UInt16;
+        }
+
+        if (type == typeof(int))
+        {
+            return PrimitiveKind.Int32;
+        }
+
+        if (type == typeof(uint))
+        {
+            return PrimitiveKind.UInt32;
+        }
+
+        if (type == typeof(long))
+        {
+            return PrimitiveKind.Int64;
+        }
+
+        if (type == typeof(ulong))
+        {
+            return PrimitiveKind.UInt64;
+        }
+
+        if (type == typeof(float))
+        {
+            return PrimitiveKind.Single;
+        }
+
+        if (type == typeof(double))
+        {
+            return PrimitiveKind.Double;
+        }
+
+        if (type == typeof(decimal))
+        {
+            return PrimitiveKind.Decimal;
+        }
+
         return PrimitiveKind.None;
     }
 }

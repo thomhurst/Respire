@@ -18,6 +18,7 @@ public class GeneratedSearchSchemaIntegrationTests(ModernRedisTestContainer fixt
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
         var key = "generated-vector-ttl:" + Guid.NewGuid().ToString("N");
         var value = new SearchExpiringHashModel("42", new byte[8]);
+
         try
         {
             var tracker = SearchExpiringHashModelHashMapper.Track(client, key, expiryMode: mode);
@@ -47,8 +48,10 @@ public class GeneratedSearchSchemaIntegrationTests(ModernRedisTestContainer fixt
         BitConverter.TryWriteBytes(vector.AsSpan(), 1f);
         BitConverter.TryWriteBytes(vector.AsSpan(4), 2f);
         var schema = (json ? SearchJsonModelSearchSchema.Definition : SearchHashModelSearchSchema.Definition)
-            with { Prefixes = [index + ":doc:"] };
+            with
+        { Prefixes = [index + ":doc:"] };
         var created = false;
+
         try
         {
             await client.Search.CreateIndexAsync(index, schema);
@@ -57,7 +60,10 @@ public class GeneratedSearchSchemaIntegrationTests(ModernRedisTestContainer fixt
             // Vector visibility can precede the initial scan rebuilding text/numeric indexes.
             // Finish that scan before publishing the document, as in the Search profile tests.
             while ((await client.Search.GetIndexInfoAsync(index, deadline.Token)).Properties["indexing"].Scalar != "0")
+            {
                 await Task.Delay(20, deadline.Token);
+            }
+
             if (json)
             {
                 var jsonClient = new RespireJsonClient(client);
@@ -72,31 +78,40 @@ public class GeneratedSearchSchemaIntegrationTests(ModernRedisTestContainer fixt
                 partial.Embedding.Value.Should().Equal(vector);
                 partial.Rating.Value.Should().Be(42);
             }
+
             while (true)
             {
                 var info = await client.Search.GetIndexInfoAsync(index, deadline.Token);
                 var nearest = await client.Search.VectorSearchAsync(index, new("embedding", vector, 1), cancellationToken: deadline.Token);
+
                 if (info.DocumentCount == 1 && nearest.Documents.Count == 1)
                 {
                     nearest.Documents[0].Id.Should().Be(key);
                     break;
                 }
+
                 await Task.Delay(20, deadline.Token);
             }
+
             var filter = RespireSearchQueryBuilder.And(RespireSearchQueryBuilder.TextField("title", "redis"),
                 RespireSearchQueryBuilder.Tag("category", "cache"), RespireSearchQueryBuilder.NumericRange("rating", 42L, 42L));
             var result = await client.Search.SearchAsync(index, new(filter));
             result.Documents.Should().ContainSingle().Which.Id.Should().Be(key);
+
             if (json)
+            {
                 await AssertTypedQuery(SearchJsonModelSearchSchema.Query(index)
                     .Where(f => f.Rating.GreaterThan(30)).Where(f => f.Category.EqualTo("cache"))
                     .OrderByDescending(f => f.Rating).Skip(0).Take(1).Select(f => [f.Title, f.Rating]),
                     f => f.Embedding);
+            }
             else
+            {
                 await AssertTypedQuery(SearchHashModelSearchSchema.Query(index)
                     .Where(f => f.Rating.GreaterThan(30)).Where(f => f.Category.EqualTo("cache"))
                     .OrderByDescending(f => f.Rating).Skip(0).Take(1).Select(f => [f.Title, f.Rating]),
                     f => f.Embedding);
+            }
 
             async Task AssertTypedQuery<TFields>(RespireTypedSearchQuery<TFields> query,
                 Func<TFields, RespireSearchVectorField<TFields>> vectorField) where TFields : class
@@ -121,7 +136,11 @@ public class GeneratedSearchSchemaIntegrationTests(ModernRedisTestContainer fixt
         }
         finally
         {
-            if (created) await client.Search.DropIndexAsync(index, deleteDocuments: true);
+            if (created)
+            {
+                await client.Search.DropIndexAsync(index, deleteDocuments: true);
+            }
+
             await client.Keys.DeleteAsync(index + ":outside");
         }
     }

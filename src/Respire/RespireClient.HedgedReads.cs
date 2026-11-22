@@ -14,21 +14,38 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         var owner = observation.IsEmpty ? DispatchResponseSource<RespValue>.Start() : null;
-        if (owner is not null) observation = owner.Observation;
+
+        if (owner is not null)
+        {
+            observation = owner.Observation;
+        }
+
         Exception? failure = null;
+
         if (_core.Cluster is null)
+        {
             commandDeadline = CreateReplicaDispatchDeadline(commandDeadline);
+        }
         else if (_core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
+        {
             commandDeadline = CreateCircuitDeadline(commandDeadline);
+        }
+
         var backlogAcquisition = new CommandAcquisitionScope(cancellationToken, commandDeadline, _core.Options.CommandTimeout);
+
         try
         {
             var cluster = _core.Cluster;
             var slot = command.TryGetClusterSlot(out var value) ? value : (int?)null;
+
             if (initialConnection is null && cluster?.ShouldBacklog(slot, _readFrom) == true)
+            {
                 return await SendBackloggedHedgedClusterAsync(operation, command, budget, flags, cancellationToken,
                     observation, slot, commandDeadline).ConfigureAwait(false);
+            }
+
             RespireConnection? connection;
+
             try
             {
                 connection = initialConnection ?? (cluster is null
@@ -41,8 +58,10 @@ public sealed partial class RespireClient
                 return await SendBackloggedHedgedClusterAsync(operation, command, budget, flags, cancellationToken,
                     observation, slot, commandDeadline).ConfigureAwait(false);
             }
+
             backlogAcquisition.CheckDeadline(operation, _core);
             backlogAcquisition.Dispose();
+
             if (connection is null)
             {
                 var queued = new BacklogCommand<TCommand>(command, operation);
@@ -50,6 +69,7 @@ public sealed partial class RespireClient
                     (ready, deadline) => SendSelectedHedgedReadAsync(operation, queued, budget, flags, cancellationToken,
                         observation, ready, deadline), observation).ConfigureAwait(false);
             }
+
             return await SendSelectedHedgedReadAsync(operation, command, budget, flags, cancellationToken,
                 observation, connection, commandDeadline).ConfigureAwait(false);
         }
@@ -71,10 +91,17 @@ public sealed partial class RespireClient
         finally
         {
             backlogAcquisition.Dispose();
+
             if (owner is not null)
             {
-                if (observeErrors && failure is not null) owner.Fail(failure);
-                else owner.CompleteInternal();
+                if (observeErrors && failure is not null)
+                {
+                    owner.Fail(failure);
+                }
+                else
+                {
+                    owner.CompleteInternal();
+                }
             }
         }
     }
@@ -88,10 +115,15 @@ public sealed partial class RespireClient
     {
         // Cold acquisition keeps its connection budget, but both legs must share the
         // command budget once selected. Preserve any deadline already spent in recovery.
-        if (_core.Cluster is null) commandDeadline = CreateCircuitDeadline(commandDeadline);
+        if (_core.Cluster is null)
+        {
+            commandDeadline = CreateCircuitDeadline(commandDeadline);
+        }
+
         var callerAttempts = observation.Attempts;
         var sent = false;
         var race = new HedgeRace();
+
         try
         {
             var cluster = _core.Cluster;
@@ -122,22 +154,27 @@ public sealed partial class RespireClient
             var originalRoute = cluster is null ? null : new HedgeOriginalRoute(connection);
             var pending = SendHedgedReadLegAsync(operation, snapshot, connection, flags, cancellationToken, originalRoute,
                 observation: race.OriginalObservation, commandDeadline: commandDeadline);
+
             if (pending.IsCompletedSuccessfully)
             {
                 observation.CopyCompletedAttempts(callerAttempts, race.OriginalObservation);
                 return pending.Result;
             }
+
             var original = pending.AsTask();
             race.Original = original;
+
             if (!original.IsCompleted)
             {
                 using var timer = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
                 try
                 {
                     await Task.WhenAny(original, Task.Delay(_core.Options.HedgedReads!.Delay, timer.Token)).ConfigureAwait(false);
                 }
 #pragma warning disable CA1849 // This private token only cancels Task.Delay; keep read completion free of a cancellation worker hop.
                 finally { timer.Cancel(); }
+
 #pragma warning restore CA1849
 
                 if (!original.IsCompleted && !cancellationToken.IsCancellationRequested && budget.HasCredit
@@ -147,17 +184,23 @@ public sealed partial class RespireClient
                     var selection = cluster is null
                         ? _core.ReadRouter.GetHedgeConnectionAsync(_readFrom, connection, selectionStop.Token).AsTask()
                         : cluster.GetHedgeConnectionAsync(slot!.Value, _readFrom, currentOriginal, selectionStop.Token).AsTask();
+
                     if (await Task.WhenAny(original, selection).ConfigureAwait(false) == selection)
                     {
-                        try { race.Alternative = await selection.ConfigureAwait(false); }
+                        try
+                        {
+                            race.Alternative = await selection.ConfigureAwait(false);
+                        }
                         catch (Exception error) when (!IsFatalHedgeFailure(error))
-                        { /* An optional candidate failure must not replace the original outcome. */ }
+                        { /* An optional candidate failure must not replace the original outcome. */
+                        }
                     }
                     else
                     {
                         await selectionStop.CancelAsync().ConfigureAwait(false);
                         _ = ObserveHedgeSelectionAsync(selection);
                     }
+
                     if (race.Alternative is { } alternative && !original.IsCompleted
                         && (originalRoute is null || originalRoute.CanHedge(alternative))
                         && !cancellationToken.IsCancellationRequested && budget.TrySpend())
@@ -165,6 +208,7 @@ public sealed partial class RespireClient
                         sent = true;
                         RespireTelemetry.RecordHedgeSent(alternative);
                         race.HedgeOwner = DispatchResponseSource<RespValue>.Start();
+
                         try
                         {
                             race.Hedge = SendHedgedReadLegAsync(operation, snapshot, alternative, flags, cancellationToken,
@@ -231,7 +275,10 @@ public sealed partial class RespireClient
 
     private static async Task ObserveHedgeSelectionAsync(Task<RespireConnection?> selection)
     {
-        try { await selection.ConfigureAwait(false); }
+        try
+        {
+            await selection.ConfigureAwait(false);
+        }
         catch (Exception) { /* The original response won before optional selection finished. */ }
     }
 }

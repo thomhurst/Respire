@@ -30,7 +30,11 @@ public sealed partial class RespireClient
     internal bool TryRerouteCircuit(RespireConnection connection, CommandDeadline deadline,
         out RespireConnection target, out CommandDeadline reroutedDeadline, string? preferredZone)
     {
-        if (connection.TryReroute(false, deadline, out target, out reroutedDeadline, preferredZone)) return true;
+        if (connection.TryReroute(false, deadline, out target, out reroutedDeadline, preferredZone))
+        {
+            return true;
+        }
+
         if (_core.Sentinel is not null
             && connection.Multiplexer?.Options.Generation is SentinelRouter.Generation { IsRetired: true }
             && _core.TryGetReadyPrimaryMultiplexer(out var current)
@@ -40,6 +44,7 @@ public sealed partial class RespireClient
             reroutedDeadline = connection.GetReroutedCommandDeadline(deadline);
             return true;
         }
+
         return false;
     }
 
@@ -54,9 +59,16 @@ public sealed partial class RespireClient
         while (true)
         {
             if (_core.Sentinel is not null && _core.TryGetReadyPrimaryMultiplexer(out var current))
+            {
                 multiplexer = current;
+            }
+
             var routing = multiplexer.CaptureMovingPublication();
-            try { return multiplexer.GetConnection(); }
+
+            try
+            {
+                return multiplexer.GetConnection();
+            }
             catch (RespireConnectionRetiredException) when (_core.Sentinel is not null
                 && _core.TryGetReadyPrimaryMultiplexer(out var replacement)
                 && !ReferenceEquals(multiplexer, replacement))
@@ -76,7 +88,9 @@ public sealed partial class RespireClient
                 // A retired Sentinel generation is a stale route, not endpoint health evidence.
                 // Ready queue selection catches retirement and enters validated discovery.
                 if (multiplexer.Options.Generation is SentinelRouter.Generation { IsRetired: true })
+                {
                     throw new RespireConnectionRetiredException(multiplexer.Host, multiplexer.Port);
+                }
                 // A handoff can publish after selection observes the dead source. Retry that
                 // stale selection before rejecting or recording availability for either endpoint.
                 if (!ReferenceEquals(routing.Publication, multiplexer.MovingPublication))
@@ -87,8 +101,13 @@ public sealed partial class RespireClient
                 // Selection can fail before reaching the dispatch guard. Prefer circuit rejection
                 // when the selected endpoint is open; otherwise record its lost availability.
                 var admission = _core.Circuits!.Acquire(routing.Endpoint, cancellationToken);
-                try { admission.Failed(error, cancellationToken); }
+
+                try
+                {
+                    admission.Failed(error, cancellationToken);
+                }
                 finally { admission.Dispose(); }
+
                 throw;
             }
         }
@@ -113,6 +132,7 @@ public sealed partial class RespireClient
     {
         connection.ThrowIfRetired();
         var admission = AcquireCircuit(connection, cancellationToken);
+
         try
         {
             var response = await SendBlockingWithCancellationAsync(pool, connection, command, cancellationToken, errorAttempts,
@@ -141,11 +161,13 @@ public sealed partial class RespireClient
     {
         commandDeadline = CreateCircuitDeadline(commandDeadline);
         RespValue response;
+
         try
         {
             while (true)
             {
                 CircuitAdmission admission = default;
+
                 try
                 {
                     // Check retirement before admission so an old open endpoint cannot reject
@@ -223,6 +245,7 @@ public sealed partial class RespireClient
             {
                 durationOwnedByTransport = false;
                 CircuitAdmission admission = default;
+
                 try
                 {
                     connection.ThrowIfRetired();
@@ -265,13 +288,17 @@ public sealed partial class RespireClient
                 var duration = new RespireTelemetry.DurationObservation(connection, durationStarted);
                 duration.Complete(operation, error);
             }
+
             throw;
         }
         finally
         {
             try
             {
-                if (mutationFence.IsRequired) cache!.CompleteMutation(in mutationFence, succeeded);
+                if (mutationFence.IsRequired)
+                {
+                    cache!.CompleteMutation(in mutationFence, succeeded);
+                }
             }
             catch (Exception) when (finalError is not null)
             {
@@ -284,7 +311,10 @@ public sealed partial class RespireClient
             }
             finally
             {
-                if (finalError is not null) observation.Final(finalError);
+                if (finalError is not null)
+                {
+                    observation.Final(finalError);
+                }
             }
         }
     }
@@ -300,11 +330,13 @@ public sealed partial class RespireClient
     {
         var commandDeadline = retryDeadline.IsSet ? retryDeadline : CreateCircuitDeadline();
         RespValue response;
+
         try
         {
             while (true)
             {
                 CircuitAdmission admission = default;
+
                 try
                 {
                     connection.ThrowIfRetired();
@@ -338,6 +370,7 @@ public sealed partial class RespireClient
             telemetry.Complete(_core, operation, error: error, connection: connection);
             throw;
         }
+
         telemetry.Complete(_core, operation,
             error: response.IsError ? ResponseReader.ServerError(in response, operation) : null, connection: connection);
         return response;
@@ -358,11 +391,13 @@ public sealed partial class RespireClient
             ? RespireTelemetry.StartOperation(operation, connection, _core.Options.Database,
                 storedProcedureName: storedProcedureName)
             : default;
+
         try
         {
             while (true)
             {
                 CircuitAdmission admission = default;
+
                 try
                 {
                     connection.ThrowIfRetired();
@@ -396,6 +431,7 @@ public sealed partial class RespireClient
             telemetry.Complete(_core, operation, storedProcedureName, error, connection);
             throw;
         }
+
         telemetry.Complete(_core, operation, storedProcedureName, connection: connection);
     }
 }

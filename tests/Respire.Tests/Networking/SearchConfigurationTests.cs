@@ -19,6 +19,7 @@ public class SearchConfigurationTests
     public async Task ReadsWildcardAndPatternAsOwnedNullableValues(int protocol)
     {
         IReadOnlyDictionary<string, string?> owned;
+
         await using (var server = Server(ReadReply(protocol)))
 #pragma warning disable RESP010 // This configuration scenario owns its client, admin options and fixed fake replies.
         await using (var client = await RespireClient.ConnectAsync(Options(server, protocol)))
@@ -75,8 +76,14 @@ public class SearchConfigurationTests
             "%2\r\n$7\r\nTIMEOUT\r\n$3\r\n500\r\n$7\r\nTIMEOUT\r\n$3\r\n600\r\n",
             "*2\r\n*2\r\n$7\r\nTIMEOUT\r\n$3\r\n500\r\n*2\r\n$7\r\nTIMEOUT\r\n$3\r\n600\r\n",
         ];
+
         foreach (var protocol in new[] { 2, 3 })
-        foreach (var reply in replies) yield return (protocol, reply);
+        {
+            foreach (var reply in replies)
+            {
+                yield return (protocol, reply);
+            }
+        }
     }
 
     [Test]
@@ -140,8 +147,14 @@ public class SearchConfigurationTests
 #pragma warning restore RESP010
             var error = await Assert.That(async () =>
             {
-                if (write) await client.Search.SetConfigurationAsync("UNKNOWN", "value");
-                else await client.Search.GetConfigurationAsync("UNKNOWN");
+                if (write)
+                {
+                    await client.Search.SetConfigurationAsync("UNKNOWN", "value");
+                }
+                else
+                {
+                    await client.Search.GetConfigurationAsync("UNKNOWN");
+                }
             }).Throws<RespireServerException>();
             await Assert.That(error!.Message).IsEqualTo(message);
             await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("COMMAND", StringComparison.Ordinal))).IsFalse();
@@ -156,12 +169,14 @@ public class SearchConfigurationTests
         await using var server = Server(ReadReply(protocol));
 #pragma warning disable RESP010 // This preflight scenario owns isolated client options and verifies rejection before I/O.
         await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+
 #pragma warning restore RESP010
         foreach (var option in new[] { null, "", " " })
         {
             await Assert.That(async () => await client.Search.GetConfigurationAsync(option!)).Throws<ArgumentException>();
             await Assert.That(async () => await client.Search.SetConfigurationAsync(option!, "500")).Throws<ArgumentException>();
         }
+
         await Assert.That(async () => await client.Search.SetConfigurationAsync("TIMEOUT", null!)).Throws<ArgumentNullException>();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
@@ -211,8 +226,12 @@ public class SearchConfigurationTests
             await Assert.That(command.TryGetPrimaryKey(out _)).IsFalse();
             await Assert.That(command.TryGetClusterSlot(out _)).IsFalse();
         }
+
         foreach (var operation in new[] { "FT.CONFIG", "FT.CONFIG GET", "FT.CONFIG SET" })
+        {
             await Assert.That(DynamicCommandRouting.GetRoutingKeyIndex(operation, ["FT.CONFIG", "GET", "TIMEOUT"], 1)).IsEqualTo(-1);
+        }
+
         await Assert.That(RespireCommands.Search.FT_CONFIG_GET.CacheMutation).IsEqualTo(RespireCacheMutation.ReadOnly);
         await Assert.That(RespireCommands.Search.FT_CONFIG_SET.CacheMutation).IsEqualTo(RespireCacheMutation.Mutation);
     }
@@ -225,7 +244,9 @@ public class SearchConfigurationTests
         byte[] slots = Encoding.ASCII.GetBytes(
             $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
+
         foreach (var server in new[] { first, second })
+        {
             server.ReplyOverride = (_, command) => command switch
             {
                 "CLUSTER SLOTS" => slots,
@@ -233,6 +254,8 @@ public class SearchConfigurationTests
                 "FT.CONFIG GET TIMEOUT" => ReadReply(2),
                 _ => null,
             };
+        }
+
 #pragma warning disable RESP010 // This routing scenario owns its client and isolated fake cluster topology.
         await using var client = await RespireClient.ConnectAsync(Options(first, 2) with { UseCluster = true });
 #pragma warning restore RESP010
@@ -262,7 +285,11 @@ public class SearchConfigurationTests
 #pragma warning restore RESP010
         await client.GetStringAsync("cache-key");
         await client.Search.GetConfigurationAsync();
-        using (await client.ExecuteAsync("FT.CONFIG GET", ["TIMEOUT"])) { }
+
+        using (await client.ExecuteAsync("FT.CONFIG GET", ["TIMEOUT"]))
+        {
+        }
+
         await client.GetStringAsync("cache-key");
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET cache-key")).IsEqualTo(1);
         await client.Search.SetConfigurationAsync("TIMEOUT", "501");
@@ -281,7 +308,11 @@ public class SearchConfigurationTests
         await using var server = Server(ReadReply(protocol));
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("FT.CONFIG", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("FT.CONFIG", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             accepted.TrySetResult();
             return true;
         };

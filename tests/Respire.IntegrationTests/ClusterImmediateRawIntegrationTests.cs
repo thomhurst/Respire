@@ -14,13 +14,16 @@ public class ClusterImmediateRawIntegrationTests(ClusterTransactionTestContainer
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true, Connections = 1,
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            UseCluster = true,
+            Connections = 1,
             Protocol = (RespireProtocol)protocol,
         });
         var suffix = System.Text.Encoding.ASCII.GetBytes(Guid.NewGuid().ToString("N"));
         byte[] first = [255, .. "{raw}:first:"u8, .. suffix];
         byte[] second = [128, .. "{raw}:second:"u8, .. suffix];
         var other = $"{{other}}:{Guid.NewGuid():N}";
+
         try
         {
             using var stored = await client.ExecuteAsync(RespireCommands.String.MSET, first, "one", second, "two");

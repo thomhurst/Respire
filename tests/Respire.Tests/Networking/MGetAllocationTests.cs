@@ -24,17 +24,22 @@ public class MGetAllocationTests
 #pragma warning disable RESP010 // This allocation scenario owns its client and prepopulated cache, with no shared cache mutations.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = cluster,
-            Endpoints = [new("127.0.0.1", server.Port)], ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            UseCluster = cluster,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         RespireKey[] keys = ["{mget}:a", "{mget}:b"];
+
         foreach (var key in keys)
         {
             var token = client.Core.ClientCache!.BeginRead(in key);
             var value = RespValue.BulkString("42"u8.ToArray());
             client.Core.ClientCache.CompleteRead(in token, in value, allowInsert: true);
         }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(2);
         Measure(client, keys, baseline: false, positiveControl: false);
         Measure(client, keys, baseline: true, positiveControl: false);
@@ -53,6 +58,7 @@ public class MGetAllocationTests
     private static long Measure(RespireClient client, RespireKey[] keys, bool baseline, bool positiveControl)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
 #pragma warning disable RESP009 // Both keys are prepopulated above; synchronous cache hits keep this warmed allocation measurement on one thread.
@@ -60,8 +66,13 @@ public class MGetAllocationTests
                 keys, default, static (RespireClient _, in RespValue value) => 42).GetAwaiter().GetResult();
 #pragma warning restore RESP009
             GC.KeepAlive(result);
-            if (positiveControl) GC.KeepAlive(new byte[37]);
+
+            if (positiveControl)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

@@ -9,18 +9,33 @@ internal readonly struct RedisInvocation
     /// Gets a list of connections that should be excluded from this invocation.
     /// May be null to indicate that no connections are to be excluded.
     /// </summary>
-    public IReadOnlyList<string>? ExcludedConnectionIds { get; }
+    public IReadOnlyList<string>? ExcludedConnectionIds
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the message serialization cache containing serialized payloads for the message.
     /// </summary>
-    public SerializedHubMessage Message { get; }
+    public SerializedHubMessage Message
+    {
+        get;
+    }
 
-    public string? ReturnChannel { get; }
+    public string? ReturnChannel
+    {
+        get;
+    }
 
-    public string? InvocationId { get; }
+    public string? InvocationId
+    {
+        get;
+    }
 
-    public bool RequestHeartbeat { get; }
+    public bool RequestHeartbeat
+    {
+        get;
+    }
 
     public RedisInvocation(SerializedHubMessage message, IReadOnlyList<string>? excludedConnectionIds,
         string? invocationId = null, string? returnChannel = null, bool requestHeartbeat = false)

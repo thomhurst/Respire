@@ -6,7 +6,12 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
 {
-    public enum QueryMode { Immediate, Batch, Transaction }
+    public enum QueryMode
+    {
+        Immediate,
+        Batch,
+        Transaction
+    }
 
     [Test]
     [Arguments(2, QueryMode.Immediate)]
@@ -54,10 +59,21 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
         (await Run(view, mode, s => s.RandomMemberAsync<byte[]>("binary"), s => s.RandomMember<byte[]>("binary"))).Should().Equal(bytes);
         var members = await Run(view, mode, s => s.RandomMembersAsync<byte[]>("binary", -3), s => s.RandomMembers<byte[]>("binary", -3));
         members.Should().HaveCount(3);
-        foreach (var member in members) member.Should().Equal(bytes);
+
+        foreach (var member in members)
+        {
+            member.Should().Equal(bytes);
+        }
+
         var scored = await Run(view, mode, s => s.RandomMembersWithScoresAsync<byte[]>("binary", -3), s => s.RandomMembersWithScores<byte[]>("binary", -3));
         scored.Should().HaveCount(3);
-        foreach (var entry in scored) { entry.Member.Should().Equal(bytes); entry.Score.Should().Be(1.5); }
+
+        foreach (var entry in scored)
+        {
+            entry.Member.Should().Equal(bytes);
+            entry.Score.Should().Be(1.5);
+        }
+
         members[0][0] = 0;
         members[1].Should().Equal(bytes);
         await view.SortedSets.AddAsync<int>("number", 42, 9);
@@ -136,21 +152,46 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
         var view = client.WithKeyPrefix($"wrong:{Guid.NewGuid():N}:");
         await view.SetAsync("key", "string");
         Func<Task>[] operations = [
-            async () => { await Run(view, mode, s => s.RandomMemberAsync("key"), s => s.RandomMember("key")); },
-            async () => { await Run(view, mode, s => s.RandomMembersAsync("key", 1), s => s.RandomMembers("key", 1)); },
-            async () => { await Run(view, mode, s => s.RandomMembersWithScoresAsync("key", 1), s => s.RandomMembersWithScores("key", 1)); },
-            async () => { await Run(view, mode, s => s.CountByLexAsync("key", RespireLexRange.All), s => s.CountByLex("key", RespireLexRange.All)); },
-            async () => { await Run(view, mode, s => s.RemoveRangeByLexAsync("key", RespireLexRange.All), s => s.RemoveRangeByLex("key", RespireLexRange.All)); },
-            async () => { await Run(view, mode, s => s.IntersectCountAsync("key"), s => s.IntersectCount("key")); },
+            async () =>
+            {
+                await Run(view, mode, s => s.RandomMemberAsync("key"), s => s.RandomMember("key"));
+            },
+            async () =>
+            {
+                await Run(view, mode, s => s.RandomMembersAsync("key", 1), s => s.RandomMembers("key", 1));
+            },
+            async () =>
+            {
+                await Run(view, mode, s => s.RandomMembersWithScoresAsync("key", 1), s => s.RandomMembersWithScores("key", 1));
+            },
+            async () =>
+            {
+                await Run(view, mode, s => s.CountByLexAsync("key", RespireLexRange.All), s => s.CountByLex("key", RespireLexRange.All));
+            },
+            async () =>
+            {
+                await Run(view, mode, s => s.RemoveRangeByLexAsync("key", RespireLexRange.All), s => s.RemoveRangeByLex("key", RespireLexRange.All));
+            },
+            async () =>
+            {
+                await Run(view, mode, s => s.IntersectCountAsync("key"), s => s.IntersectCount("key"));
+            },
         ];
+
         foreach (var operation in operations)
+        {
             (await operation.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("WRONGTYPE");
+        }
     }
 
     private static async Task<T> Run<T>(IRespireClient client, QueryMode mode,
         Func<IRespireSortedSetCommands, ValueTask<T>> immediate, Func<IRespireBatchSortedSetCommands, RespirePending<T>> deferred)
     {
-        if (mode == QueryMode.Immediate) return await immediate(client.SortedSets);
+        if (mode == QueryMode.Immediate)
+        {
+            return await immediate(client.SortedSets);
+        }
+
         if (mode == QueryMode.Batch)
         {
             using var batch = client.CreateBatch();
@@ -158,6 +199,7 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
             await batch.TryExecuteAsync();
             return result.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var pending = deferred(transaction.SortedSets);
         await transaction.CommitAsync();

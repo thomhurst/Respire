@@ -28,16 +28,20 @@ public partial class TopologyCommandRetryTests
         fixture.Server.GateCommand("GET key", release.Task);
         var waiters = Enumerable.Range(0, 10).Select(_ => fixture.ReadAsync(default).AsTask()).ToArray();
         release.TrySetResult();
+
         if (exhaust)
         {
             foreach (var waiter in waiters)
+            {
                 await Assert.That(async () => await waiter).ThrowsExactly<RespireServerException>();
+            }
         }
         else
         {
             var values = await Task.WhenAll(waiters);
             await Assert.That(values.All(value => value == "value")).IsTrue();
         }
+
         await Assert.That(calls).IsEqualTo(2);
         await Assert.That(evidence.Retries.GetValueOrDefault("attempted")).IsEqualTo(1);
         await Assert.That(evidence.Retries.GetValueOrDefault(exhaust ? "exhausted" : "succeeded")).IsEqualTo(1);
@@ -108,9 +112,18 @@ public partial class TopologyCommandRetryTests
         var late = "$4\r\nlate\r\n"u8.ToArray();
         await using var fixture = await TrackedCacheFixture.ConnectAsync("Cluster", command =>
         {
-            if (command != "GET key") return null;
+            if (command != "GET key")
+            {
+                return null;
+            }
+
             var number = Interlocked.Increment(ref calls);
-            if (number == 1) return TryAgain;
+
+            if (number == 1)
+            {
+                return TryAgain;
+            }
+
             return number == 2 ? late : Value;
         }, new() { InitialBackoff = TimeSpan.FromSeconds(2), MaxBackoff = TimeSpan.FromSeconds(2), Jitter = 0 },
             timeout: TimeSpan.FromMilliseconds(3500));
@@ -118,6 +131,7 @@ public partial class TopologyCommandRetryTests
         var pending = fixture.ReadAsync(default).AsTask();
         await evidence.ErrorObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
         fixture.Server.GateCommand("GET key", release.Task);
+
         try
         {
             await Assert.That(async () => await pending).ThrowsExactly<RespireTimeoutException>();
@@ -129,6 +143,7 @@ public partial class TopologyCommandRetryTests
             await Assert.That(evidence.Retries.GetValueOrDefault("succeeded")).IsEqualTo(0);
         }
         finally { release.TrySetResult(); }
+
         await Assert.That(await fixture.ReadAsync(default)).IsEqualTo("value");
         await Assert.That(await fixture.ReadAsync(default)).IsEqualTo("value");
         await Assert.That(calls).IsEqualTo(3);
@@ -151,7 +166,8 @@ public partial class TopologyCommandRetryTests
 #pragma warning disable RESP010 // Test-owned client isolates tracking cache state, producer reuse, and retry metrics for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(source) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
 #pragma warning restore RESP010
@@ -184,7 +200,8 @@ public partial class TopologyCommandRetryTests
 #pragma warning disable RESP010 // Test-owned client isolates tracking cache state, producer reuse, and retry metrics for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
 #pragma warning restore RESP010
@@ -193,6 +210,7 @@ public partial class TopologyCommandRetryTests
         var secondKey = "second"u8.ToArray();
         var first = client.GetStringAsync((RespireKey)firstKey).AsTask();
         var second = client.GetStringAsync((RespireKey)secondKey).AsTask();
+
         try
         {
             "third"u8.CopyTo(firstKey);
@@ -220,9 +238,11 @@ public partial class TopologyCommandRetryTests
 #pragma warning disable RESP010 // Test-owned client isolates tracking cache state, producer reuse, and retry metrics for this scenario.
         await using var client = await RespireClient.ConnectAsync(ClusterOptions(server) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = true },
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
             RetryPolicy = new() { MaxAttempts = 2, InitialBackoff = TimeSpan.Zero },
         });
+
 #pragma warning restore RESP010
         for (var round = 0; round < 32; round++)
         {
@@ -232,21 +252,30 @@ public partial class TopologyCommandRetryTests
             server.GateCommand("GET key", release.Task);
             var waiters = Enumerable.Range(0, 4).Select(_ => client.GetBytesAsync("key").AsTask()).ToArray();
             release.TrySetResult();
+
             if (exhaust)
             {
                 foreach (var waiter in waiters)
+                {
                     await Assert.That(async () => await waiter).ThrowsExactly<RespireServerException>();
+                }
             }
             else
             {
                 var values = await Task.WhenAll(waiters);
                 values[0]![0] = (byte)'X';
+
                 foreach (var value in values.Skip(1))
+                {
                     await Assert.That(value).IsEquivalentTo("value"u8.ToArray());
+                }
+
                 await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
             }
+
             await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(0);
         }
+
         await Assert.That(calls).IsEqualTo(64);
         await Assert.That(evidence.Retries.GetValueOrDefault("attempted")).IsEqualTo(32);
         await Assert.That(evidence.Retries.GetValueOrDefault("succeeded")).IsEqualTo(16);
@@ -276,13 +305,20 @@ public partial class TopologyCommandRetryTests
                 reply(command) ?? (command == "ROLE" ? RoleReply("master") : command.StartsWith("HELLO", StringComparison.Ordinal)
                     ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : null));
             FakeRespServer? sentinel = null;
+
             try
             {
-                if (shape == "Sentinel") sentinel = Sentinel(() => server.Port);
+                if (shape == "Sentinel")
+                {
+                    sentinel = Sentinel(() => server.Port);
+                }
+
                 var options = shape == "Sentinel" ? SentinelOptions(sentinel!) : ClusterOptions(server);
                 var client = await RespireClient.ConnectAsync(options with
                 {
-                    RetryPolicy = policy, CommandTimeout = timeout ?? TimeSpan.FromSeconds(5), Connections = 1,
+                    RetryPolicy = policy,
+                    CommandTimeout = timeout ?? TimeSpan.FromSeconds(5),
+                    Connections = 1,
                     Protocol = RespireProtocol.Resp3,
                     ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
                 });
@@ -290,7 +326,11 @@ public partial class TopologyCommandRetryTests
             }
             catch
             {
-                if (sentinel is not null) await sentinel.DisposeAsync();
+                if (sentinel is not null)
+                {
+                    await sentinel.DisposeAsync();
+                }
+
                 await server.DisposeAsync();
                 throw;
             }
@@ -301,7 +341,12 @@ public partial class TopologyCommandRetryTests
         public async ValueTask DisposeAsync()
         {
             await client.DisposeAsync();
-            if (sentinel is not null) await sentinel.DisposeAsync();
+
+            if (sentinel is not null)
+            {
+                await sentinel.DisposeAsync();
+            }
+
             await server.DisposeAsync();
         }
     }
@@ -313,7 +358,9 @@ public partial class TopologyCommandRetryTests
         private long _finalErrors;
         internal readonly ConcurrentDictionary<string, long> Retries = new();
         internal readonly TaskCompletionSource ErrorObserved = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         internal long InternalErrors => Interlocked.Read(ref _internalErrors);
+
         internal long FinalErrors => Interlocked.Read(ref _finalErrors);
 
         internal TrackedCacheEvidence(bool throwAfterRecording = false)
@@ -321,22 +368,38 @@ public partial class TopologyCommandRetryTests
             _listener.InstrumentPublished = static (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name is "respire.command.retries" or "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
             {
                 foreach (var tag in tags)
                 {
                     if (instrument.Name == "respire.command.retries" && tag.Key == "respire.command.retry.outcome")
+                    {
                         Retries.AddOrUpdate((string)tag.Value!, value, (_, old) => old + value);
+                    }
+
                     if (instrument.Name == "redis.client.errors" && tag.Key == "redis.client.errors.internal")
                     {
-                        if (Equals(tag.Value, true)) Interlocked.Add(ref _internalErrors, value);
-                        else Interlocked.Add(ref _finalErrors, value);
+                        if (Equals(tag.Value, true))
+                        {
+                            Interlocked.Add(ref _internalErrors, value);
+                        }
+                        else
+                        {
+                            Interlocked.Add(ref _finalErrors, value);
+                        }
+
                         ErrorObserved.TrySetResult();
                     }
                 }
-                if (throwAfterRecording) throw new InvalidOperationException("Injected listener failure.");
+
+                if (throwAfterRecording)
+                {
+                    throw new InvalidOperationException("Injected listener failure.");
+                }
             });
             _listener.Start();
         }

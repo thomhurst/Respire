@@ -43,11 +43,16 @@ public class NameResolutionContractTests
         await Assert.That(() => client.ResolveChannel("item")).ThrowsExactly<RespireConfigurationException>();
     }
 
-    public interface IResolvingClient : IRespireClient, IRespireNameResolver { }
+    public interface IResolvingClient : IRespireClient, IRespireNameResolver
+    {
+    }
 
     public class ResolvingClientProxy : DispatchProxy
     {
-        public IRespireNameResolver Resolver { get; set; } = null!;
+        public IRespireNameResolver Resolver
+        {
+            get; set;
+        } = null!;
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
             => targetMethod!.Invoke(Resolver, args);

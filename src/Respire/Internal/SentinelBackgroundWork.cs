@@ -1,6 +1,13 @@
 namespace Respire.Internal;
 
-internal enum SentinelWorkKind { Supervisor, Monitor, Rediscovery, SourceResolution, MonitorRemoval }
+internal enum SentinelWorkKind
+{
+    Supervisor,
+    Monitor,
+    Rediscovery,
+    SourceResolution,
+    MonitorRemoval
+}
 
 /// <summary>
 /// Shares the publication/disposal gate. Start never runs application or transport code
@@ -43,12 +50,17 @@ internal sealed class SentinelBackgroundWork(Lock gate)
     {
         lock (_gate)
         {
-            if (_stopped) return null;
+            if (_stopped)
+            {
+                return null;
+            }
+
             var task = Task.Run(action);
             _tasks.Add(task, kind);
             _ = task.ContinueWith(static (completed, state) =>
             {
                 var owner = (SentinelBackgroundWork)state!;
+
                 lock (owner._gate)
                 {
                     // Observe every failure, retaining bounded evidence for shutdown.
@@ -58,14 +70,20 @@ internal sealed class SentinelBackgroundWork(Lock gate)
                         owner._tasks.Remove(completed);
                         return;
                     }
+
                     var kind = owner._tasks[completed];
+
                     if (!owner._failures.TryGetValue(kind, out var failures))
+                    {
                         owner._failures.Add(kind, failures = new(MaximumRetainedFailuresPerKind));
+                    }
+
                     if (failures.Count == MaximumRetainedFailuresPerKind)
                     {
                         owner._tasks.Remove(failures.Dequeue());
                         owner._discardedFailures++;
                     }
+
                     failures.Enqueue(completed);
                 }
             }, this, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
@@ -75,7 +93,10 @@ internal sealed class SentinelBackgroundWork(Lock gate)
 
     internal int Count(SentinelWorkKind kind)
     {
-        lock (_gate) return _tasks.Count(pair => pair.Value == kind && !pair.Key.IsCompleted);
+        lock (_gate)
+        {
+            return _tasks.Count(pair => pair.Value == kind && !pair.Key.IsCompleted);
+        }
     }
 
     internal Task[] Stop()
@@ -83,7 +104,12 @@ internal sealed class SentinelBackgroundWork(Lock gate)
         lock (_gate)
         {
             _stopped = true;
-            if (_discardedFailures == 0) return _tasks.Keys.ToArray();
+
+            if (_discardedFailures == 0)
+            {
+                return _tasks.Keys.ToArray();
+            }
+
             return [.. _tasks.Keys, Task.FromException(new InvalidOperationException(
                 $"{_discardedFailures} earlier Sentinel background failures were omitted from bounded shutdown history; "
                 + $"retaining up to {MaximumRetainedFailuresPerKind} per work kind."))];

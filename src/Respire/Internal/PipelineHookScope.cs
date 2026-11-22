@@ -20,7 +20,11 @@ internal sealed class PipelineHookScope : IDisposable
     internal void Enter()
     {
         _entered = true;
-        try { _state = _hook.OnExecuting(_context); }
+
+        try
+        {
+            _state = _hook.OnExecuting(_context);
+        }
         catch (Exception error)
         {
             _outcome = RespirePipelineOutcome.Rejected;
@@ -31,7 +35,11 @@ internal sealed class PipelineHookScope : IDisposable
 
     internal void Fail(Exception? error)
     {
-        if (error is null || _error is not null) return;
+        if (error is null || _error is not null)
+        {
+            return;
+        }
+
         _error = error;
         _outcome = error is OperationCanceledException ? RespirePipelineOutcome.Canceled : RespirePipelineOutcome.Failed;
     }
@@ -40,8 +48,15 @@ internal sealed class PipelineHookScope : IDisposable
 
     public void Dispose()
     {
-        if (!_entered) return;
-        try { _hook.OnCompleted(_context, _state, _outcome, _error); }
+        if (!_entered)
+        {
+            return;
+        }
+
+        try
+        {
+            _hook.OnCompleted(_context, _state, _outcome, _error);
+        }
         catch (Exception) { /* Observers cannot replace results or interfere with resource cleanup. */ }
     }
 }

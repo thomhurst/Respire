@@ -185,8 +185,7 @@ public class CommonMisuseAnalyzerTests
                 }
             }
             """;
-        return Verify(framework, new ShortLivedClientAnalyzer(), source, additionalReferences:
-            [MetadataReference.CreateFromFile(Path.Combine(AppContext.BaseDirectory,
+        return Verify(framework, new ShortLivedClientAnalyzer(), source, additionalReferences: [MetadataReference.CreateFromFile(Path.Combine(AppContext.BaseDirectory,
                 "local-initialization-audit", framework, package + ".dll"))]);
     }
 
@@ -242,7 +241,12 @@ public class CommonMisuseAnalyzerTests
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         using var stream = new MemoryStream();
         var result = compilation.Emit(stream);
-        if (!result.Success) throw new InvalidOperationException(string.Join("\n", result.Diagnostics));
+
+        if (!result.Success)
+        {
+            throw new InvalidOperationException(string.Join("\n", result.Diagnostics));
+        }
+
         return MetadataReference.CreateFromImage(stream.ToArray());
     }
 

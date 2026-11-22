@@ -192,11 +192,14 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long> RightPushAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken)
         => RightPushAsync(key, [value], cancellationToken);
 
-
     public ValueTask<long?> PositionAsync(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long?>.Start();
-        try { return owner.Attach(PositionBorrowedAsync(key, value, rank, maxLength, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(PositionBorrowedAsync(key, value, rank, maxLength, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -206,7 +209,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long[]> PositionsAsync(RespireKey key, RespireValue value, long count = 0, long rank = 1, long maxLength = 0, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long[]>.Start();
-        try { return owner.Attach(PositionsBorrowedAsync(key, value, count, rank, maxLength, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(PositionsBorrowedAsync(key, value, count, rank, maxLength, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -217,7 +224,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long> InsertBeforeAsync(RespireKey key, RespireValue pivot, RespireValue value, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(InsertBeforeBorrowedAsync(key, pivot, value, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(InsertBeforeBorrowedAsync(key, pivot, value, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -227,7 +238,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long> InsertAfterAsync(RespireKey key, RespireValue pivot, RespireValue value, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(InsertAfterBorrowedAsync(key, pivot, value, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(InsertAfterBorrowedAsync(key, pivot, value, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -240,7 +255,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<bool> SetAsync(RespireKey key, long index, RespireValue value, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(SetBorrowedAsync(key, index, value, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(SetBorrowedAsync(key, index, value, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -250,7 +269,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long> LeftPushIfExistsAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(LeftPushIfExistsBorrowedAsync(key, values, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LeftPushIfExistsBorrowedAsync(key, values, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -260,7 +283,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long> LeftPushIfExistsAsync(RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(LeftPushIfExistsBorrowedAsync(key, values, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LeftPushIfExistsBorrowedAsync(key, values, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -273,7 +300,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long> RightPushIfExistsAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(RightPushIfExistsBorrowedAsync(key, values, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RightPushIfExistsBorrowedAsync(key, values, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -283,7 +314,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long> RightPushIfExistsAsync(RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(RightPushIfExistsBorrowedAsync(key, values, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RightPushIfExistsBorrowedAsync(key, values, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -307,37 +342,47 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
         {
             throw new ArgumentOutOfRangeException(nameof(rank), rank, "Rank must be nonzero and greater than Int64.MinValue.");
         }
+
         if (count < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(count), count, "Count cannot be negative.");
         }
+
         ArgumentOutOfRangeException.ThrowIfNegative(maxLength);
 
         var arguments = new RespireValue[1 + (rank == 1 ? 0 : 2) + (count.HasValue ? 2 : 0) + (maxLength == 0 ? 0 : 2)];
         arguments[0] = value;
         var index = 1;
+
         if (rank != 1)
         {
             arguments[index++] = "RANK";
             arguments[index++] = rank;
         }
+
         if (count is { } matches)
         {
             arguments[index++] = "COUNT";
             arguments[index++] = matches;
         }
+
         if (maxLength != 0)
         {
             arguments[index++] = "MAXLEN";
             arguments[index] = maxLength;
         }
+
         return arguments;
     }
 
     public ValueTask<long> LeftPushAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(LeftPushBorrowedAsync(key, values, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LeftPushBorrowedAsync(key, values, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -348,7 +393,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
         RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(LeftPushBorrowedAsync(key, values, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LeftPushBorrowedAsync(key, values, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -359,7 +408,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long> RightPushAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(RightPushBorrowedAsync(key, values, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RightPushBorrowedAsync(key, values, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -370,7 +423,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
         RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(RightPushBorrowedAsync(key, values, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RightPushBorrowedAsync(key, values, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -387,7 +444,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     private ValueTask<string?> LeftPopCoreAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(LeftPopBorrowedAsync(key, waitFor, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LeftPopBorrowedAsync(key, waitFor, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -403,7 +464,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     private ValueTask<string?> RightPopCoreAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(RightPopBorrowedAsync(key, waitFor, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RightPopBorrowedAsync(key, waitFor, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -414,7 +479,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
         RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string[]>.Start();
-        try { return owner.Attach(LeftPopManyBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LeftPopManyBorrowedAsync(key, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -426,7 +495,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
         RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string[]>.Start();
-        try { return owner.Attach(RightPopManyBorrowedAsync(key, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RightPopManyBorrowedAsync(key, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -484,7 +557,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     private ValueTask<T?> LeftPopCoreAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
-        try { return owner.Attach(LeftPopBorrowedAsync<T>(key, waitFor, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LeftPopBorrowedAsync<T>(key, waitFor, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -508,7 +585,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     private ValueTask<T?> RightPopCoreAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T?>.Start();
-        try { return owner.Attach(RightPopBorrowedAsync<T>(key, waitFor, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RightPopBorrowedAsync<T>(key, waitFor, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -523,7 +604,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
         RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T[]>.Start();
-        try { return owner.Attach(LeftPopManyBorrowedAsync<T>(key, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(LeftPopManyBorrowedAsync<T>(key, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -539,7 +624,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
         RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T[]>.Start();
-        try { return owner.Attach(RightPopManyBorrowedAsync<T>(key, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RightPopManyBorrowedAsync<T>(key, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -601,7 +690,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(MoveBorrowedAsync(source, destination, from, to, waitFor, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(MoveBorrowedAsync(source, destination, from, to, waitFor, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -611,6 +704,7 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     {
         RespireValue fromSide = from == RespireListSide.Left ? "LEFT" : "RIGHT";
         RespireValue toSide = to == RespireListSide.Left ? "LEFT" : "RIGHT";
+
         if (waitFor is not { } wait)
         {
             return client.StringOrNullAsync(
@@ -640,7 +734,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(CountBorrowedAsync(key, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(CountBorrowedAsync(key, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -650,7 +748,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<string[]> RangeAsync(RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string[]>.Start();
-        try { return owner.Attach(RangeBorrowedAsync(key, start, stop, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RangeBorrowedAsync(key, start, stop, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -663,7 +765,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
         RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<T[]>.Start();
-        try { return owner.Attach(RangeBorrowedAsync<T>(key, start, stop, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RangeBorrowedAsync<T>(key, start, stop, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -677,7 +783,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<string?> IndexAsync(RespireKey key, long index, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<string?>.Start();
-        try { return owner.Attach(IndexBorrowedAsync(key, index, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(IndexBorrowedAsync(key, index, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -687,7 +797,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<long> RemoveAsync(RespireKey key, RespireValue value, long count = 0, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<long>.Start();
-        try { return owner.Attach(RemoveBorrowedAsync(key, value, count, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(RemoveBorrowedAsync(key, value, count, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
@@ -697,7 +811,11 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
     public ValueTask<bool> TrimAsync(RespireKey key, long start, long stop, CancellationToken cancellationToken = default)
     {
         var owner = DispatchResponseSource<bool>.Start();
-        try { return owner.Attach(TrimBorrowedAsync(key, start, stop, cancellationToken, owner.Observation)); }
+
+        try
+        {
+            return owner.Attach(TrimBorrowedAsync(key, start, stop, cancellationToken, owner.Observation));
+        }
         catch (Exception error) { owner.Fail(error); throw; }
     }
 

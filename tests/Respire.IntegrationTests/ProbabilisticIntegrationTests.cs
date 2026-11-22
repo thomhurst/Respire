@@ -26,16 +26,22 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
         (await probabilistic.BloomMultiExistsAsync("bloom", ["b", "missing"])).Should().Equal(true, false);
         (await probabilistic.BloomInsertAsync("inserted", ["x", "y"], new() { Capacity = 100 })).Should().Equal(true, true);
         (await probabilistic.BloomCardinalityAsync("bloom")).Should().Be(3);
+
         using (var info = await probabilistic.BloomInfoAsync("bloom"))
+        {
             info.Count.Should().BePositive();
+        }
+
         (await client.Keys.ExistsAsync(prefix + "bloom")).Should().BeTrue();
 
         var chunk = await probabilistic.BloomScanDumpAsync("bloom");
+
         while (chunk.Iterator != 0)
         {
             await probabilistic.BloomLoadChunkAsync("restored", chunk);
             chunk = await probabilistic.BloomScanDumpAsync("bloom", chunk.Iterator);
         }
+
         (await probabilistic.BloomExistsAsync("restored", "c")).Should().BeTrue();
 
         (await probabilistic.CuckooReserveAsync("cuckoo", 1_000, new() { BucketSize = 2 })).Should().BeTrue();
@@ -49,15 +55,20 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
         (await probabilistic.CuckooDeleteAsync("cuckoo", "a")).Should().BeTrue();
         (await probabilistic.CuckooExistsAsync("cuckoo", "c")).Should().BeTrue();
         (await probabilistic.CuckooMultiExistsAsync("cuckoo", ["b", "missing"])).Should().Equal(true, false);
+
         using (var info = await probabilistic.CuckooInfoAsync("cuckoo"))
+        {
             info.Count.Should().BePositive();
+        }
 
         chunk = await probabilistic.CuckooScanDumpAsync("cuckoo");
+
         while (chunk.Iterator != 0)
         {
             await probabilistic.CuckooLoadChunkAsync("cuckoo-restored", chunk);
             chunk = await probabilistic.CuckooScanDumpAsync("cuckoo", chunk.Iterator);
         }
+
         (await probabilistic.CuckooExistsAsync("cuckoo-restored", "b")).Should().BeTrue();
     }
 
@@ -79,18 +90,27 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
         await probabilistic.CountMinIncrementAsync("cms:b", new Dictionary<RespireValue, long> { ["x"] = 1 });
         await probabilistic.CountMinMergeAsync("cms:merged", ["cms:a", "cms:b"], new() { Weights = [1, 3] });
         (await probabilistic.CountMinQueryAsync("cms:merged", ["x", "y"])).Should().Equal(5, 1);
+
         using (var info = await probabilistic.CountMinInfoAsync("cms:merged"))
+        {
             info.Count.Should().BePositive();
+        }
 
         await probabilistic.TopKReserveAsync("topk", 2, new() { Width = 50, Depth = 4, Decay = 0.9 });
         (await probabilistic.TopKAddAsync("topk", ["a", "b"])).Should().HaveCount(2).And.OnlyContain(evicted => evicted == null);
         await probabilistic.TopKIncrementAsync("topk", new Dictionary<RespireValue, long> { ["a"] = 10 });
         (await probabilistic.TopKQueryAsync("topk", ["a", "missing"])).Should().Equal(true, false);
         (await probabilistic.TopKCountAsync("topk", ["a"])).Should().Equal(11);
+
         using (var list = await probabilistic.TopKListAsync("topk", withCount: true))
+        {
             list[0].AsString().Should().Be("a");
+        }
+
         using (var info = await probabilistic.TopKInfoAsync("topk"))
+        {
             info.Count.Should().BePositive();
+        }
 
         await probabilistic.TDigestCreateAsync("digest:a", new() { Compression = 100 });
         await probabilistic.TDigestCreateAsync("digest:b");
@@ -108,8 +128,12 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
         (await probabilistic.TDigestByRankAsync("digest", [100])).Should().Equal(double.PositiveInfinity);
         (await probabilistic.TDigestByReverseRankAsync("digest", [100])).Should().Equal(double.NegativeInfinity);
         (await probabilistic.TDigestTrimmedMeanAsync("digest", 0, 1)).Should().BeApproximately(5.5, 0.001);
+
         using (var info = await probabilistic.TDigestInfoAsync("digest"))
+        {
             info.Count.Should().BePositive();
+        }
+
         await probabilistic.TDigestResetAsync("digest");
         double.IsNaN(await probabilistic.TDigestMinimumAsync("digest")).Should().BeTrue();
 
@@ -145,19 +169,38 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
         await cancelled.CancelAsync();
         Func<Task>[] canceledWrites =
         [
-            async () => { await probabilistic.BloomAddAsync($"{key}:bloom", "item", cancelled.Token); },
-            async () => { await probabilistic.CuckooAddAsync($"{key}:cuckoo", "item", cancelled.Token); },
-            async () => { await probabilistic.CountMinInitializeByDimensionsAsync($"{key}:cms", 100, 5, cancelled.Token); },
-            async () => { await probabilistic.TopKReserveAsync($"{key}:topk", 2, cancellationToken: cancelled.Token); },
-            async () => { await probabilistic.TDigestCreateAsync($"{key}:digest", cancellationToken: cancelled.Token); },
+            async () =>
+            {
+                await probabilistic.BloomAddAsync($"{key}:bloom", "item", cancelled.Token);
+            },
+            async () =>
+            {
+                await probabilistic.CuckooAddAsync($"{key}:cuckoo", "item", cancelled.Token);
+            },
+            async () =>
+            {
+                await probabilistic.CountMinInitializeByDimensionsAsync($"{key}:cms", 100, 5, cancelled.Token);
+            },
+            async () =>
+            {
+                await probabilistic.TopKReserveAsync($"{key}:topk", 2, cancellationToken: cancelled.Token);
+            },
+            async () =>
+            {
+                await probabilistic.TDigestCreateAsync($"{key}:digest", cancellationToken: cancelled.Token);
+            },
         ];
+
         foreach (var write in canceledWrites)
         {
             var error = await write.Should().ThrowAsync<OperationCanceledException>();
             error.Which.CancellationToken.Should().Be(cancelled.Token);
         }
+
         foreach (var family in new[] { "bloom", "cuckoo", "cms", "topk", "digest" })
+        {
             (await client.Keys.ExistsAsync($"{key}:{family}")).Should().BeFalse();
+        }
     }
 
     private Task<RespireClient> ConnectAsync(int protocol)

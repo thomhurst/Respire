@@ -53,11 +53,31 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         StartTagPropagation(options);
     }
 
-    internal RespireClient TrackingClient { get; }
-    internal int ObservationCount { get { lock (_gate) return _observations.Count; } }
+    internal RespireClient TrackingClient
+    {
+        get;
+    }
+
+    internal int ObservationCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _observations.Count;
+            }
+        }
+    }
+
     internal bool HasPendingRetirementCleanup
     {
-        get { lock (_gate) return _retiredObservations.Count != 0 || !_retirementDrains.IsIdle; }
+        get
+        {
+            lock (_gate)
+            {
+                return _retiredObservations.Count != 0 || !_retirementDrains.IsIdle;
+            }
+        }
     }
 
     private HybridCache CreateContext(Observation? observation, IDistributedCache distributed)
@@ -71,8 +91,14 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         cancellationToken.ThrowIfCancellationRequested();
         tags = PrepareTags(tags);
-        if (_tagMessage is not null) await _tagStarted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        if (_tagMessage is not null)
+        {
+            await _tagStarted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         var observation = Acquire(key, options, tags);
+
         try
         {
             var cache = await SelectCacheAsync(observation, tags, reads: true, cancellationToken).ConfigureAwait(false);
@@ -89,9 +115,15 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         cancellationToken.ThrowIfCancellationRequested();
         tags = PrepareTags(tags);
-        if (_tagMessage is not null) await _tagStarted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        if (_tagMessage is not null)
+        {
+            await _tagStarted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         RetireKey(key);
         var observation = Acquire(key, options, tags);
+
         try
         {
             // SetAsync never reads L2, so a fallback context needs no tag metadata.
@@ -113,23 +145,31 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     public override async ValueTask RemoveByTagAsync(string tag, CancellationToken cancellationToken = default)
     {
         Task[]? updates = null;
+
         try
         {
             lock (_gate)
             {
                 ThrowIfDisposed();
-                if (string.IsNullOrWhiteSpace(tag)) return;
+
+                if (string.IsNullOrWhiteSpace(tag))
+                {
+                    return;
+                }
+
                 var timestamp = _clock.GetUtcNow();
                 var message = _tagMessage?.Encode(_tagSender, tag, timestamp);
                 ResetTagContinuityUnderGate();
                 var localUpdates = ApplyLocalTagInvalidation(tag, timestamp);
                 // Preserve the single shared marker and publish only after it completes.
                 Task remoteUpdate;
+
                 try
                 {
                     remoteUpdate = WriteTagAndPublishAsync(tag, timestamp, message, cancellationToken);
                 }
                 catch (Exception error) { remoteUpdate = Task.FromException(error); }
+
                 updates = [remoteUpdate, .. localUpdates];
             }
         }
@@ -138,12 +178,23 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             if (TryDrainRetiredObservations() is { } error)
             {
                 // A custom memory-cache failure must not abandon an already-started marker write.
-                if (updates is null) ThrowCleanupFailure(error);
-                else updates = [.. updates, Task.FromException(error)];
+                if (updates is null)
+                {
+                    ThrowCleanupFailure(error);
+                }
+                else
+                {
+                    updates = [.. updates, Task.FromException(error)];
+                }
             }
         }
+
         var completion = Task.WhenAll(updates);
-        try { await completion.ConfigureAwait(false); }
+
+        try
+        {
+            await completion.ConfigureAwait(false);
+        }
         catch when (completion.Exception?.InnerExceptions.Count > 1)
         {
             // Observe every operation, preserving both shared-marker and local failures.
@@ -154,7 +205,9 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     private async Task ReplayTagAsync(HybridCache cache, string tag, DateTimeOffset timestamp)
     {
         using (_clock.Replay(timestamp))
+        {
             await cache.RemoveByTagAsync(tag).ConfigureAwait(false);
+        }
     }
 
     private HybridCacheEntryOptions WithoutLocalCache(HybridCacheEntryOptions? options) => new()
@@ -170,6 +223,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     private Observation? Acquire(string key, HybridCacheEntryOptions? options, IEnumerable<string>? tags)
     {
         Observation? acquired = null;
+
         try
         {
             lock (_gate)
@@ -180,33 +234,57 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
                 if (!CanUseTagLocalCache || _trackingStopped || _tagHistoryExhausted || string.IsNullOrWhiteSpace(key) || key.Length > _hybridOptions.MaximumKeyLength
                     || HasControlCharacter(key)
                     || (EffectiveFlags(options) & HybridCacheEntryFlags.DisableLocalCache) == HybridCacheEntryFlags.DisableLocalCache)
+                {
                     return null;
+                }
+
                 if (_observations.TryGetValue(key, out var current))
                 {
                     if (_tagMessage is not null && tags is not null
                         && current.RequestTags!.Count + tags.Distinct(StringComparer.Ordinal).Count(tag => !current.RequestTags.Contains(tag)) > _maxTagsPerEntry)
+                    {
                         Retire(current);
+                    }
                     else
                     {
-                        if (_tagMessage is not null && tags is not null) current.RequestTags!.UnionWith(tags);
+                        if (_tagMessage is not null && tags is not null)
+                        {
+                            current.RequestTags!.UnionWith(tags);
+                        }
+
                         current.ActiveCalls++;
                         return acquired = current;
                     }
                 }
-                if (_observations.Count >= _maxObservedKeys) return null;
+
+                if (_observations.Count >= _maxObservedKeys)
+                {
+                    return null;
+                }
 
                 var physicalKey = _distributed.ResolveCoherenceKey(key);
-                if (!RespireDistributedCache.CanTrackCoherenceKey(TrackingClient, in physicalKey)) return null;
+
+                if (!RespireDistributedCache.CanTrackCoherenceKey(TrackingClient, in physicalKey))
+                {
+                    return null;
+                }
 
                 var observation = new Observation(this, key);
-                if (_tagMessage is not null) observation.RequestTags = new(tags ?? [], StringComparer.Ordinal);
+
+                if (_tagMessage is not null)
+                {
+                    observation.RequestTags = new(tags ?? [], StringComparer.Ordinal);
+                }
+
                 _observations.Add(key, observation);
+
                 try
                 {
                     observation.Subscription = TrackingClient.ClientSideCache!.SubscribeInvalidations(
                         physicalKey, _ => Retire(observation));
                     observation.Stopped = observation.Subscription.Stopped.UnsafeRegister(
                         static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
+
                     if (_distributed.CanObserveCoherenceSourceKey(in physicalKey)
                         && _distributed.CoherenceSourceCache is { } source)
                     {
@@ -215,7 +293,10 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
                             // Lua reads conservatively signal LocalMutation on the original
                             // connection. Actual writes are observed by the independent tracker.
                             if ((invalidation.Reasons & (RespireClientCacheInvalidationReason.ExplicitClear
-                                | RespireClientCacheInvalidationReason.ContinuityLost)) != 0) Retire(observation);
+                                | RespireClientCacheInvalidationReason.ContinuityLost)) != 0)
+                            {
+                                Retire(observation);
+                            }
                         });
                         observation.SourceStopped = observation.SourceSubscription.Stopped.UnsafeRegister(
                             static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
@@ -249,8 +330,12 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             {
                 // The caller cannot release a call that Acquire never returned.
                 // Roll it back even if the failing cleanup belongs to another key.
-                try { Release(acquired); }
+                try
+                {
+                    Release(acquired);
+                }
                 catch (Exception rollbackError) { cleanupError = CombineFailures(cleanupError, rollbackError)!; }
+
                 ThrowCleanupFailure(cleanupError);
             }
         }
@@ -259,14 +344,24 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     private static bool HasControlCharacter(string key)
     {
         foreach (var character in key)
-            if (character <= 31) return true;
+        {
+            if (character <= 31)
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
     private async ValueTask<HybridCache> SelectCacheAsync(Observation? observation, IEnumerable<string>? readTags,
         bool reads, CancellationToken cancellationToken)
     {
-        if (observation is null) return await FallbackCacheAsync(readTags, reads, cancellationToken).ConfigureAwait(false);
+        if (observation is null)
+        {
+            return await FallbackCacheAsync(readTags, reads, cancellationToken).ConfigureAwait(false);
+        }
+
         try
         {
             await observation.Tracking.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -279,36 +374,53 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             Retire(observation);
             return await FallbackCacheAsync(readTags, reads, cancellationToken).ConfigureAwait(false);
         }
+
         lock (_gate)
         {
-            if (!observation.Retired && CanUseTagLocalCache) return observation.Cache;
+            if (!observation.Retired && CanUseTagLocalCache)
+            {
+                return observation.Cache;
+            }
         }
+
         return await FallbackCacheAsync(readTags, reads, cancellationToken).ConfigureAwait(false);
     }
 
     private void Release(Observation? observation)
     {
-        if (observation is null) return;
+        if (observation is null)
+        {
+            return;
+        }
+
         lock (_gate)
         {
             observation.ActiveCalls--;
             RetireIfIdle(observation);
         }
+
         DrainRetiredObservations();
     }
 
     private void RetireIfIdle(Observation observation)
     {
         if (!observation.Retired && observation.ActiveCalls == 0
-            && !_memory.TryGetValue(observation.MemoryKey, out _)) Retire(observation);
+            && !_memory.TryGetValue(observation.MemoryKey, out _))
+        {
+            Retire(observation);
+        }
     }
 
     internal void SweepObservations()
     {
         lock (_gate)
         {
-            foreach (var observation in _observations.Values.ToArray()) RetireIfIdle(observation);
+            foreach (var observation in _observations.Values.ToArray())
+            {
+                RetireIfIdle(observation);
+            }
         }
+
         DrainRetiredObservations();
     }
 
@@ -316,10 +428,15 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         lock (_gate)
         {
-            if (observation.Retired) return;
+            if (observation.Retired)
+            {
+                return;
+            }
+
             _trackingStopped = true;
             RetireAll();
         }
+
         DrainRetiredObservations();
     }
 
@@ -327,8 +444,12 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         lock (_gate)
         {
-            if (key is not null && _observations.TryGetValue(key, out var observation)) Retire(observation);
+            if (key is not null && _observations.TryGetValue(key, out var observation))
+            {
+                Retire(observation);
+            }
         }
+
         DrainRetiredObservations();
     }
 
@@ -342,7 +463,10 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         lock (_gate)
         {
-            foreach (var observation in _observations.Values.ToArray()) Retire(observation);
+            foreach (var observation in _observations.Values.ToArray())
+            {
+                Retire(observation);
+            }
         }
     }
 
@@ -350,13 +474,18 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         lock (_gate)
         {
-            if (observation.Retired) return;
+            if (observation.Retired)
+            {
+                return;
+            }
+
             observation.Retired = true;
             // Readers check Retired under this gate, so deferred physical removal
             // cannot expose this generation. Entry publication stays fenced here too.
             _observations.Remove(observation.Key);
             _retiredObservations.Enqueue(observation);
         }
+
         DrainRetiredObservations();
     }
 
@@ -368,20 +497,35 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         // Subscribe/Stopped registration can invoke a callback synchronously during Acquire.
         // The outer gate owner drains after publishing all handles and releasing the gate.
-        if (_gate.IsHeldByCurrentThread) return null;
+        if (_gate.IsHeldByCurrentThread)
+        {
+            return null;
+        }
+
         Exception? failure = null;
+
         while (true)
         {
             Observation observation;
+
             lock (_gate)
             {
-                if (!_retiredObservations.TryDequeue(out observation!)) return failure;
+                if (!_retiredObservations.TryDequeue(out observation!))
+                {
+                    return failure;
+                }
+
                 _retirementDrains.Claim();
             }
             // No external memory-cache or subscription cleanup runs under the bridge gate.
             Exception? cleanupFailure = null;
-            try { _memory.Remove(observation.MemoryKey); }
+
+            try
+            {
+                _memory.Remove(observation.MemoryKey);
+            }
             catch (Exception error) { cleanupFailure = error; }
+
             try
             {
                 observation.Stopped.Unregister();
@@ -393,6 +537,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             }
             catch (Exception error) { cleanupFailure = CombineFailures(cleanupFailure, error); }
             finally { CompleteRetirementDrain(cleanupFailure); }
+
             failure = CombineFailures(failure, cleanupFailure);
         }
     }
@@ -400,11 +545,13 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     private void CompleteRetirementDrain(Exception? failure)
     {
         (TaskCompletionSource<Exception?>? Completion, Exception? Failure) result;
+
         lock (_gate)
         {
             result = _retirementDrains.Complete(failure, Volatile.Read(ref _disposed) != 0,
                 _retiredObservations.Count == 0);
         }
+
         result.Completion?.TrySetResult(result.Failure);
     }
 
@@ -414,6 +561,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         // that entered before closure. Claiming and counting each drain is atomic there.
         MarkAllRetired();
         _ = TryDrainRetiredObservations();
+
         lock (_gate)
         {
             return _retirementDrains.Join(_retiredObservations.Count == 0);
@@ -424,11 +572,17 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         lock (_gate)
         {
-            if (Volatile.Read(ref _disposed) != 0) return false;
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                return false;
+            }
             // A cleanup cannot join its own call stack. Reject before closing admission,
             // allowing the outer caller to dispose after that cleanup has unwound.
             if (_retirementDrains.IsDrainingCurrentContext)
+            {
                 throw new InvalidOperationException("Cannot dispose the cache from its active retirement cleanup.");
+            }
+
             return Interlocked.Exchange(ref _disposed, 1) == 0;
         }
     }
@@ -450,7 +604,13 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             get
             {
                 for (var scope = _scope.Value; scope is not null; scope = scope.Parent)
-                    if (Volatile.Read(ref scope.Active) != 0) return true;
+                {
+                    if (Volatile.Read(ref scope.Active) != 0)
+                    {
+                        return true;
+                    }
+                }
+
                 return false;
             }
         }
@@ -469,13 +629,28 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             var scope = _scope.Value!;
             Volatile.Write(ref scope.Active, 0);
             _scope.Value = scope.Parent;
-            if (disposing) _failure = CombineFailures(_failure, failure);
+
+            if (disposing)
+            {
+                _failure = CombineFailures(_failure, failure);
+            }
+
             _count--;
-            if (_count != 0 || !queueEmpty) return default;
+
+            if (_count != 0 || !queueEmpty)
+            {
+                return default;
+            }
+
             var completion = _completion;
             _completion = null;
             var error = _failure;
-            if (completion is not null) _failure = null;
+
+            if (completion is not null)
+            {
+                _failure = null;
+            }
+
             return (completion, error);
         }
 
@@ -487,34 +662,50 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
                 _failure = null;
                 return new(failure);
             }
+
             return new((_completion ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task);
         }
 
         private sealed class CleanupScope(CleanupScope? parent)
         {
-            internal CleanupScope? Parent { get; } = parent;
+            internal CleanupScope? Parent
+            {
+                get;
+            } = parent;
             internal int Active = 1;
         }
     }
 
     private static Exception? CombineFailures(Exception? first, Exception? second)
     {
-        if (first is null) return second;
+        if (first is null)
+        {
+            return second;
+        }
+
         return second is null ? first : new AggregateException(first, second);
     }
 
     private static void ThrowCleanupFailure(Exception? error)
     {
-        if (error is not null) ExceptionDispatchInfo.Capture(error).Throw();
+        if (error is not null)
+        {
+            ExceptionDispatchInfo.Capture(error).Throw();
+        }
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
     public void Dispose()
     {
-        if (!TryBeginDisposal()) return;
+        if (!TryBeginDisposal())
+        {
+            return;
+        }
+
         Exception? failure = null;
         TrackingClient.ConnectionStateChanged -= TagConnectionStateChanged;
+
         try
         {
             _tagLifetime.Cancel();
@@ -524,19 +715,32 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         catch (Exception error) { failure = error; }
         // RespireClient exposes only async disposal. Its owned shutdown awaits use
         // ConfigureAwait(false), so this wait does not require the caller's context.
-        try { TrackingClient.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        try
+        {
+            TrackingClient.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
         catch (Exception error) { failure = CombineFailures(failure, error); }
-        try { _tagWorker.GetAwaiter().GetResult(); }
+
+        try
+        {
+            _tagWorker.GetAwaiter().GetResult();
+        }
         catch (Exception error) { failure = CombineFailures(failure, error); }
         finally { _tagLifetime.Dispose(); }
+
         ThrowCleanupFailure(failure);
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (!TryBeginDisposal()) return;
+        if (!TryBeginDisposal())
+        {
+            return;
+        }
+
         Exception? failure = null;
         TrackingClient.ConnectionStateChanged -= TagConnectionStateChanged;
+
         try
         {
             await _tagLifetime.CancelAsync().ConfigureAwait(false);
@@ -544,19 +748,39 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             failure = await RetireAllAndWaitAsync().ConfigureAwait(false);
         }
         catch (Exception error) { failure = error; }
-        try { await TrackingClient.DisposeAsync().ConfigureAwait(false); }
+
+        try
+        {
+            await TrackingClient.DisposeAsync().ConfigureAwait(false);
+        }
         catch (Exception error) { failure = CombineFailures(failure, error); }
-        try { await _tagWorker.ConfigureAwait(false); }
+
+        try
+        {
+            await _tagWorker.ConfigureAwait(false);
+        }
         catch (Exception error) { failure = CombineFailures(failure, error); }
         finally { _tagLifetime.Dispose(); }
+
         ThrowCleanupFailure(failure);
     }
 
     private sealed class Observation(RespireCoherentHybridCache owner, string key)
     {
-        internal RespireCoherentHybridCache Owner { get; } = owner;
-        internal string Key { get; } = key;
-        internal object MemoryKey { get; } = new();
+        internal RespireCoherentHybridCache Owner
+        {
+            get;
+        } = owner;
+
+        internal string Key
+        {
+            get;
+        } = key;
+
+        internal object MemoryKey
+        {
+            get;
+        } = new();
         internal int ActiveCalls = 1;
         internal bool Retired;
         internal HybridCache Cache = null!;
@@ -575,14 +799,32 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         public object? GetService(Type serviceType)
         {
-            if (serviceType == typeof(IMemoryCache)) return memory;
-            if (serviceType == typeof(TimeProvider)) return clock;
-            if (serviceType == typeof(IDistributedCache)) return distributed;
-            if (serviceType == typeof(IOptionsMonitor<HybridCacheOptions>)) return options;
+            if (serviceType == typeof(IMemoryCache))
+            {
+                return memory;
+            }
+
+            if (serviceType == typeof(TimeProvider))
+            {
+                return clock;
+            }
+
+            if (serviceType == typeof(IDistributedCache))
+            {
+                return distributed;
+            }
+
+            if (serviceType == typeof(IOptionsMonitor<HybridCacheOptions>))
+            {
+                return options;
+            }
+
             return services.GetService(serviceType);
         }
+
         public object? GetKeyedService(Type serviceType, object? serviceKey)
             => serviceType == typeof(IDistributedCache) ? distributed : ((IKeyedServiceProvider)services).GetKeyedService(serviceType, serviceKey);
+
         public object GetRequiredKeyedService(Type serviceType, object? serviceKey)
             => serviceType == typeof(IDistributedCache) ? distributed : ((IKeyedServiceProvider)services).GetRequiredKeyedService(serviceType, serviceKey);
     }
@@ -592,7 +834,9 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     private sealed class FixedHybridOptions(HybridCacheOptions options) : IOptionsMonitor<HybridCacheOptions>
     {
         public HybridCacheOptions CurrentValue => options;
+
         public HybridCacheOptions Get(string? name) => options;
+
         public IDisposable? OnChange(Action<HybridCacheOptions, string?> listener) => null;
     }
 
@@ -602,20 +846,31 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     private sealed class TagReplayClock(TimeProvider clock) : TimeProvider
     {
         private readonly AsyncLocal<DateTimeOffset?> _replay = new();
+
         internal bool IsReplaying => _replay.Value.HasValue;
+
         public override DateTimeOffset GetUtcNow() => _replay.Value ?? clock.GetUtcNow();
+
         public override long GetTimestamp() => clock.GetTimestamp();
+
         public override long TimestampFrequency => clock.TimestampFrequency;
+
         public override TimeZoneInfo LocalTimeZone => clock.LocalTimeZone;
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
             => clock.CreateTimer(callback, state, dueTime, period);
+
         internal IDisposable Replay(DateTimeOffset timestamp)
         {
             var previous = _replay.Value;
             _replay.Value = timestamp;
             return new ReplayScope(() => _replay.Value = previous);
         }
-        private sealed class ReplayScope(Action restore) : IDisposable { public void Dispose() => restore(); }
+
+        private sealed class ReplayScope(Action restore) : IDisposable
+        {
+            public void Dispose() => restore();
+        }
     }
 
     private sealed class TagReplayBackend(RespireCoherentHybridCache owner) : IBufferDistributedCache
@@ -624,8 +879,11 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         private readonly TagReplayClock clock = owner._clock;
 
         public byte[]? Get(string key) => distributed.Get(key);
+
         public Task<byte[]?> GetAsync(string key, CancellationToken token = default) => distributed.GetAsync(key, token);
+
         public bool TryGet(string key, IBufferWriter<byte> destination) => distributed.TryGet(key, destination);
+
         public ValueTask<bool> TryGetAsync(string key, IBufferWriter<byte> destination, CancellationToken token = default)
             => owner.TagMarkerReadDelayForTesting is { } delay && key.StartsWith(TagMarkerPrefix, StringComparison.Ordinal)
                 ? DelayedTryGetAsync(delay, key, destination, token)
@@ -637,17 +895,35 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             await delay(token).ConfigureAwait(false);
             return await distributed.TryGetAsync(key, destination, token).ConfigureAwait(false);
         }
+
         public void Set(string key, byte[] value, DistributedCacheEntryOptions options)
-        { if (!clock.IsReplaying) distributed.Set(key, value, options); }
+        {
+            if (!clock.IsReplaying)
+            {
+                distributed.Set(key, value, options);
+            }
+        }
+
         public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default)
             => clock.IsReplaying ? Task.CompletedTask : distributed.SetAsync(key, value, options, token);
+
         public void Set(string key, ReadOnlySequence<byte> value, DistributedCacheEntryOptions options)
-        { if (!clock.IsReplaying) distributed.Set(key, value, options); }
+        {
+            if (!clock.IsReplaying)
+            {
+                distributed.Set(key, value, options);
+            }
+        }
+
         public ValueTask SetAsync(string key, ReadOnlySequence<byte> value, DistributedCacheEntryOptions options, CancellationToken token = default)
             => clock.IsReplaying ? ValueTask.CompletedTask : distributed.SetAsync(key, value, options, token);
+
         public void Refresh(string key) => distributed.Refresh(key);
+
         public Task RefreshAsync(string key, CancellationToken token = default) => distributed.RefreshAsync(key, token);
+
         public void Remove(string key) => distributed.Remove(key);
+
         public Task RemoveAsync(string key, CancellationToken token = default) => distributed.RemoveAsync(key, token);
     }
 
@@ -674,23 +950,54 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
 
         public void Remove(object key)
         {
-            if (observation is not null) owner._memory.Remove(MemoryKey(key));
+            if (observation is not null)
+            {
+                owner._memory.Remove(MemoryKey(key));
+            }
         }
 
-        public void Dispose() { /* The service provider owns the shared memory cache. */ }
+        public void Dispose()
+        { /* The service provider owns the shared memory cache. */
+        }
     }
 
     private sealed class LocalCacheEntry(RespireCoherentHybridCache owner, Observation? observation, ICacheEntry entry) : ICacheEntry
     {
         public object Key => entry.Key;
-        public object? Value { get => entry.Value; set => entry.Value = value; }
-        public DateTimeOffset? AbsoluteExpiration { get => entry.AbsoluteExpiration; set => entry.AbsoluteExpiration = value; }
-        public TimeSpan? AbsoluteExpirationRelativeToNow { get => entry.AbsoluteExpirationRelativeToNow; set => entry.AbsoluteExpirationRelativeToNow = value; }
-        public TimeSpan? SlidingExpiration { get => entry.SlidingExpiration; set => entry.SlidingExpiration = value; }
+
+        public object? Value
+        {
+            get => entry.Value; set => entry.Value = value;
+        }
+
+        public DateTimeOffset? AbsoluteExpiration
+        {
+            get => entry.AbsoluteExpiration; set => entry.AbsoluteExpiration = value;
+        }
+
+        public TimeSpan? AbsoluteExpirationRelativeToNow
+        {
+            get => entry.AbsoluteExpirationRelativeToNow; set => entry.AbsoluteExpirationRelativeToNow = value;
+        }
+
+        public TimeSpan? SlidingExpiration
+        {
+            get => entry.SlidingExpiration; set => entry.SlidingExpiration = value;
+        }
+
         public IList<Microsoft.Extensions.Primitives.IChangeToken> ExpirationTokens => entry.ExpirationTokens;
+
         public IList<PostEvictionCallbackRegistration> PostEvictionCallbacks => entry.PostEvictionCallbacks;
-        public CacheItemPriority Priority { get => entry.Priority; set => entry.Priority = value; }
-        public long? Size { get => entry.Size; set => entry.Size = value; }
+
+        public CacheItemPriority Priority
+        {
+            get => entry.Priority; set => entry.Priority = value;
+        }
+
+        public long? Size
+        {
+            get => entry.Size; set => entry.Size = value;
+        }
 
         public void Dispose()
         {
@@ -710,13 +1017,20 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
                         EvictionCallback = static (_, _, _, state) =>
                         {
                             var observed = (Observation)state!;
-                            lock (observed.Owner._gate) observed.Owner.RetireIfIdle(observed);
+
+                            lock (observed.Owner._gate)
+                            {
+                                observed.Owner.RetireIfIdle(observed);
+                            }
+
                             observed.Owner.DrainRetiredObservations();
                         },
                     });
                 }
+
                 entry.Dispose();
             }
+
             owner.DrainRetiredObservations();
         }
     }

@@ -18,6 +18,7 @@ public class WriterInvariantTests
     public async Task EarlierWriterCannotResumeAfterAnotherWriterPublishes(bool complete, int payloadLength)
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             buffer.Append("+before\r\n"u8);
@@ -45,6 +46,7 @@ public class WriterInvariantTests
     public async Task DiscardingTheBufferInvalidatesItsExistingWriter(bool complete, int discard)
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             await Assert.That(() => ResumeDiscardedWriter(buffer, complete, discard))
@@ -64,6 +66,7 @@ public class WriterInvariantTests
     public async Task ReplacingTheArrayInvalidatesAnEmptyEarlierWriter(bool complete)
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             await Assert.That(() => ResumeWriterAfterAnotherReservationGrows(buffer, complete))
@@ -82,8 +85,15 @@ public class WriterInvariantTests
         var later = new RespWriter(buffer);
         later.WriteBulkString(payload);
         later.Complete();
-        if (complete) earlier.Complete();
-        else earlier.WriteRaw("+FAIL\r\n"u8);
+
+        if (complete)
+        {
+            earlier.Complete();
+        }
+        else
+        {
+            earlier.WriteRaw("+FAIL\r\n"u8);
+        }
     }
 
     [Test]
@@ -93,6 +103,7 @@ public class WriterInvariantTests
     public async Task AppendingPublishedBytesInvalidatesAnEarlierWriter(bool complete)
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             await Assert.That(() => ResumeWriterAfterAppend(buffer, complete))
@@ -108,27 +119,58 @@ public class WriterInvariantTests
     {
         var writer = new RespWriter(buffer);
         buffer.Append("+PONG\r\n"u8);
-        if (complete) writer.Complete();
-        else writer.WriteRaw("+FAIL\r\n"u8);
+
+        if (complete)
+        {
+            writer.Complete();
+        }
+        else
+        {
+            writer.WriteRaw("+FAIL\r\n"u8);
+        }
     }
 
     private static void ResumeDiscardedWriter(WriteBuffer buffer, bool complete, int discard)
     {
         var writer = new RespWriter(buffer);
         writer.WriteRaw("+PONG\r\n"u8);
-        if (discard == 0) buffer.TruncateTo(0);
-        else if (discard == 1) buffer.Reset();
-        else buffer.Release();
-        if (complete) writer.Complete();
-        else writer.WriteRaw("+FAIL\r\n"u8);
+
+        if (discard == 0)
+        {
+            buffer.TruncateTo(0);
+        }
+        else if (discard == 1)
+        {
+            buffer.Reset();
+        }
+        else
+        {
+            buffer.Release();
+        }
+
+        if (complete)
+        {
+            writer.Complete();
+        }
+        else
+        {
+            writer.WriteRaw("+FAIL\r\n"u8);
+        }
     }
 
     private static void ResumeWriterAfterAnotherReservationGrows(WriteBuffer buffer, bool complete)
     {
         var earlier = new RespWriter(buffer);
         _ = new RespWriter(buffer, buffer.Capacity + 1);
-        if (complete) earlier.Complete();
-        else earlier.WriteRaw("+FAIL\r\n"u8);
+
+        if (complete)
+        {
+            earlier.Complete();
+        }
+        else
+        {
+            earlier.WriteRaw("+FAIL\r\n"u8);
+        }
     }
 
     [Test]
@@ -137,12 +179,16 @@ public class WriterInvariantTests
     public async Task SecondWriterCannotDiscardUnpublishedBytes(int payloadLength)
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             buffer.Append("+before\r\n"u8);
             var mark = buffer.Count;
             WritePayload(buffer, payloadLength, complete: false);
-            await Assert.That(() => { _ = new RespWriter(buffer, 7); })
+            await Assert.That(() =>
+                {
+                    _ = new RespWriter(buffer, 7);
+                })
                 .ThrowsExactly<InvalidOperationException>();
             await Assert.That(buffer.Count).IsEqualTo(mark);
             await Assert.That(() => buffer.WrittenMemory).ThrowsExactly<InvalidOperationException>();
@@ -159,6 +205,7 @@ public class WriterInvariantTests
     public async Task PreviouslyCreatedWriterCannotChangeAnotherWritersUnpublishedBytes(bool complete)
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             buffer.Append("+before\r\n"u8);
@@ -174,10 +221,17 @@ public class WriterInvariantTests
         var owner = new RespWriter(buffer, 7);
         var competing = new RespWriter(buffer, 7);
         owner.WriteRaw("+PONG\r\n"u8);
+
         try
         {
-            if (complete) competing.Complete();
-            else competing.WriteRaw("+FAIL\r\n"u8);
+            if (complete)
+            {
+                competing.Complete();
+            }
+            else
+            {
+                competing.WriteRaw("+FAIL\r\n"u8);
+            }
         }
         finally { owner.Complete(); }
     }
@@ -188,6 +242,7 @@ public class WriterInvariantTests
     public async Task UncompletedWriterCannotBeConsumedEvenAfterGrowth(int payloadLength)
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             buffer.Append("+before\r\n"u8);
@@ -209,6 +264,7 @@ public class WriterInvariantTests
     public async Task UnderestimatedHintIsRejectedDespiteSpareCapacity(int bound)
     {
         var buffer = new WriteBuffer(512);
+
         try
         {
             buffer.Append("+before\r\n"u8);
@@ -229,11 +285,20 @@ public class WriterInvariantTests
     public async Task ResetAndReleaseDiscardUnpublishedWriterState(bool release)
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             WritePayload(buffer, 16, complete: false);
-            if (release) buffer.Release();
-            else buffer.Reset();
+
+            if (release)
+            {
+                buffer.Release();
+            }
+            else
+            {
+                buffer.Reset();
+            }
+
             await Assert.That(buffer.WrittenMemory.Length).IsEqualTo(0);
         }
         finally { buffer.Release(); }
@@ -243,6 +308,7 @@ public class WriterInvariantTests
     public async Task CombinedBoundCannotBeReusedAfterCompletion()
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             buffer.Append("+before\r\n"u8);
@@ -263,6 +329,7 @@ public class WriterInvariantTests
     public async Task RepeatedCompletionPublishesEachFrameWithinTheCombinedBound(int bound)
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             WriteTwoPongs(buffer, bound);
@@ -275,6 +342,7 @@ public class WriterInvariantTests
     public async Task EmptyWriterLeavesPublishedBytesReadable()
     {
         var buffer = new WriteBuffer(128);
+
         try
         {
             buffer.Append("+before\r\n"u8);
@@ -290,7 +358,11 @@ public class WriterInvariantTests
         // Start ASCII, then expand during suffix rewriting. Large payloads grow again after
         // the first reservation, exercising preservation of the unfinished-writer state.
         writer.WriteBulkString("x" + new string('é', length));
-        if (complete) writer.Complete();
+
+        if (complete)
+        {
+            writer.Complete();
+        }
     }
 
     private static void WritePong(WriteBuffer buffer, int bound)

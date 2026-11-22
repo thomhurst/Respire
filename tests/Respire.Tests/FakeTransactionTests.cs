@@ -21,14 +21,26 @@ public class FakeTransactionTests
         await using var observer = await RespireClient.ConnectAsync(options);
 #pragma warning restore RESP010
         await using var session = await TestRespSession.ConnectAsync(options);
+
         using (var multi = await session.CommandAsync("MULTI"))
+        {
             await Assert.That(multi.AsString()).IsEqualTo("OK");
+        }
+
         byte[] value = [0, 255, 128];
+
         using (var queued = await session.CommandBytesAsync("SET"u8.ToArray(), "key"u8.ToArray(), value))
+        {
             await Assert.That(queued.AsString()).IsEqualTo("QUEUED");
+        }
+
         value[0] = 9;
+
         using (var overwritten = await session.CommandAsync("ECHO", new string('x', 8192)))
+        {
             await Assert.That(overwritten.AsString()).IsEqualTo("QUEUED");
+        }
+
         await Assert.That(await observer.ExistsAsync("key")).IsFalse();
         using var executed = await session.CommandAsync("EXEC");
         await Assert.That(executed.AsArray().Length).IsEqualTo(2);
@@ -118,18 +130,32 @@ public class FakeTransactionTests
     {
         await using var server = new RespireFakeServer();
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions());
-        using (var watched = await session.CommandAsync("WATCH", "key")) { }
-        using (var multi = await session.CommandAsync("MULTI")) { }
-        using (var queued = await session.CommandAsync("SET", "key", "value")) { }
+
+        using (var watched = await session.CommandAsync("WATCH", "key"))
+        {
+        }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
+        using (var queued = await session.CommandAsync("SET", "key", "value"))
+        {
+        }
+
         var loops = ConnectionLoops(server);
         using var fault = server.InjectFault("EXEC", RespireFakeFault.Pause(new(), afterExecution));
         var commit = session.CommandAsync("EXEC");
         await fault.Matched.WaitAsync(Limit);
         await (disposeServer ? server.DisposeAsync().AsTask() : session.DisposeAsync().AsTask()).WaitAsync(Limit);
-        await Assert.That(async () => { using var reply = await commit.WaitAsync(Limit); }).Throws<Exception>();
+        await Assert.That(async () =>
+        {
+            using var reply = await commit.WaitAsync(Limit);
+        }).Throws<Exception>();
         await Task.WhenAll(loops).WaitAsync(Limit);
         await Assert.That(WatcherCount(server)).IsEqualTo(0);
         await Assert.That(fault.ExecutionCount).IsEqualTo(afterExecution ? 1 : 0);
+
         if (!disposeServer)
         {
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
@@ -147,16 +173,40 @@ public class FakeTransactionTests
         await using var server = new RespireFakeServer();
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions());
         using var fault = server.InjectFault(command, RespireFakeFault.ReadOnly());
-        using (var watched = await session.CommandAsync("WATCH", "key")) { }
-        using (var multi = await session.CommandAsync("MULTI")) { }
+
+        using (var watched = await session.CommandAsync("WATCH", "key"))
+        {
+        }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
         using (var queued = await session.CommandAsync("SET", "key", "value"))
+        {
             await Assert.That(queued.IsError).IsEqualTo(command == "SET");
+        }
+
         using (var aborted = await session.CommandAsync("EXEC"))
+        {
             await Assert.That(aborted.GetErrorMessage()).StartsWith("EXECABORT");
+        }
+
         await Assert.That(WatcherCount(server)).IsEqualTo(0);
-        using (var absent = await session.CommandAsync("GET", "key")) await Assert.That(absent.IsNull).IsTrue();
-        using (var next = await session.CommandAsync("MULTI")) { }
-        using (var empty = await session.CommandAsync("EXEC")) await Assert.That(empty.AsArray().Length).IsEqualTo(0);
+
+        using (var absent = await session.CommandAsync("GET", "key"))
+        {
+            await Assert.That(absent.IsNull).IsTrue();
+        }
+
+        using (var next = await session.CommandAsync("MULTI"))
+        {
+        }
+
+        using (var empty = await session.CommandAsync("EXEC"))
+        {
+            await Assert.That(empty.AsArray().Length).IsEqualTo(0);
+        }
     }
 
     [Test]
@@ -165,10 +215,22 @@ public class FakeTransactionTests
         var clock = new AdvancingClock();
         await using var server = new RespireFakeServer(clock);
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions());
-        using (var multi = await session.CommandAsync("MULTI")) { }
-        using (var queued = await session.CommandAsync("SET", "key", "value", "PX", "1")) { }
-        using (var queued = await session.CommandAsync("PTTL", "key")) { }
-        using (var queued = await session.CommandAsync("GET", "key")) { }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
+        using (var queued = await session.CommandAsync("SET", "key", "value", "PX", "1"))
+        {
+        }
+
+        using (var queued = await session.CommandAsync("PTTL", "key"))
+        {
+        }
+
+        using (var queued = await session.CommandAsync("GET", "key"))
+        {
+        }
         // Installed after queueing: internal EXEC traversal must not match received-command rules.
         using var fault = server.InjectFault("SET", RespireFakeFault.ReadOnly());
         var samples = clock.Samples;
@@ -185,22 +247,46 @@ public class FakeTransactionTests
     {
         await using var server = new RespireFakeServer();
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions());
-        using (var multi = await session.CommandAsync("MULTI")) { }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
         var payload = new byte[1024 * 1024];
+
         for (var index = 0; index < 15; index++)
         {
             using var queued = await session.CommandBytesAsync("SET"u8.ToArray(), "key"u8.ToArray(), payload);
             await Assert.That(queued.AsString()).IsEqualTo("QUEUED");
         }
+
         using (var rejected = await session.CommandBytesAsync("SET"u8.ToArray(), "key"u8.ToArray(), payload))
+        {
             await Assert.That(rejected.GetErrorMessage()).Contains("transaction queue exceeds 16 MiB");
+        }
+
         using (var aborted = await session.CommandAsync("EXEC"))
+        {
             await Assert.That(aborted.GetErrorMessage()).StartsWith("EXECABORT");
-        using (var absent = await session.CommandAsync("GET", "key")) await Assert.That(absent.IsNull).IsTrue();
-        using (var multi = await session.CommandAsync("MULTI")) { }
-        using (var queued = await session.CommandAsync("SET", "key", "small")) { }
+        }
+
+        using (var absent = await session.CommandAsync("GET", "key"))
+        {
+            await Assert.That(absent.IsNull).IsTrue();
+        }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
+        using (var queued = await session.CommandAsync("SET", "key", "small"))
+        {
+        }
+
         using (var executed = await session.CommandAsync("EXEC"))
+        {
             await Assert.That(executed.AsArray()[0].AsString()).IsEqualTo("OK");
+        }
     }
 
     [Test]
@@ -212,19 +298,47 @@ public class FakeTransactionTests
         var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol };
         await using var session = await TestRespSession.ConnectAsync(options);
         byte[] key = [0, 255, 128];
-        using (var watched = await session.CommandBytesAsync("WATCH"u8.ToArray(), key, key)) { }
+
+        using (var watched = await session.CommandBytesAsync("WATCH"u8.ToArray(), key, key))
+        {
+        }
+
         key[0] = 9;
-        using (var overwritten = await session.CommandAsync("ECHO", new string('x', 8192))) { }
+
+        using (var overwritten = await session.CommandAsync("ECHO", new string('x', 8192)))
+        {
+        }
+
         await using (var writer = await TestRespSession.ConnectAsync(options))
         {
             using var changed = await writer.CommandBytesAsync("SET"u8.ToArray(), [0, 255, 128], "changed"u8.ToArray());
         }
-        using (var multi = await session.CommandAsync("MULTI")) { }
-        using (var queued = await session.CommandAsync("SET", "discarded", "value")) { }
-        using (var aborted = await session.CommandAsync("EXEC")) await Assert.That(aborted.IsNull).IsTrue();
-        using (var watched = await session.CommandAsync("WATCH", "watched")) { }
-        using (var multi = await session.CommandAsync("MULTI")) { }
-        using (var queued = await session.CommandAsync("SET", "discarded", "value")) { }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
+        using (var queued = await session.CommandAsync("SET", "discarded", "value"))
+        {
+        }
+
+        using (var aborted = await session.CommandAsync("EXEC"))
+        {
+            await Assert.That(aborted.IsNull).IsTrue();
+        }
+
+        using (var watched = await session.CommandAsync("WATCH", "watched"))
+        {
+        }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
+        using (var queued = await session.CommandAsync("SET", "discarded", "value"))
+        {
+        }
+
         var loops = ConnectionLoops(server);
         await session.DisposeAsync();
         await Task.WhenAll(loops).WaitAsync(Limit);
@@ -242,14 +356,25 @@ public class FakeTransactionTests
     {
         await using var server = new RespireFakeServer();
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+
         foreach (var arguments in new[] { new[] { "HELLO", "3" }, new[] { "SUBSCRIBE", "channel" }, new[] { "UNSUBSCRIBE", "channel" },
             new[] { "PSUBSCRIBE", "*" }, new[] { "PUNSUBSCRIBE" }, new[] { "SSUBSCRIBE", "channel" },
             new[] { "SUNSUBSCRIBE" }, new[] { "SPUBLISH", "channel", "payload" } })
         {
-            using (var multi = await session.CommandAsync("MULTI")) { }
-            using (var rejected = await session.CommandAsync(arguments)) await Assert.That(rejected.IsError).IsTrue();
+            using (var multi = await session.CommandAsync("MULTI"))
+            {
+            }
+
+            using (var rejected = await session.CommandAsync(arguments))
+            {
+                await Assert.That(rejected.IsError).IsTrue();
+            }
+
             using (var aborted = await session.CommandAsync("EXEC"))
+            {
                 await Assert.That(aborted.GetErrorMessage()).StartsWith("EXECABORT");
+            }
+
             using var alive = await session.CommandAsync("PING");
             await Assert.That(alive.AsString()).IsEqualTo("PONG");
         }
@@ -262,13 +387,21 @@ public class FakeTransactionTests
     {
         await using var server = new RespireFakeServer();
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
-        using (var multi = await session.CommandAsync("MULTI")) { }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
         foreach (var command in new[] { "EVAL", "EVALSHA" })
         {
             using var queued = await session.CommandAsync(command, "return 1", "0");
             await Assert.That(queued.AsString()).IsEqualTo("QUEUED");
         }
-        using (var queued = await session.CommandAsync("SET", "applied", "value")) { }
+
+        using (var queued = await session.CommandAsync("SET", "applied", "value"))
+        {
+        }
+
         using var executed = await session.CommandAsync("EXEC");
         await Assert.That(executed.AsArray().Length).IsEqualTo(3);
         await Assert.That(executed.AsArray()[0].GetErrorMessage()).Contains("unsupported script");
@@ -289,41 +422,71 @@ public class FakeTransactionTests
         await using var observer = await TestRespSession.ConnectAsync(options);
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var publisher = await RespireClient.ConnectAsync(options);
+
 #pragma warning restore RESP010
-        using (var subscribed = await session.CommandAsync("SUBSCRIBE", "channel")) { }
-        using (var subscribed = await observer.CommandAsync("SUBSCRIBE", "channel")) { }
-        using (var watched = await session.CommandAsync("WATCH", "key")) { }
-        using (var multi = await session.CommandAsync("MULTI")) { }
-        using (var queued = await session.CommandAsync("PUBLISH", "channel", "inside")) { }
-        using (var queued = await session.CommandAsync("PING")) { }
+        using (var subscribed = await session.CommandAsync("SUBSCRIBE", "channel"))
+        {
+        }
+
+        using (var subscribed = await observer.CommandAsync("SUBSCRIBE", "channel"))
+        {
+        }
+
+        using (var watched = await session.CommandAsync("WATCH", "key"))
+        {
+        }
+
+        using (var multi = await session.CommandAsync("MULTI"))
+        {
+        }
+
+        using (var queued = await session.CommandAsync("PUBLISH", "channel", "inside"))
+        {
+        }
+
+        using (var queued = await session.CommandAsync("PING"))
+        {
+        }
+
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("EXEC", RespireFakeFault.Pause(gate, afterExecution: true));
         var executed = session.CommandAsync("EXEC");
         await fault.Matched.WaitAsync(Limit);
         // The command executed and its independent receiver gets the publication immediately.
         using (var message = await observer.ReadAsync())
+        {
             await Assert.That(message.AsArray()[2].AsString()).IsEqualTo("inside");
+        }
+
         await Assert.That(await publisher.PublishAsync("channel", "outside")).IsEqualTo(2);
         await Assert.That(executed.IsCompleted).IsFalse();
         await Assert.That(WatcherCount(server)).IsEqualTo(0);
+
         if (shutdown)
         {
             await server.DisposeAsync().AsTask().WaitAsync(Limit);
-            await Assert.That(async () => { using var reply = await executed; }).Throws<EndOfStreamException>();
+            await Assert.That(async () =>
+            {
+                using var reply = await executed;
+            }).Throws<EndOfStreamException>();
             return;
         }
+
         gate.Release();
+
         using (var reply = await executed.WaitAsync(Limit))
         {
             await Assert.That(reply.Type).IsEqualTo(Respire.Protocol.RespireDataType.Array);
             await Assert.That(reply.AsArray()[0].AsInteger()).IsEqualTo(2);
             await Assert.That(reply.AsArray()[1].AsString()).IsEqualTo("PONG");
         }
+
         foreach (var expected in new[] { "inside", "outside" })
         {
             using var message = await session.ReadAsync();
             await Assert.That(message.AsArray()[2].AsString()).IsEqualTo(expected);
         }
+
         using var alive = await session.CommandAsync("PING");
         await Assert.That(alive.AsString()).IsEqualTo("PONG");
     }
@@ -331,6 +494,7 @@ public class FakeTransactionTests
     private sealed class AdvancingClock : TimeProvider
     {
         internal int Samples;
+
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddMilliseconds(Interlocked.Increment(ref Samples));
     }
 
@@ -339,6 +503,7 @@ public class FakeTransactionTests
     private static Task[] ConnectionLoops(RespireFakeServer server)
     {
         var gate = (Lock)typeof(RespireFakeServer).GetField("_gate", PrivateInstance)!.GetValue(server)!;
+
         lock (gate)
         {
             var connections = (System.Collections.IEnumerable)typeof(RespireFakeServer).GetField("_connections", PrivateInstance)!.GetValue(server)!;
@@ -349,7 +514,10 @@ public class FakeTransactionTests
     private static int WatcherCount(RespireFakeServer server)
     {
         var gate = (Lock)typeof(RespireFakeServer).GetField("_gate", PrivateInstance)!.GetValue(server)!;
+
         lock (gate)
+        {
             return ((System.Collections.IDictionary)typeof(RespireFakeServer).GetField("_watchers", PrivateInstance)!.GetValue(server)!).Count;
+        }
     }
 }

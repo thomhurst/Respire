@@ -9,7 +9,10 @@ namespace Respire.IntegrationTests;
 public class SearchSuggestionIntegrationTests(ModernRedisTestContainer fixture)
 {
     [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
-    public required ModernRedisTestContainer CacheServer { get; init; }
+    public required ModernRedisTestContainer CacheServer
+    {
+        get; init;
+    }
 
     [Test]
     [Arguments(2)]
@@ -19,6 +22,7 @@ public class SearchSuggestionIntegrationTests(ModernRedisTestContainer fixture)
         await using var client = await ConnectAsync(protocol);
         var search = client.Search;
         var key = "suggest:" + Guid.NewGuid().ToString("N");
+
         try
         {
             (await search.GetSuggestionCountAsync(key)).Should().Be(0);
@@ -27,18 +31,27 @@ public class SearchSuggestionIntegrationTests(ModernRedisTestContainer fixture)
             (await search.AddSuggestionAsync(key, "hello", 2, new() { Payload = new byte[] { 0, 255, 128 } })).Should().Be(1);
             (await search.AddSuggestionAsync(key, "help", 1)).Should().Be(2);
             (await search.GetSuggestionCountAsync(key)).Should().Be(2);
+
             foreach (var scores in new[] { false, true })
-            foreach (var payloads in new[] { false, true })
             {
-                var options = new RespireSearchSuggestionOptions { WithScores = scores, WithPayloads = payloads };
-                var entries = await search.GetSuggestionsAsync(key, "hel", options);
-                entries.Select(entry => entry.Text).Should().BeEquivalentTo(["hello", "help"]);
-                var hello = entries.Single(entry => entry.Text == "hello");
-                hello.Score.HasValue.Should().Be(scores);
-                hello.Payload.HasValue.Should().Be(payloads);
-                if (payloads) hello.Payload!.Value.ToArray().Should().Equal(0, 255, 128);
-                entries.Single(entry => entry.Text == "help").Payload.Should().BeNull();
+                foreach (var payloads in new[] { false, true })
+                {
+                    var options = new RespireSearchSuggestionOptions { WithScores = scores, WithPayloads = payloads };
+                    var entries = await search.GetSuggestionsAsync(key, "hel", options);
+                    entries.Select(entry => entry.Text).Should().BeEquivalentTo(["hello", "help"]);
+                    var hello = entries.Single(entry => entry.Text == "hello");
+                    hello.Score.HasValue.Should().Be(scores);
+                    hello.Payload.HasValue.Should().Be(payloads);
+
+                    if (payloads)
+                    {
+                        hello.Payload!.Value.ToArray().Should().Equal(0, 255, 128);
+                    }
+
+                    entries.Single(entry => entry.Text == "help").Payload.Should().BeNull();
+                }
             }
+
             var retained = (await search.GetSuggestionsAsync(key, "hel", new() { WithScores = true, WithPayloads = true }))
                 .Single(entry => entry.Text == "hello");
             (await search.AddSuggestionAsync(key, "hello", 3, new() { Increment = true })).Should().Be(2);
@@ -78,12 +91,14 @@ public class SearchSuggestionIntegrationTests(ModernRedisTestContainer fixture)
             (s, k, token) => s.DeleteSuggestionAsync(k, "hello", token).AsTask(),
             (s, k, token) => s.GetSuggestionCountAsync(k, token).AsTask(),
             (s, k, token) => s.GetSuggestionsAsync(k, "hel", cancellationToken: token).AsTask()];
+
         try
         {
             await client.Search.AddSuggestionAsync(key, "hello", 1);
             await client.SetAsync(wrongType, "string");
             using var canceled = new CancellationTokenSource();
             canceled.Cancel();
+
             foreach (var call in calls)
             {
                 Func<Task> invalidPrefix = () => call(prefixed.Search, key, default);
@@ -94,6 +109,7 @@ public class SearchSuggestionIntegrationTests(ModernRedisTestContainer fixture)
                 Func<Task> invalidType = () => call(client.Search, wrongType, default);
                 await invalidType.Should().ThrowAsync<RespireServerException>();
             }
+
             (await client.Search.GetSuggestionCountAsync(key)).Should().Be(1);
         }
         finally { await client.Keys.DeleteAsync(key, wrongType); }
@@ -105,11 +121,13 @@ public class SearchSuggestionIntegrationTests(ModernRedisTestContainer fixture)
         await using var client = await ConnectAsync(3, cache: true, CacheServer);
         var key = "suggest:" + Guid.NewGuid().ToString("N");
         var cached = key + ":cached";
+
         try
         {
             await client.SetAsync(cached, "cached");
             await client.Search.AddSuggestionAsync(key, "hello", 1);
             Func<Task>[] reads = [() => client.Search.GetSuggestionsAsync(key, "").AsTask(), () => client.Search.GetSuggestionCountAsync(key).AsTask()];
+
             foreach (var read in reads)
             {
                 await client.GetStringAsync(cached);
@@ -118,7 +136,9 @@ public class SearchSuggestionIntegrationTests(ModernRedisTestContainer fixture)
                 (await client.GetStringAsync(cached)).Should().Be("cached");
                 client.ClientSideCache.GetStatistics().Hits.Should().Be(hits + 1);
             }
+
             Func<Task>[] mutations = [() => client.Search.AddSuggestionAsync(key, "help", 2).AsTask(), () => client.Search.DeleteSuggestionAsync(key, "hello").AsTask()];
+
             foreach (var mutation in mutations)
             {
                 await client.GetStringAsync(cached);
@@ -138,6 +158,7 @@ public class SearchSuggestionIntegrationTests(ModernRedisTestContainer fixture)
     {
         await using var client = await ConnectAsync(protocol);
         var key = "suggest:" + Guid.NewGuid().ToString("N");
+
         try
         {
             (await client.Search.AddSuggestionAsync(key, "positive", double.PositiveInfinity)).Should().Be(1);

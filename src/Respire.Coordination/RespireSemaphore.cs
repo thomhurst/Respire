@@ -54,16 +54,27 @@ public sealed class RespireSemaphore
     public RespireSemaphore(IRespireClient client, RespireKey key, int capacity)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
-        if (capacity <= 0) throw new ArgumentOutOfRangeException(nameof(capacity));
+
+        if (capacity <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(capacity));
+        }
+
         Key = key.Snapshot();
         Capacity = capacity;
     }
 
     /// <summary>The semaphore key before the client's configured prefix.</summary>
-    public RespireKey Key { get; }
+    public RespireKey Key
+    {
+        get;
+    }
 
     /// <summary>Maximum active permits configured by this view.</summary>
-    public int Capacity { get; }
+    public int Capacity
+    {
+        get;
+    }
 
     /// <summary>Immediately tries to acquire a permit with optional server-side expiry.</summary>
     /// <param name="expiry">Expiry of at least one millisecond, truncated to whole milliseconds, or null for owner-only release.</param>
@@ -98,6 +109,7 @@ public sealed class RespireSemaphore
         // Only a client that can fence gets one; the others still use a tracked execution for its
         // send timestamp.
         RespireClient? trackedWire = null;
+
         if (concreteClient is not null)
         {
             if (milliseconds == 0)
@@ -117,9 +129,11 @@ public sealed class RespireSemaphore
         var started = Stopwatch.GetTimestamp();
         RespireClient.TrackedScriptExecution? trackedExecution = null;
         bool acquired;
+
         try
         {
             RespireValue[] args = [Capacity, owner.Bytes, milliseconds];
+
             if (concreteClient is null)
             {
                 using var response = await _client.Scripts.ExecuteLeaseAsync(
@@ -154,7 +168,9 @@ public sealed class RespireSemaphore
             // An error reply is definite, so no delayed acquire can follow and no fence is needed.
             // The capacity check refuses before the script writes anything.
             if (error.Code == CapacityMismatchCode)
+            {
                 throw new RespireSemaphoreCapacityMismatchException(Capacity, error);
+            }
             // Any other error may come from a later command, for example PERSIST rejected by an
             // ACL after ZADD already added this owner. Lua does not roll back earlier writes, so
             // release the owner token; a permit without expiry keeps retrying in the background.
@@ -164,19 +180,31 @@ public sealed class RespireSemaphore
         catch
         {
             if (concreteClient is null)
+            {
                 await CleanupUncertainAcquisitionAsync(trackedWire, trackedExecution, owner).ConfigureAwait(false);
+            }
+
             throw;
         }
-        if (!acquired) return default;
+
+        if (!acquired)
+        {
+            return default;
+        }
 
         // The tracked send can wait for a routed connection, for in-flight capacity, or follow
         // redirects; the permit cannot exist before the final send, which StartedTimestamp records.
-        if (trackedExecution is { StartedTimestamp: > 0 } sent) started = Math.Max(started, sent.StartedTimestamp);
+        if (trackedExecution is { StartedTimestamp: > 0 } sent)
+        {
+            started = Math.Max(started, sent.StartedTimestamp);
+        }
+
         var completed = Stopwatch.GetTimestamp();
         var expiry = FromMilliseconds(milliseconds);
         // Conservative: Redis applies the expiry no earlier than the send, and the whole round
         // trip is deducted from it.
         var remaining = expiry - Stopwatch.GetElapsedTime(started, completed);
+
         if (remaining is { } left && left <= TimeSpan.Zero)
         {
             // The finite expiry is the fallback if this release attempt fails.
@@ -241,7 +269,9 @@ public sealed class RespireSemaphore
         Action<string> onAbandoned)
     {
         if (client is RespireClient respireClient)
+        {
             return respireClient.Core.Corrections.EnqueueAsync(attempt, shouldContinue, CleanupRetry, onAbandoned);
+        }
 
         // Legacy IRespireClient implementations have no shared core to own a bounded queue.
         return RetryCleanupAsync(Stopwatch.GetTimestamp(), () => attempt(CancellationToken.None), shouldContinue,
@@ -265,12 +295,14 @@ public sealed class RespireSemaphore
         RespireTelemetry.ErrorObservation observation = default)
     {
         var internalOwner = client is RespireClient ? DispatchResponseSource<bool>.Start() : null;
+
         if (internalOwner is not null)
         {
             var detached = internalOwner.Observation;
             observation = observation.IsEmpty ? detached
                 : new RespireTelemetry.ErrorObservation(new CleanupObservation(observation, detached), 0);
         }
+
         try
         {
             using var response = await (client is RespireClient wire
@@ -291,34 +323,64 @@ public sealed class RespireSemaphore
         RespireTelemetry.ErrorObservation detached) : IDispatchObservation
     {
         public bool IsOpen(long generation) => detached.IsOpen;
+
         public int Attempts(long generation) => caller.IsOpen ? caller.Attempts : detached.Attempts;
+
         public RespireEndpoint? Endpoint(long generation) => caller.IsOpen ? caller.Endpoint : detached.Endpoint;
+
         // The detached owner keeps its own copy: the caller can close after the release
         // starts, and a late cleanup failure must still name the node it attempted.
         public void UseEndpoint(long generation, RespireEndpoint? endpoint)
         {
-            if (caller.IsOpen) caller.UseEndpoint(endpoint);
+            if (caller.IsOpen)
+            {
+                caller.UseEndpoint(endpoint);
+            }
+
             detached.UseEndpoint(endpoint);
         }
+
         public void SetAttempts(long generation, int attempts)
         {
-            if (caller.IsOpen) caller.SetAttempts(attempts);
-            else detached.SetAttempts(attempts);
+            if (caller.IsOpen)
+            {
+                caller.SetAttempts(attempts);
+            }
+            else
+            {
+                detached.SetAttempts(attempts);
+            }
         }
+
         public void Retry(long generation)
         {
-            if (caller.IsOpen) caller.Retry();
-            else detached.Retry();
+            if (caller.IsOpen)
+            {
+                caller.Retry();
+            }
+            else
+            {
+                detached.Retry();
+            }
         }
+
         public bool Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
             => caller.TryHandled(error, endpoint, overrideEndpoint) || detached.TryHandled(error, endpoint, overrideEndpoint);
     }
 
     private static void RecordCleanupFailure(RespireTelemetry.ErrorObservation caller, Exception error)
     {
-        if (caller.TryHandled(error)) return;
+        if (caller.TryHandled(error))
+        {
+            return;
+        }
+
         var owner = DispatchResponseSource<bool>.Start();
-        try { owner.Observation.Handled(error); }
+
+        try
+        {
+            owner.Observation.Handled(error);
+        }
         finally { owner.CompleteInternal(); }
     }
 
@@ -437,8 +499,12 @@ public sealed class RespireSemaphore
     internal static long ToMilliseconds(TimeSpan? expiry, string parameterName)
     {
         var milliseconds = expiry?.Ticks / TimeSpan.TicksPerMillisecond ?? 0;
+
         if (expiry.HasValue && milliseconds <= 0)
+        {
             throw new ArgumentOutOfRangeException(parameterName, "Permit expiry must be at least one millisecond.");
+        }
+
         return milliseconds;
     }
 
@@ -464,7 +530,10 @@ public sealed class RespireSemaphoreCapacityMismatchException : RespireException
         => RequestedCapacity = requestedCapacity;
 
     /// <summary>The capacity this acquisition requested.</summary>
-    public int RequestedCapacity { get; }
+    public int RequestedCapacity
+    {
+        get;
+    }
 }
 
 /// <summary>The result of an immediate distributed semaphore acquisition.</summary>
@@ -538,12 +607,22 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     // ExpiryTicks is 0 for an owner-released permit; ValidUntil is long.MaxValue in that case.
     private sealed class Lease(long expiryTicks, long validUntil)
     {
-        public long ExpiryTicks { get; } = expiryTicks;
-        public long ValidUntil { get; } = validUntil;
+        public long ExpiryTicks
+        {
+            get;
+        } = expiryTicks;
+
+        public long ValidUntil
+        {
+            get;
+        } = validUntil;
     }
 
     /// <summary>The semaphore key before the client's configured prefix.</summary>
-    public RespireKey Key { get; }
+    public RespireKey Key
+    {
+        get;
+    }
 
     /// <summary>Capacity configured when this permit was acquired.</summary>
     public int Capacity => _capacity;
@@ -571,9 +650,17 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         {
             if (Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled
                 | PermitState.ReleaseUncertain))
+            {
                 return TimeSpan.Zero;
+            }
+
             var validUntil = Volatile.Read(ref _lease).ValidUntil;
-            if (validUntil == long.MaxValue) return null;
+
+            if (validUntil == long.MaxValue)
+            {
+                return null;
+            }
+
             var remaining = Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), validUntil);
             return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
         }
@@ -618,7 +705,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private async ValueTask<bool> VerifyStillHeldCoreAsync(CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation)
     {
-        if (IsReleased) return false;
+        if (IsReleased)
+        {
+            return false;
+        }
         // Deliberately outside the operation gate, so a stuck renewal cannot block a health check.
         // A concurrent renewal or release cannot disagree with the result: this only ever marks the
         // permit released after Redis reports the owner absent, and an absent owner cannot return
@@ -628,7 +718,12 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             : _client.Scripts.ExecuteLeaseAsync(RespireSemaphore.VerifyScript, [Key], [_owner.Bytes], cancellationToken))
             .ConfigureAwait(false);
         var held = response.AsInteger() == 1;
-        if (!held) Set(PermitState.Released);
+
+        if (!held)
+        {
+            Set(PermitState.Released);
+        }
+
         return held;
     }
 
@@ -672,13 +767,17 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     {
         var milliseconds = RespireSemaphore.ToMilliseconds(expiry, nameof(expiry));
         var enteredGate = false;
+
         try
         {
             await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             enteredGate = true;
             // An earlier renewal may still execute and overwrite any newer score, so no later
             // renewal can be confirmed. Fail closed; disposal still retries the owner release.
-            if (IsReleased || Has(PermitState.DisposeReleaseScheduled | PermitState.OutcomeUncertain)) return false;
+            if (IsReleased || Has(PermitState.DisposeReleaseScheduled | PermitState.OutcomeUncertain))
+            {
+                return false;
+            }
 
             // Recorded before the send: until a reply arrives, this renewal may already have changed
             // the permit's lifetime on Redis, so disposal cleanup must not stop at the old expiry.
@@ -693,11 +792,13 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             RespireClient.TrackedScriptExecution? trackedExecution = null;
             bool renewed;
             long completed;
+
             try
             {
                 // Renewal only updates an existing member, so a delayed renewal that executes after
                 // a cleanup release cannot recreate the permit; no CLIENT KILL fence is needed.
                 RespireResult response;
+
                 if (_client is RespireClient concreteClient)
                 {
                     trackedExecution = await concreteClient.StartTrackedScriptExecutionAsync(
@@ -733,15 +834,21 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 // changed the permit's lifetime. Disposal cleanup must not stop at the old expiry.
                 Set(PermitState.RenewalFailed);
                 var failedRenewalCleanupOutcome = await TryReleaseAndMarkAsync(observation).ConfigureAwait(false);
+
                 if (failedRenewalCleanupOutcome == CleanupAttemptResult.Failed
                     && Has(PermitState.DisposeReleaseScheduled))
+                {
                     ScheduleDisposeReleaseRetry();
+                }
+
                 throw;
             }
             finally
             {
                 if (trackedExecution is not null)
+                {
                     await trackedExecution.ReleaseRedirectTargetAsync().ConfigureAwait(false);
+                }
             }
 
             if (!renewed)
@@ -752,7 +859,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 return false;
             }
 
-            if (trackedExecution is { StartedTimestamp: > 0 } sent) started = Math.Max(started, sent.StartedTimestamp);
+            if (trackedExecution is { StartedTimestamp: > 0 } sent)
+            {
+                started = Math.Max(started, sent.StartedTimestamp);
+            }
+
             var remaining = requestedExpiry - Stopwatch.GetElapsedTime(started, completed);
             var stillValid = remaining is not { } left || left > TimeSpan.Zero;
             // Record the confirmed lifetime before clearing the pending flag, so disposal cleanup
@@ -763,18 +874,29 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                     : validRemaining > TimeSpan.Zero ? AddTimestampDuration(completed, validRemaining)
                     : completed));
             Clear(pending);
-            if (stillValid && !Has(PermitState.DisposeReleaseScheduled)) return true;
+
+            if (stillValid && !Has(PermitState.DisposeReleaseScheduled))
+            {
+                return true;
+            }
 
             // The renewal was confirmed after its expiry elapsed locally, or disposal started meanwhile.
             var lateRenewalCleanupOutcome = await TryReleaseAndMarkAsync(observation).ConfigureAwait(false);
+
             if (lateRenewalCleanupOutcome == CleanupAttemptResult.Failed
                 && Has(PermitState.DisposeReleaseScheduled))
+            {
                 ScheduleDisposeReleaseRetry();
+            }
+
             return false;
         }
         finally
         {
-            if (enteredGate) _operationGate.Release();
+            if (enteredGate)
+            {
+                _operationGate.Release();
+            }
         }
     }
 
@@ -802,6 +924,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         RespireTelemetry.ErrorObservation observation)
     {
         var enteredGate = false;
+
         try
         {
             await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -810,7 +933,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         }
         finally
         {
-            if (enteredGate) _operationGate.Release();
+            if (enteredGate)
+            {
+                _operationGate.Release();
+            }
         }
     }
 
@@ -835,6 +961,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         var observation = internalOwner?.Observation ?? default;
         using var timeout = new CancellationTokenSource(DisposeReleaseTimeout);
         var entered = false;
+
         try
         {
             await _operationGate.WaitAsync(timeout.Token).ConfigureAwait(false);
@@ -851,7 +978,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         }
         finally
         {
-            if (entered) _operationGate.Release();
+            if (entered)
+            {
+                _operationGate.Release();
+            }
+
             internalOwner?.CompleteInternal();
         }
     }
@@ -859,19 +990,31 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private void ScheduleDisposeReleaseRetry()
     {
         Set(PermitState.DisposeReleaseScheduled);
-        if (!NeedsDisposeCleanup()) return;
+
+        if (!NeedsDisposeCleanup())
+        {
+            return;
+        }
+
         var start = false;
+
         lock (_disposeRetryGate)
         {
             if (_disposeRetryRunning)
+            {
                 _disposeRetryRestartRequested = true;
+            }
             else
             {
                 _disposeRetryRunning = true;
                 start = true;
             }
         }
-        if (start) _ = RunDisposeReleaseRetryAsync();
+
+        if (start)
+        {
+            _ = RunDisposeReleaseRetryAsync();
+        }
     }
 
     private async Task RunDisposeReleaseRetryAsync()
@@ -885,12 +1028,15 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         finally
         {
             var restart = false;
+
             lock (_disposeRetryGate)
             {
                 _disposeRetryRunning = false;
+
                 if (_disposeRetryRestartRequested)
                 {
                     _disposeRetryRestartRequested = false;
+
                     if (NeedsDisposeCleanup())
                     {
                         _disposeRetryRunning = true;
@@ -898,7 +1044,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                     }
                 }
             }
-            if (restart) _ = RunDisposeReleaseRetryAsync();
+
+            if (restart)
+            {
+                _ = RunDisposeReleaseRetryAsync();
+            }
         }
     }
 
@@ -909,7 +1059,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     // and a renewal that lands afterwards finds no member and cannot recreate the permit.
     private bool NeedsDisposeCleanup()
     {
-        if (Has(PermitState.Released)) return false;
+        if (Has(PermitState.Released))
+        {
+            return false;
+        }
+
         var lease = Volatile.Read(ref _lease);
         return Has(PermitState.ReleaseUncertain)
             || lease.ExpiryTicks == 0
@@ -921,7 +1075,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private async ValueTask<bool> ReleaseUnderGateAsync(bool cleanupOnFailure, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation observation = default)
     {
-        if (Has(PermitState.Released)) return false;
+        if (Has(PermitState.Released))
+        {
+            return false;
+        }
+
         try
         {
             using var response = await (_client is RespireClient wire && !observation.IsEmpty
@@ -948,8 +1106,16 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     {
         var outcome = await RespireSemaphore.TryReleaseOnceAsync(_client, Key, _owner, cancellationToken, observation)
             .ConfigureAwait(false);
-        if (outcome == CleanupAttemptResult.Succeeded) Set(PermitState.Released);
-        else Set(PermitState.ReleaseUncertain);
+
+        if (outcome == CleanupAttemptResult.Succeeded)
+        {
+            Set(PermitState.Released);
+        }
+        else
+        {
+            Set(PermitState.ReleaseUncertain);
+        }
+
         return outcome;
     }
 
@@ -959,12 +1125,23 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private bool Set(PermitState flags)
     {
         var current = Volatile.Read(ref _state);
+
         while (true)
         {
             var updated = current | (int)flags;
-            if (updated == current) return false;
+
+            if (updated == current)
+            {
+                return false;
+            }
+
             var observed = Interlocked.CompareExchange(ref _state, updated, current);
-            if (observed == current) return true;
+
+            if (observed == current)
+            {
+                return true;
+            }
+
             current = observed;
         }
     }
@@ -972,23 +1149,46 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     private void Clear(PermitState flags)
     {
         var current = Volatile.Read(ref _state);
+
         while (true)
         {
             var updated = current & ~(int)flags;
-            if (updated == current) return;
+
+            if (updated == current)
+            {
+                return;
+            }
+
             var observed = Interlocked.CompareExchange(ref _state, updated, current);
-            if (observed == current) return;
+
+            if (observed == current)
+            {
+                return;
+            }
+
             current = observed;
         }
     }
 
     private void ClampLocalLeaseForPendingRenewal(TimeSpan? requestedExpiry, long sentAt, Lease confirmedLease)
     {
-        if (requestedExpiry is not { } expiry) return;
+        if (requestedExpiry is not { } expiry)
+        {
+            return;
+        }
+
         if (Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled
-            | PermitState.ReleaseUncertain)) return;
+            | PermitState.ReleaseUncertain))
+        {
+            return;
+        }
+
         var validUntil = AddTimestampDuration(sentAt, expiry);
-        if (validUntil > confirmedLease.ValidUntil) validUntil = confirmedLease.ValidUntil;
+
+        if (validUntil > confirmedLease.ValidUntil)
+        {
+            validUntil = confirmedLease.ValidUntil;
+        }
 
         // A shortening renewal may already have taken effect even while its reply is pending.
         // Keep the local estimate no later than its possible server-side expiry. Keep Expiry at
@@ -1000,7 +1200,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     {
         if (!Has(PermitState.OutcomeUncertain)
             || Has(PermitState.Released | PermitState.RenewalFailed | PermitState.DisposeReleaseScheduled
-                | PermitState.ReleaseUncertain)) return;
+                | PermitState.ReleaseUncertain))
+        {
+            return;
+        }
+
         Volatile.Write(ref _lease, confirmedLease);
     }
 

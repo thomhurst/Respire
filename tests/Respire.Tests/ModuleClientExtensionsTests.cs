@@ -55,7 +55,9 @@ public class ModuleClientExtensionsTests
         Parallel.For(0, wrappers.Length, i => wrappers[i] = GetModule(client, module));
 
         foreach (var wrapper in wrappers)
+        {
             await Assert.That(wrapper).IsSameReferenceAs(wrappers[0]);
+        }
     }
 
     [Test]

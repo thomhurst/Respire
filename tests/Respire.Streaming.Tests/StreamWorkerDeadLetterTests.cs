@@ -69,8 +69,10 @@ public partial class StreamWorkerTests
         // A tagged prefix makes logical keys share a slot, and must be applied exactly once.
         await using var fixture = await Fixture.CreateAsync(state: state, options: new()
         {
-            DeadLetterStream = "dlq", DeliveryLimit = limit,
-            MinimumIdleTime = TimeSpan.FromMilliseconds(20), RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
+            DeadLetterStream = "dlq",
+            DeliveryLimit = limit,
+            MinimumIdleTime = TimeSpan.FromMilliseconds(20),
+            RecoveryPollInterval = TimeSpan.FromMilliseconds(10),
         }, deserializeFailure: outcome == "deserialize", keyPrefix: "{worker}tenant:");
         await fixture.AddAsync(0);
         // .NET 10 starts ExecuteAsync in the background; pending queries need a ready group.
@@ -80,17 +82,21 @@ public partial class StreamWorkerTests
             && (outcome == "ack" ? state.ScopeIds.Count == 1 : await fixture.View.Streams.CountAsync("dlq") == 1));
         await fixture.StopAsync();
         await Assert.That(await fixture.Client.Streams.CountAsync("dlq")).IsEqualTo(0);
+
         if (outcome == "ack")
         {
             await Assert.That(await fixture.View.Streams.CountAsync("dlq")).IsEqualTo(0);
             return;
         }
+
         var deadLetter = (await fixture.View.Streams.ReadAsync("dlq")).Single();
         await Assert.That(deadLetter.GetString("payload")).IsEqualTo("0");
         await Assert.That(deadLetter.GetString("_respire.attempt")).IsEqualTo(limit.ToString());
         await Assert.That(deadLetter.GetString("_respire.reason")).IsEqualTo(outcome switch
         {
-            "explicit" => "explicit", "nack" => "nack", _ => "processing-failed",
+            "explicit" => "explicit",
+            "nack" => "nack",
+            _ => "processing-failed",
         });
         await Assert.That(state.DisposedScopes).IsEqualTo(limit);
         await Assert.That(deadLetter.Fields.Any(field => Encoding.UTF8.GetString(field.Value).Contains("private payload")))
@@ -114,7 +120,9 @@ public partial class StreamWorkerTests
     {
         await using var fixture = await Fixture.CreateAsync(options: new()
         {
-            ConsumerName = "stable", DeadLetterStream = "dlq", DeliveryLimit = 1,
+            ConsumerName = "stable",
+            DeadLetterStream = "dlq",
+            DeliveryLimit = 1,
         }, keyPrefix: "{worker}tenant:");
         await fixture.AddAsync(0);
         await fixture.View.Streams.CreateGroupAsync("events", "workers", RespireStreamId.Beginning);
@@ -174,6 +182,7 @@ public partial class StreamWorkerTests
         var gate = new RespireFakeGate();
         using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Pause(gate, afterExecution),
             firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.DeadLetterSource));
+
         try
         {
             await fixture.AddAsync(0);

@@ -32,6 +32,7 @@ public class TlsTests
         var peerPort = ((IPEndPoint)peer.LocalEndpoint).Port;
         var names = new System.Collections.Concurrent.ConcurrentQueue<string?>();
         var servers = Task.WhenAll(ServeAsync(seed, stale.Port, peerPort), ServeAsync(peer, primary.Port, null));
+
         try
         {
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
@@ -39,11 +40,14 @@ public class TlsTests
             {
                 LibraryName = null,
                 Protocol = RespireProtocol.Resp2,
-                Endpoints = [new("127.0.0.1", seedPort)], SentinelPrimaryName = "mymaster",
-                UseTls = false, SentinelUseTls = true,
+                Endpoints = [new("127.0.0.1", seedPort)],
+                SentinelPrimaryName = "mymaster",
+                UseTls = false,
+                SentinelUseTls = true,
                 SentinelTlsOptions = new SslClientAuthenticationOptions
                 {
-                    TargetHost = "sentinel.example", RemoteCertificateValidationCallback = (_, _, _, _) => true,
+                    TargetHost = "sentinel.example",
+                    RemoteCertificateValidationCallback = (_, _, _, _) => true,
                 },
             }, deadline.Token);
 #pragma warning restore RESP010
@@ -57,7 +61,11 @@ public class TlsTests
             deadline.Cancel();
             seed.Stop();
             peer.Stop();
-            try { await servers; }
+
+            try
+            {
+                await servers;
+            }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
         }
 
@@ -68,12 +76,17 @@ public class TlsTests
             await using var tls = new SslStream(network);
             await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
             {
-                ServerCertificateSelectionCallback = (_, name) => { names.Enqueue(name); return certificate; },
+                ServerCertificateSelectionCallback = (_, name) =>
+                {
+                    names.Enqueue(name);
+                    return certificate;
+                },
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
             }, deadline.Token);
             await ReadCommandAsync("GET-MASTER-ADDR-BY-NAME");
             await tls.WriteAsync(System.Text.Encoding.ASCII.GetBytes(
                 $"*2\r\n$9\r\n127.0.0.1\r\n${primaryPort.ToString().Length}\r\n{primaryPort}\r\n"), deadline.Token);
+
             if (discoveredPort is { } port)
             {
                 await ReadCommandAsync("SENTINELS");
@@ -111,6 +124,7 @@ public class TlsTests
             },
         };
         RespireConnection connection;
+
         try
         {
             connection = await RespireConnection.ConnectAsync(
@@ -137,6 +151,7 @@ public class TlsTests
             await Assert.That(tlsOptions.TargetHost).IsNull();
             response.Dispose();
         }
+
         await server.WaitAsync(TimeSpan.FromSeconds(5));
         listener.Stop();
     }
@@ -154,6 +169,7 @@ public class TlsTests
         string? observedSni = null;
         var server = RunClusterTlsServerAsync(listener, certificate, port,
             name => observedSni = name, deadline.Token);
+
         try
         {
             await using var seed = new FakeRespServer(ClusterNodeIdentityTests.Topology("localhost", port, "tls-node"));
@@ -196,7 +212,11 @@ public class TlsTests
         {
             deadline.Cancel();
             listener.Stop();
-            try { await server; }
+
+            try
+            {
+                await server;
+            }
             catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
         }
     }
@@ -212,6 +232,7 @@ public class TlsTests
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var server = ServeBothAsync();
+
         try
         {
             var tlsOptions = new SslClientAuthenticationOptions
@@ -224,18 +245,26 @@ public class TlsTests
             {
                 LibraryName = null,
                 Protocol = RespireProtocol.Resp2,
-                UseCluster = true, UseTls = true, TlsOptions = tlsOptions, Connections = 1,
+                UseCluster = true,
+                UseTls = true,
+                TlsOptions = tlsOptions,
+                Connections = 1,
                 Endpoints = { new RespireEndpoint("localhost", port) },
             };
             await using var primary = await RespireConnectionMultiplexer.CreateAsync("localhost", port,
                 options: options.ToConnectionOptions(), cancellationToken: deadline.Token);
             await using var router = new ClusterRouter(options, primary);
             var original = primary.GetConnection();
+
             using (var pong = await original.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token))
+            {
                 await Assert.That(pong.AsString()).IsEqualTo("PONG");
+            }
+
             await primary.RetireAsync().WaitAsync(deadline.Token);
             await using var correction = router.GetCorrectionLease(original);
             var control = await correction.Pool.RentAsync(deadline.Token);
+
             try
             {
                 using var pong = await control.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
@@ -244,6 +273,7 @@ public class TlsTests
                 await Assert.That(tlsOptions.TargetHost).IsEqualTo(explicitHost);
             }
             finally { correction.Pool.Return(control); }
+
             await server.WaitAsync(deadline.Token);
         }
         finally
@@ -267,7 +297,11 @@ public class TlsTests
         await using var tls = new SslStream(network);
         await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
         {
-            ServerCertificateSelectionCallback = (_, name) => { observeSni(name); return certificate; },
+            ServerCertificateSelectionCallback = (_, name) =>
+            {
+                observeSni(name);
+                return certificate;
+            },
             EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
         }, cancellationToken);
         var request = new byte[FakeRespServer.PingFrame.Length];
@@ -299,6 +333,7 @@ public class TlsTests
 
         var request = new byte[FakeRespServer.PingFrame.Length];
         var received = 0;
+
         while (received < request.Length)
         {
             received += await tls.ReadAsync(request.AsMemory(received));

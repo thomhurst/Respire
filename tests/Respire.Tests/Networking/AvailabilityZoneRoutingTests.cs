@@ -36,7 +36,9 @@ public class AvailabilityZoneRoutingTests
 #pragma warning disable RESP010 // This separately owned client supplies the original hedge peer whose endpoint must be excluded.
         await using var originalClient = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", original.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", original.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
         });
 #pragma warning restore RESP010
         var originalConnection = originalClient.Core.Multiplexer.GetConnection();
@@ -71,19 +73,26 @@ public class AvailabilityZoneRoutingTests
         replica.SuppressReply = command => command == "PING";
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false,
-            RespireReadFrom.AzAffinity) with { Connections = 4, MaxInflightCommands = 4 });
+            RespireReadFrom.AzAffinity) with
+        { Connections = 4, MaxInflightCommands = 4 });
 #pragma warning restore RESP010
         var selected = await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.AzAffinity, default, observation: default);
         var owner = selected.Multiplexer!;
         var remote = Enumerable.Range(0, 4).Select(owner.GetConnection)
             .First(connection => connection.AvailabilityZone == "remote");
         var accepted = new List<Task<Respire.Protocol.RespValue>>();
+
         if (waitForCapacity)
         {
             for (var index = 0; index < 4; index++)
+            {
                 accepted.Add(selected.SendAsync(new Respire.Commands.RawCommand(FakeRespServer.PingFrame)).AsTask());
+            }
         }
-        else await selected.RetireAsync();
+        else
+        {
+            await selected.RetireAsync();
+        }
         // Model the post-selection MOVING boundary. The next ordinary selection picks a
         // remote socket, while another local socket remains eligible on the same owner.
         typeof(Respire.Infrastructure.RespireConnectionMultiplexer)
@@ -92,6 +101,7 @@ public class AvailabilityZoneRoutingTests
         var command = new Respire.Commands.Cmd1(Respire.Commands.Verbs.Get, "key");
         var read = ReadAsync();
         Task retirement = Task.CompletedTask;
+
         try
         {
             if (waitForCapacity)
@@ -99,6 +109,7 @@ public class AvailabilityZoneRoutingTests
                 await Assert.That(read.IsCompleted).IsFalse();
                 retirement = selected.RetireAsync();
             }
+
             await Assert.That(await read.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("local");
             await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
         }
@@ -107,12 +118,21 @@ public class AvailabilityZoneRoutingTests
             if (waitForCapacity)
             {
                 using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
                 while (replica.ReceivedCommands.Count(command => command == "PING") < 4)
+                {
                     await Task.Delay(10, limit.Token);
+                }
+
                 var index = replica.ReceivedCommands.ToList().FindIndex(command => command == "PING");
                 await replica.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(),
                     replica.ReceivedConnectionIds[index]);
-                foreach (var pending in accepted) (await pending.WaitAsync(limit.Token)).Dispose();
+
+                foreach (var pending in accepted)
+                {
+                    (await pending.WaitAsync(limit.Token)).Dispose();
+                }
+
                 await retirement.WaitAsync(limit.Token);
             }
         }
@@ -124,6 +144,7 @@ public class AvailabilityZoneRoutingTests
                 await selected.SendFireAndForgetAsync(command, preferredZone: "local");
                 return await ObservedReadZoneAsync(replica);
             }
+
             if (mode is 2 or 3)
             {
                 await using var stream = mode == 2
@@ -132,6 +153,7 @@ public class AvailabilityZoneRoutingTests
                 using var reader = new StreamReader(stream!);
                 return await reader.ReadToEndAsync();
             }
+
             var caching = new Respire.Commands.ClientCachingCommand();
             using var reply = mode switch
             {
@@ -153,11 +175,17 @@ public class AvailabilityZoneRoutingTests
         await using var primary = Node("primary", "remote", false);
         await using var replica = Node("replica", "local", true);
         ConfigureMixedSocketZones(replica);
-        if (mode == 1) ConfigureTopology(primary, replica);
+
+        if (mode == 1)
+        {
+            ConfigureTopology(primary, replica);
+        }
+
         var slot = ClusterHash.GetSlot("key");
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], mode == 1,
-            RespireReadFrom.AzAffinity) with { Connections = 4 });
+            RespireReadFrom.AzAffinity) with
+        { Connections = 4 });
 #pragma warning restore RESP010
         var selected = mode == 1
             ? await client.Core.Cluster!.GetReadConnectionAsync(slot, RespireReadFrom.AzAffinity, default, observation: default)
@@ -177,7 +205,10 @@ public class AvailabilityZoneRoutingTests
             ActivityStarted = activity =>
             {
                 if (activity.OperationName != "GET" || activity.GetTagItem("server.port") is not int port
-                    || port != replica.Port || Interlocked.CompareExchange(ref retired, 1, 0) != 0) return;
+                    || port != replica.Port || Interlocked.CompareExchange(ref retired, 1, 0) != 0)
+                {
+                    return;
+                }
                 // Telemetry starts after endpoint/socket selection and before enqueue. Reproduce
                 // that exact retirement boundary without changing the live multiplexer owner.
                 var current = owner.GetConnectionForZone("local",
@@ -188,6 +219,7 @@ public class AvailabilityZoneRoutingTests
         };
         System.Diagnostics.ActivitySource.AddActivityListener(listener);
         string? result;
+
         if (mode == 1)
         {
             using var batch = client.CreateBatch();
@@ -206,7 +238,11 @@ public class AvailabilityZoneRoutingTests
             await client.ExecuteFireAndForgetAsync(RespireCommands.String.GET, ["key"]);
             result = await ObservedReadZoneAsync(replica);
         }
-        else result = await client.GetStringAsync("key");
+        else
+        {
+            result = await client.GetStringAsync("key");
+        }
+
         await Assert.That(result).IsEqualTo("local");
         await Assert.That(retired).IsEqualTo(1);
         await retirement.WaitAsync(TimeSpan.FromSeconds(5));
@@ -224,13 +260,17 @@ public class AvailabilityZoneRoutingTests
         await using var second = Node("second", local ? "local" : "remote", true);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica, second], false, RespireReadFrom.AzAffinity)
-            with { ReplicaRefreshInterval = TimeSpan.FromMinutes(5) });
+            with
+        { ReplicaRefreshInterval = TimeSpan.FromMinutes(5) });
 #pragma warning restore RESP010
         var router = client.Core.ReadRouter!;
         // Ready-only public dispatch may use a fallback while a cold candidate validates.
         // Prepare each endpoint explicitly before measuring the synchronous selector.
         foreach (var server in new[] { replica, second })
+        {
             await router.GetReplicaFromEndpointsAsync([new("127.0.0.1", server.Port)], default, default);
+        }
+
         var counter = AvailabilityZoneTelemetry.ForZone("local");
         MeasureSelection(router, counter, false);
         MeasureSelection(router, counter, true);
@@ -244,16 +284,27 @@ public class AvailabilityZoneRoutingTests
     private static long MeasureSelection(ReadEndpointRouter router, AvailabilityZoneTelemetry.Counter counter, bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             var selected = router.SelectAsync(RespireReadFrom.AzAffinity, CancellationToken.None, observation: default);
-            if (!selected.IsCompletedSuccessfully) throw new InvalidOperationException("Warm selection must complete synchronously.");
+
+            if (!selected.IsCompletedSuccessfully)
+            {
+                throw new InvalidOperationException("Warm selection must complete synchronously.");
+            }
+
 #pragma warning disable RESP009 // IsCompletedSuccessfully above guarantees this allocation probe cannot block or leave the measuring thread.
             _ = selected.Result;
 #pragma warning restore RESP009
             counter.Increment();
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -272,10 +323,20 @@ public class AvailabilityZoneRoutingTests
             ? Bulk("availability_zone:changed\r\n") : previous(id, command);
         replica.CloseConnections();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (old.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
+
+        while (old.IsAcceptingCommands)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         old.Multiplexer!.ScheduleReconnect(0);
+
         while (!old.Multiplexer!.HasConnection(connection => connection.IsAcceptingCommands
-            && !ReferenceEquals(connection, old))) await Task.Delay(5, timeout.Token);
+            && !ReferenceEquals(connection, old)))
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         var current = (await client.Core.ReadRouter.SelectAsync(RespireReadFrom.Replica, timeout.Token, observation: default)).Connection;
         await Assert.That(current.AvailabilityZone).IsEqualTo("changed");
     }
@@ -309,16 +370,27 @@ public class AvailabilityZoneRoutingTests
         ConfigureTopology(primary, replicas);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, replicas, cluster, policy));
+
 #pragma warning restore RESP010
         for (var index = 0; index < 8; index++)
+        {
             await Assert.That(await client.GetStringAsync("{zone}:key")).IsEqualTo(expected);
+        }
+
         using (var reply = await client.ExecuteAsync(RespireCommands.String.GET, "{zone}:key"))
+        {
             await Assert.That(reply.AsString()).IsEqualTo(expected);
+        }
+
         await Assert.That(await client.SetAsync("{zone}:key", "value")).IsTrue();
         await Assert.That(primary.ReceivedCommands.Contains("SET {zone}:key value")).IsTrue();
+
         foreach (var (node, name) in new[] { (primary, "primary"), (local, "local"), (remote, "remote") })
+        {
             await Assert.That(node.ReceivedCommands.Count(command => command.StartsWith("GET ")))
                 .IsEqualTo(name == expected ? 9 : 0);
+        }
+
         await Assert.That(local.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
         await Assert.That(remote.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
     }
@@ -341,10 +413,14 @@ public class AvailabilityZoneRoutingTests
             : original(id, command);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], cluster,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        { Connections = 2 });
+
 #pragma warning restore RESP010
         for (var index = 0; index < 8; index++)
+        {
             await Assert.That(await client.GetStringAsync($"{{zone-{index}}}:key")).IsEqualTo("local-socket");
+        }
     }
 
     [Test]
@@ -357,16 +433,22 @@ public class AvailabilityZoneRoutingTests
         await using var first = Node("first", "local", true);
         await using var second = Node("second", "local", true);
         await using var third = Node("third", "local", true);
+
         foreach (var server in new[] { first, second, third })
         {
             var original = server.ReplyOverride!;
             server.ReplyOverride = (id, command) => command == "ROLE" ? disconnected : original(id, command);
         }
+
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var blocked = laterProbeFails ? third : second;
         blocked.SuppressReply = command =>
         {
-            if (command != "ROLE") return false;
+            if (command != "ROLE")
+            {
+                return false;
+            }
+
             reached.TrySetResult();
             return true;
         };
@@ -385,7 +467,12 @@ public class AvailabilityZoneRoutingTests
         var selection = router.GetReplicaFromEndpointsAsync(endpoints, timeout.Token, default, RespireReadFrom.AzAffinity).AsTask();
         await reached.Task.WaitAsync(timeout.Token);
         first.CloseConnections();
-        while (old.Connection.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
+
+        while (old.Connection.IsAcceptingCommands)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         await blocked.SendRawAsync(laterProbeFails ? "-LOADING unavailable\r\n"u8.ToArray() : disconnected,
             blocked.ReceivedConnectionIds[^1]);
         var selected = await selection.WaitAsync(timeout.Token);
@@ -472,10 +559,14 @@ public class AvailabilityZoneRoutingTests
             ? Encoding.UTF8.GetBytes($"-{error} unavailable\r\n") : originalReplica(id, command);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], true,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        { Connections = 2 });
+
 #pragma warning restore RESP010
         for (var index = 0; index < 8; index++)
+        {
             await Assert.That(await client.GetStringAsync($"{{zone-{index}}}:key")).IsEqualTo("local-socket");
+        }
     }
 
     [Test]
@@ -489,10 +580,12 @@ public class AvailabilityZoneRoutingTests
             ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n") : original(id, command);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], true,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        { Connections = 2 });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
         await router.EnsureConnectedAsync(CancellationToken.None, discovery: null, observation: default);
+
         for (var slot = 0; slot < 8; slot++)
         {
             var fallback = new ReadFallbackPolicy.RoleFallback(RespireReadFrom.AzAffinityReplicasAndPrimary);
@@ -515,25 +608,38 @@ public class AvailabilityZoneRoutingTests
         await using var replica = Node("replica", zone, true);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false, policy)
-            with { ClientAvailabilityZone = zone });
+            with
+        { ClientAvailabilityZone = zone });
 #pragma warning restore RESP010
         long observed = 0;
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meter) =>
         {
-            if (instrument.Name == "respire.read.availability_zone") meter.EnableMeasurementEvents(instrument);
+            if (instrument.Name == "respire.read.availability_zone")
+            {
+                meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
-                if (tag.Key == "server.availability_zone" && Equals(tag.Value, zone)) observed = value;
+            {
+                if (tag.Key == "server.availability_zone" && Equals(tag.Value, zone))
+                {
+                    observed = value;
+                }
+            }
         });
         listener.Start();
         listener.RecordObservableInstruments();
         var baseline = observed;
         await client.GetStringAsync("{zone}:key");
         await client.SetAsync("{zone}:key", "value");
-        using (var reply = await client.ExecuteAsync(RespireCommands.String.GET, "{zone}:key")) { }
+
+        using (var reply = await client.ExecuteAsync(RespireCommands.String.GET, "{zone}:key"))
+        {
+        }
+
         listener.RecordObservableInstruments();
         await Assert.That(observed - baseline).IsEqualTo(2);
     }
@@ -546,12 +652,20 @@ public class AvailabilityZoneRoutingTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meter) =>
         {
-            if (instrument.Name == "respire.read.availability_zone") meter.EnableMeasurementEvents(instrument);
+            if (instrument.Name == "respire.read.availability_zone")
+            {
+                meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
-                if (tag.Key == "server.availability_zone" && Equals(tag.Value, zone)) observed = value;
+            {
+                if (tag.Key == "server.availability_zone" && Equals(tag.Value, zone))
+                {
+                    observed = value;
+                }
+            }
         });
         listener.Start();
         listener.RecordObservableInstruments();
@@ -584,13 +698,15 @@ public class AvailabilityZoneRoutingTests
     {
         await Assert.That(() => RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 6379)], ReplicaEndpoints = [new("127.0.0.1", 6380)],
+            Endpoints = [new("127.0.0.1", 6379)],
+            ReplicaEndpoints = [new("127.0.0.1", 6380)],
             ReadFrom = RespireReadFrom.AzAffinity,
         })).Throws<RespireConfigurationException>();
 #pragma warning disable RESP010 // This test owns a lazy client only to verify that a zone-affinity view rejects missing zone configuration without connecting.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 6379)], ReplicaEndpoints = [new("127.0.0.1", 6380)],
+            Endpoints = [new("127.0.0.1", 6379)],
+            ReplicaEndpoints = [new("127.0.0.1", 6380)],
         });
 #pragma warning restore RESP010
         await Assert.That(() => client.WithReadFrom(RespireReadFrom.AzAffinityReplicasAndPrimary))
@@ -617,9 +733,12 @@ public class AvailabilityZoneRoutingTests
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary,
             includeRemote ? [local, remote] : [local], false, policy));
+
 #pragma warning restore RESP010
         for (var index = 0; index < 4; index++)
+        {
             await Assert.That(await client.GetStringAsync("key")).IsEqualTo(expected);
+        }
     }
 
     [Test]
@@ -634,7 +753,11 @@ public class AvailabilityZoneRoutingTests
         var primaryReply = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) =>
         {
-            if (!command.StartsWith("GET ")) return primaryReply(id, command);
+            if (!command.StartsWith("GET "))
+            {
+                return primaryReply(id, command);
+            }
+
             Volatile.Write(ref ready, 1);
             return "-LOADING unavailable\r\n"u8.ToArray();
         };
@@ -672,11 +795,20 @@ public class AvailabilityZoneRoutingTests
         var old = multiplexer.GetConnection();
         primary.CloseConnections();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (old.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
+
+        while (old.IsAcceptingCommands)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         await Assert.That(multiplexer.MayBeInAvailabilityZone("local")).IsFalse();
         multiplexer.ScheduleReconnect(0);
+
         while (!multiplexer.HasConnection(connection => !ReferenceEquals(connection, old)))
+        {
             await Task.Delay(5, timeout.Token);
+        }
+
         await Assert.That(multiplexer.MayBeInAvailabilityZone("local")).IsTrue();
     }
 
@@ -696,10 +828,14 @@ public class AvailabilityZoneRoutingTests
         };
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], false,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2, SentinelPrimaryName = "primary" });
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        { Connections = 2, SentinelPrimaryName = "primary" });
+
 #pragma warning restore RESP010
         for (var index = 0; index < 8; index++)
+        {
             await Assert.That(await client.GetStringAsync("key")).IsEqualTo("local");
+        }
     }
 
     [Test]
@@ -726,10 +862,12 @@ public class AvailabilityZoneRoutingTests
             ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n") : original(id, command);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], cluster, policy)
-            with { Connections = 2 });
+            with
+        { Connections = 2 });
 #pragma warning restore RESP010
         ReadAffinity? pin = shared ? null : new();
         var cursors = client.Core.ReadRouter.Cursors;
+
         for (var page = 0; page < 8; page++)
         {
             var selected = cluster
@@ -757,7 +895,8 @@ public class AvailabilityZoneRoutingTests
             ? "-LOADING unavailable\r\n"u8.ToArray() : replicaReply(id, command);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], true,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        { Connections = 2 });
 #pragma warning restore RESP010
         var pool = await client.Core.Cluster!.GetReadDedicatedPoolAsync(ClusterHash.GetSlot("key"),
             RespireReadFrom.Primary, CancellationToken.None, discovery: null, observation: default);
@@ -783,7 +922,9 @@ public class AvailabilityZoneRoutingTests
         ConfigureTopology(primary, replica);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], cluster,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2 });
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        { Connections = 2 });
+
 #pragma warning restore RESP010
         if (!cluster)
         {
@@ -791,8 +932,12 @@ public class AvailabilityZoneRoutingTests
             await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, default);
             await client.Core.ReadRouter.GetConnectionAsync(RespireReadFrom.Replica, default, default);
         }
+
         for (var index = 0; index < 8; index++)
+        {
             await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("replica");
+        }
+
         await Assert.That(primary.ReceivedCommands.Count(command => command == "INFO SERVER")).IsEqualTo(2);
     }
 
@@ -811,15 +956,18 @@ public class AvailabilityZoneRoutingTests
         await using var replica = Node("replica", replicaZone, true);
         await using var sentinel = Sentinel(primary, () => [replica]);
         var options = Options(sentinelMode ? sentinel : primary, sentinelMode ? [] : [replica], false, policy)
-            with { SentinelPrimaryName = sentinelMode ? "primary" : null };
+            with
+        { SentinelPrimaryName = sentinelMode ? "primary" : null };
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(options);
+
 #pragma warning restore RESP010
         for (var index = 0; index < 3; index++)
         {
             using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]);
             await Assert.That(reply.AsString()).IsEqualTo(expected);
         }
+
         var selected = expected == "replica" ? replica : primary;
         var other = expected == "replica" ? primary : replica;
         var readIds = selected.ReceivedCommands.Select((command, index) => (command, index))
@@ -845,10 +993,17 @@ public class AvailabilityZoneRoutingTests
         var second = primaryFirst ? replica : primary;
         var fallbackConnections = 0;
         RejectReads(first);
-        if (bothFail) RejectReads(second);
+
+        if (bothFail)
+        {
+            RejectReads(second);
+        }
+
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { TestingStreamFactory = fallbackDeadline ? OpenStreamAsync : null });
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        { TestingStreamFactory = fallbackDeadline ? OpenStreamAsync : null });
+
 #pragma warning restore RESP010
         if (bothFail || fallbackDeadline)
         {
@@ -861,14 +1016,19 @@ public class AvailabilityZoneRoutingTests
             using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"]);
             await Assert.That(reply.AsString()).IsEqualTo(primaryFirst ? "replica" : "primary");
         }
+
         await Assert.That(first.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
         await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("XREAD "))).IsEqualTo(fallbackDeadline ? 0 : 1);
 
         async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
         {
             if (port == second.Port && Interlocked.Increment(ref fallbackConnections) > 1)
+            {
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+
             var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+
             try
             {
                 await socket.ConnectAsync(host, port, token);
@@ -894,12 +1054,17 @@ public class AvailabilityZoneRoutingTests
         var previous = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) =>
         {
-            if (id > 0 && command == "HELLO 3") primary.CloseConnection(id);
+            if (id > 0 && command == "HELLO 3")
+            {
+                primary.CloseConnection(id);
+            }
+
             return previous(id, command);
         };
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [replica], false, policy)
-            with { Protocol = RespireProtocol.Resp3 });
+            with
+        { Protocol = RespireProtocol.Resp3 });
 #pragma warning restore RESP010
         using var reply = await client.ExecuteAsync(RespireCommands.Stream.XREAD, ["BLOCK", 1, "STREAMS", "key", "0"])
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -930,13 +1095,15 @@ public class AvailabilityZoneRoutingTests
         await using var client = await RespireClient.ConnectAsync(
             Options(useSentinel ? sentinel : primary, useSentinel ? [] : [first, second], false, policy) with
             {
-                Protocol = RespireProtocol.Resp3, SentinelPrimaryName = useSentinel ? "primary" : null,
+                Protocol = RespireProtocol.Resp3,
+                SentinelPrimaryName = useSentinel ? "primary" : null,
                 TestingStreamFactory = OpenStreamAsync,
             });
 #pragma warning restore RESP010
         using var caller = new CancellationTokenSource();
         var read = client.ExecuteAsync(RespireCommands.Stream.XREAD,
             ["BLOCK", 1, "STREAMS", "key", "0"], cancellationToken: caller.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
         if (cancelCaller)
         {
             await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -947,6 +1114,7 @@ public class AvailabilityZoneRoutingTests
                 .Any(command => command.StartsWith("XREAD "))).IsFalse();
             return;
         }
+
         using var reply = await read;
         await Assert.That(caller.IsCancellationRequested).IsFalse();
         await Assert.That(failedPort).IsNotEqualTo(0);
@@ -967,7 +1135,9 @@ public class AvailabilityZoneRoutingTests
                 // The deadline case keeps the caller live; its control cancels at this boundary.
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
             }
+
             var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+
             try
             {
                 await socket.ConnectAsync(host, port, token);
@@ -1005,7 +1175,8 @@ public class AvailabilityZoneRoutingTests
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true, policy) with
         {
-            Protocol = RespireProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+            Protocol = RespireProtocol.Resp3,
+            TestingStreamFactory = OpenStreamAsync,
             ClusterTopologyRefreshInterval = null,
         });
 #pragma warning restore RESP010
@@ -1013,6 +1184,7 @@ public class AvailabilityZoneRoutingTests
         var read = client.ExecuteAsync(RespireCommands.Stream.XREAD,
             ["BLOCK", 1, "STREAMS", "key", "0"], cancellationToken: caller.Token)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
         if (cancelCaller)
         {
             await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1023,6 +1195,7 @@ public class AvailabilityZoneRoutingTests
                 .Any(command => command.StartsWith("XREAD "))).IsFalse();
             return;
         }
+
         if (policy == RespireReadFrom.Primary || policy == RespireReadFrom.Replica && onlyReplicaFails)
         {
             var error = await Assert.That(async () => await read).Throws<RespireTimeoutException>();
@@ -1036,6 +1209,7 @@ public class AvailabilityZoneRoutingTests
                 .Any(command => command.StartsWith("XREAD "))).IsFalse();
             return;
         }
+
         using var reply = await read;
         await Assert.That(caller.IsCancellationRequested).IsFalse();
         await Assert.That(failedPort).IsNotEqualTo(0);
@@ -1043,8 +1217,15 @@ public class AvailabilityZoneRoutingTests
         await Assert.That(failed.ReceivedCommands.Any(command => command.StartsWith("XREAD "))).IsFalse();
         await Assert.That(primary.ReceivedCommands.Concat(first.ReceivedCommands).Concat(second.ReceivedCommands)
             .Count(command => command.StartsWith("XREAD "))).IsEqualTo(1);
-        if (onlyReplicaFails) await Assert.That(reply.AsString()).IsEqualTo("primary");
-        else if (policy != RespireReadFrom.Nearest) await Assert.That(reply.AsString()).IsNotEqualTo("primary");
+
+        if (onlyReplicaFails)
+        {
+            await Assert.That(reply.AsString()).IsEqualTo("primary");
+        }
+        else if (policy != RespireReadFrom.Nearest)
+        {
+            await Assert.That(reply.AsString()).IsNotEqualTo("primary");
+        }
 
         async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
         {
@@ -1054,7 +1235,9 @@ public class AvailabilityZoneRoutingTests
                 connecting.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
             }
+
             var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+
             try
             {
                 await socket.ConnectAsync(host, port, token);
@@ -1082,7 +1265,8 @@ public class AvailabilityZoneRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
             RespireReadFrom.AzAffinityReplicasAndPrimary) with
         {
-            Protocol = RespireProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+            Protocol = RespireProtocol.Resp3,
+            TestingStreamFactory = OpenStreamAsync,
             ClusterTopologyRefreshInterval = null,
         });
 #pragma warning restore RESP010
@@ -1096,8 +1280,12 @@ public class AvailabilityZoneRoutingTests
         async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
         {
             if (port == target.Port && Interlocked.Increment(ref targetConnections) == 2)
+            {
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+
             var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+
             try
             {
                 await socket.ConnectAsync(host, port, token);
@@ -1112,6 +1300,7 @@ public class AvailabilityZoneRoutingTests
     {
         await using var primary = Node("primary", "remote", false);
         var replicas = Enumerable.Range(0, 7).Select(index => Node($"replica-{index}", "local", true)).ToArray();
+
         try
         {
             ConfigureTopology(primary, replicas);
@@ -1120,7 +1309,8 @@ public class AvailabilityZoneRoutingTests
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
             await using var client = await RespireClient.ConnectAsync(Options(primary, [], true, RespireReadFrom.Replica) with
             {
-                Protocol = RespireProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+                Protocol = RespireProtocol.Resp3,
+                TestingStreamFactory = OpenStreamAsync,
                 ClusterTopologyRefreshInterval = null,
             });
 #pragma warning restore RESP010
@@ -1135,8 +1325,12 @@ public class AvailabilityZoneRoutingTests
             {
                 if (port != primary.Port && connections.AddOrUpdate(port, 1, (_, count) => count + 1) == 2
                     && Interlocked.Increment(ref rentals) <= 6)
+                {
                     throw new IOException("Dedicated candidate unavailable.");
+                }
+
                 var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -1145,7 +1339,7 @@ public class AvailabilityZoneRoutingTests
                 catch { socket.Dispose(); throw; }
             }
         }
-        finally { foreach (var replica in replicas) await replica.DisposeAsync(); }
+        finally { foreach (var replica in replicas) { await replica.DisposeAsync(); } }
     }
 
     [Test]
@@ -1163,7 +1357,8 @@ public class AvailabilityZoneRoutingTests
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true, RespireReadFrom.AzAffinity) with
         {
-            Protocol = RespireProtocol.Resp3, TestingStreamFactory = OpenStreamAsync,
+            Protocol = RespireProtocol.Resp3,
+            TestingStreamFactory = OpenStreamAsync,
             ClusterTopologyRefreshInterval = null,
         });
 #pragma warning restore RESP010
@@ -1181,8 +1376,12 @@ public class AvailabilityZoneRoutingTests
         async ValueTask<Stream> OpenStreamAsync(string host, int port, CancellationToken token)
         {
             if (port == importing.Port && Interlocked.Increment(ref importingConnections) == 2)
+            {
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+
             var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+
             try
             {
                 await socket.ConnectAsync(host, port, token);
@@ -1202,12 +1401,17 @@ public class AvailabilityZoneRoutingTests
         var previous = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) =>
         {
-            if (id > 0 && command == "HELLO 3") primary.CloseConnection(id);
+            if (id > 0 && command == "HELLO 3")
+            {
+                primary.CloseConnection(id);
+            }
+
             return previous(id, command);
         };
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], false, policy)
-            with { Protocol = RespireProtocol.Resp3, SentinelPrimaryName = "primary" });
+            with
+        { Protocol = RespireProtocol.Resp3, SentinelPrimaryName = "primary" });
 #pragma warning restore RESP010
         var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.Stream.XREAD,
                 ["BLOCK", 1, "STREAMS", "key", "0"]).AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
@@ -1274,7 +1478,9 @@ public class AvailabilityZoneRoutingTests
         };
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
-            policy) with { Connections = 2, ClusterTopologyRefreshInterval = null });
+            policy) with
+        { Connections = 2, ClusterTopologyRefreshInterval = null });
+
 #pragma warning restore RESP010
         if (mode == 1)
         {
@@ -1289,7 +1495,11 @@ public class AvailabilityZoneRoutingTests
             using var reader = new StreamReader(stream!);
             await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("local-socket");
         }
-        else await Assert.That(await client.GetStringAsync(key)).IsEqualTo("local-socket");
+        else
+        {
+            await Assert.That(await client.GetStringAsync(key)).IsEqualTo("local-socket");
+        }
+
         await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
         await Assert.That(replica.ReceivedCommands.Count(command => command.StartsWith("GET ")))
             .IsEqualTo(afterRoleFallback ? 1 : 0);
@@ -1305,7 +1515,8 @@ public class AvailabilityZoneRoutingTests
         ConfigureTopology(primary, localReplica, remoteReplica);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { ClusterTopologyRefreshInterval = null });
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        { ClusterTopologyRefreshInterval = null });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var slot = ClusterHash.GetSlot("key");
@@ -1313,6 +1524,7 @@ public class AvailabilityZoneRoutingTests
         await previous.RetireAsync();
         var lease = await router.RentDedicatedConnectionAsync(previous,
             new ClusterRouter.DedicatedRoute(slot, RespireReadFrom.Replica), default, null, preferredZone: "local", observation: default);
+
         try
         {
             await Assert.That(lease.Connection.Port).IsEqualTo(localReplica.Port);
@@ -1371,6 +1583,7 @@ public class AvailabilityZoneRoutingTests
         var key = Enumerable.Range(0, 100).Select(index => $"role-redirect-{index}")
             .First(value => ClusterHash.GetSlot(value) % 2 == 1);
         var slot = ClusterHash.GetSlot(key);
+
         if (mixedSockets)
         {
             var previous = localReplica.ReplyOverride!;
@@ -1381,6 +1594,7 @@ public class AvailabilityZoneRoutingTests
                 _ => previous(id, command),
             };
         }
+
         var redirected = 0;
         var originalPrimaryReply = primary.ReplyOverride!;
         // Keep forwarding the scripted topology, not the target's diagnostic wrapper:
@@ -1395,7 +1609,11 @@ public class AvailabilityZoneRoutingTests
         var originalReplicaReply = oldReplica.ReplyOverride!;
         oldReplica.ReplyOverride = (id, command) =>
         {
-            if (!command.StartsWith("GET ") && !command.StartsWith("XREAD ")) return originalReplicaReply(id, command);
+            if (!command.StartsWith("GET ") && !command.StartsWith("XREAD "))
+            {
+                return originalReplicaReply(id, command);
+            }
+
             Volatile.Write(ref redirected, 1);
             return Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n");
         };
@@ -1403,31 +1621,40 @@ public class AvailabilityZoneRoutingTests
             ("primary", primary), ("old-replica", oldReplica), ("target", target),
             ("local", localReplica), ("remote", remoteReplica));
         using var timeout = new CancellationTokenSource();
+
         if (cancelRefresh)
         {
             var previous = target.ReplyOverride!;
             target.ReplyOverride = (id, command) =>
             {
-                if (command != "CLUSTER SLOTS") return previous(id, command);
+                if (command != "CLUSTER SLOTS")
+                {
+                    return previous(id, command);
+                }
+
                 trace.Record($"target[{id}] refresh reply withheld; cancel requested");
                 timeout.Cancel();
                 return [];
             };
         }
+
         trace.ObserveReplies();
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
             RespireReadFrom.AzAffinityReplicasAndPrimary) with
         {
-            Connections = mixedSockets ? 2 : 1, ClusterTopologyRefreshInterval = null,
+            Connections = mixedSockets ? 2 : 1,
+            ClusterTopologyRefreshInterval = null,
         });
 #pragma warning restore RESP010
         trace.Record("read started");
         using var cancellation = timeout.Token.Register(() => trace.Record("read token canceled"));
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
+
         try
         {
             string? result;
+
             if (mode == 1)
             {
                 using var batch = client.CreateBatch();
@@ -1447,7 +1674,11 @@ public class AvailabilityZoneRoutingTests
                     ["BLOCK", 1, "STREAMS", key, "0"], cancellationToken: timeout.Token);
                 result = reply.AsString();
             }
-            else result = await client.GetStringAsync(key, timeout.Token);
+            else
+            {
+                result = await client.GetStringAsync(key, timeout.Token);
+            }
+
             await Assert.That(result).IsEqualTo("local");
             await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("GET ") || command.StartsWith("XREAD "))).IsEqualTo(1);
             await Assert.That(oldReplica.ReceivedCommands.Count(command => command.StartsWith("GET ") || command.StartsWith("XREAD "))).IsEqualTo(1);
@@ -1472,6 +1703,7 @@ public class AvailabilityZoneRoutingTests
         public void ObserveReplies()
         {
             Record("fixture ready");
+
             foreach (var (name, server) in nodes)
             {
                 var previous = server.ReplyOverride!;
@@ -1498,12 +1730,19 @@ public class AvailabilityZoneRoutingTests
         public string Describe()
         {
             var text = new StringBuilder("Protocol timestamps precede socket writes; a prepared reply does not prove client receipt. Runtime counters are process-wide, not proof of causation.");
+
             foreach (var entry in _events.OrderBy(entry => entry.ElapsedMilliseconds))
+            {
                 text.AppendLine().Append(FormattableString.Invariant(
                     $"{entry.ElapsedMilliseconds:F3} ms: {entry.Phase}; workers={entry.Workers}, pending={entry.Pending}, completed-delta={entry.Completed}, gc-delta={entry.Gen0}/{entry.Gen1}/{entry.Gen2}, gc-pause-delta-ms={entry.PauseMilliseconds:F3}"));
+            }
+
             foreach (var (name, server) in nodes)
+            {
                 text.AppendLine().Append(name).Append(": reads=").Append(server.ReceivedCommands.Count(
                     command => command.StartsWith("GET ") || command.StartsWith("XREAD ")));
+            }
+
             return text.ToString();
         }
 
@@ -1531,12 +1770,14 @@ public class AvailabilityZoneRoutingTests
         var replicaReply = replica.ReplyOverride!;
         replica.ReplyOverride = (id, command) => command.StartsWith("GET ")
             ? "-LOADING replica unavailable\r\n"u8.ToArray() : replicaReply(id, command);
+
         if (asking)
         {
             var primaryReply = primary.ReplyOverride!;
             primary.ReplyOverride = (id, command) => command.StartsWith("GET ")
                 ? Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n") : primaryReply(id, command);
         }
+
         var targetReply = target.ReplyOverride!;
         target.ReplyOverride = (id, command) => command switch
         {
@@ -1546,7 +1787,8 @@ public class AvailabilityZoneRoutingTests
         };
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2, ClusterTopologyRefreshInterval = null });
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        { Connections = 2, ClusterTopologyRefreshInterval = null });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var source = router.GetKnownSlotOwner(slot)!.GetConnection(slot);
@@ -1580,6 +1822,7 @@ public class AvailabilityZoneRoutingTests
             },
         };
         System.Diagnostics.ActivitySource.AddActivityListener(listener);
+
         if (mode == 1)
         {
             using var batch = client.CreateBatch();
@@ -1593,11 +1836,19 @@ public class AvailabilityZoneRoutingTests
             using var reader = new StreamReader(stream!);
             await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("local-socket");
         }
-        else await Assert.That(await client.GetStringAsync(key)).IsEqualTo("local-socket");
+        else
+        {
+            await Assert.That(await client.GetStringAsync(key)).IsEqualTo("local-socket");
+        }
+
         await Assert.That(retired).IsEqualTo(1);
         await retirement.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
-        if (asking) await Assert.That(router.GetKnownSlotOwner(slot)!.Port).IsEqualTo(primary.Port);
+
+        if (asking)
+        {
+            await Assert.That(router.GetKnownSlotOwner(slot)!.Port).IsEqualTo(primary.Port);
+        }
     }
 
     [Test]
@@ -1614,7 +1865,8 @@ public class AvailabilityZoneRoutingTests
             ? Bulk($"availability_zone:{(id % 2 == 0 ? "local" : "remote")}\r\n") : original(id, command);
 #pragma warning disable RESP010 // This zone-routing scenario owns and disposes its client to isolate topology and physical socket metadata.
         await using var client = await RespireClient.ConnectAsync(Options(primary, [], true,
-            RespireReadFrom.AzAffinityReplicasAndPrimary) with { Connections = 2, ClusterTopologyRefreshInterval = null });
+            RespireReadFrom.AzAffinityReplicasAndPrimary) with
+        { Connections = 2, ClusterTopologyRefreshInterval = null });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
         var fallback = new ReadFallbackPolicy.RoleFallback(RespireReadFrom.AzAffinityReplicasAndPrimary);
@@ -1625,6 +1877,7 @@ public class AvailabilityZoneRoutingTests
             Replicas = replacementAvailable ? [new(new("127.0.0.1", replacement.Port), "replacement", [])] : [],
         }], router.TopologyVersion, long.MaxValue);
         await Assert.That(old.Multiplexer!.IsRetired).IsTrue();
+
         if (replacementAvailable)
         {
             var current = await router.GetReadReplacementConnectionAsync(1, RespireReadFrom.Replica,
@@ -1634,8 +1887,10 @@ public class AvailabilityZoneRoutingTests
             await Assert.That(current.Multiplexer!.Options.ReadOnly).IsTrue();
         }
         else
+        {
             await Assert.That(async () => await router.GetReadReplacementConnectionAsync(1, RespireReadFrom.Replica,
                 CancellationToken.None, null, default, "local")).Throws<RespireConnectionException>();
+        }
     }
 
     [Test, NotInParallel]
@@ -1650,7 +1905,13 @@ public class AvailabilityZoneRoutingTests
         router.RoleRevalidationInterval = TimeSpan.FromDays(1);
         var first = await router.RentDedicatedConnectionAsync(RespireReadFrom.AzAffinity, CancellationToken.None, default, "local");
         first.Pool.Return(first.Connection);
-        for (var index = 0; index < 20; index++) { MeasureDedicatedRental(router, false); MeasureDedicatedRental(router, true); }
+
+        for (var index = 0; index < 20; index++)
+        {
+            MeasureDedicatedRental(router, false);
+            MeasureDedicatedRental(router, true);
+        }
+
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
             (Actual: MeasureDedicatedRental(router, false), Control: MeasureDedicatedRental(router, true)));
         await Assert.That(measured.Actual).IsEqualTo(0L);
@@ -1661,26 +1922,43 @@ public class AvailabilityZoneRoutingTests
     private static long MeasureDedicatedRental(ReadEndpointRouter router, bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             var pending = router.RentDedicatedConnectionAsync(RespireReadFrom.AzAffinity, CancellationToken.None, default, "local");
-            if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("Warm rental performed asynchronous work.");
+
+            if (!pending.IsCompletedSuccessfully)
+            {
+                throw new InvalidOperationException("Warm rental performed asynchronous work.");
+            }
+
 #pragma warning disable RESP009 // IsCompletedSuccessfully above guarantees this allocation probe cannot block or leave the measuring thread.
             var lease = pending.Result;
 #pragma warning restore RESP009
             lease.Pool.Return(lease.Connection);
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     private static async Task<string> ObservedReadZoneAsync(FakeRespServer server)
     {
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (true)
         {
             var index = server.ReceivedCommands.ToList().FindIndex(command => command.StartsWith("GET "));
-            if (index >= 0) return server.ReceivedConnectionIds[index] % 2 == 0 ? "local" : "remote";
+
+            if (index >= 0)
+            {
+                return server.ReceivedConnectionIds[index] % 2 == 0 ? "local" : "remote";
+            }
+
             await Task.Delay(10, limit.Token);
         }
     }
@@ -1713,9 +1991,13 @@ public class AvailabilityZoneRoutingTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = cluster ? [] : replicas.Select(node => new RespireEndpoint("127.0.0.1", node.Port)).ToArray(),
-            UseCluster = cluster, Protocol = RespireProtocol.Resp2, Connections = 1,
-            ClientAvailabilityZone = "local", ReadFrom = policy,
-            ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = TimeSpan.FromSeconds(5),
+            UseCluster = cluster,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ClientAvailabilityZone = "local",
+            ReadFrom = policy,
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = TimeSpan.FromSeconds(5),
         };
 
     private static FakeRespServer Node(string name, string? zone, bool replica)
@@ -1737,8 +2019,12 @@ public class AvailabilityZoneRoutingTests
     {
         var nodes = new[] { primary }.Concat(replicas).ToArray();
         var topology = new StringBuilder($"*1\r\n*{2 + nodes.Length}\r\n:0\r\n:16383\r\n");
+
         foreach (var node in nodes)
+        {
             topology.Append($"*3\r\n$9\r\n127.0.0.1\r\n:{node.Port}\r\n${node.Port.ToString().Length}\r\n{node.Port}\r\n");
+        }
+
         var reply = Encoding.ASCII.GetBytes(topology.ToString());
         var previous = primary.ReplyOverride!;
         primary.ReplyOverride = (id, command) => command == "CLUSTER SLOTS" ? reply : previous(id, command);

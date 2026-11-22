@@ -402,8 +402,11 @@ public class TelemetryTests
 #pragma warning restore RESP010
 
         await client.CreateBatch().ExecuteAsync();
+
         await using (var transaction = client.CreateTransaction())
+        {
             await transaction.CommitAsync();
+        }
 
         foreach (var operation in new[] { "PIPELINE", "MULTI" })
         {
@@ -513,10 +516,25 @@ public class TelemetryTests
         private readonly ActivityListener _activityListener;
         private readonly MeterListener _meterListener;
 
-        public ConcurrentQueue<Activity> Activities { get; } = new();
-        public ConcurrentQueue<Dictionary<string, object?>> CreationTags { get; } = new();
-        public ConcurrentQueue<Measurement> Measurements { get; } = new();
-        public IReadOnlyList<double>? HistogramBucketBoundaries { get; private set; }
+        public ConcurrentQueue<Activity> Activities
+        {
+            get;
+        } = new();
+
+        public ConcurrentQueue<Dictionary<string, object?>> CreationTags
+        {
+            get;
+        } = new();
+
+        public ConcurrentQueue<Measurement> Measurements
+        {
+            get;
+        } = new();
+
+        public IReadOnlyList<double>? HistogramBucketBoundaries
+        {
+            get; private set;
+        }
 
         public TelemetryCapture()
         {

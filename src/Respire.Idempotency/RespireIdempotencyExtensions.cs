@@ -31,7 +31,11 @@ public static class RespireIdempotencyExtensions
 
     private static bool IsValidKeyPrefix(string? prefix)
     {
-        if (string.IsNullOrWhiteSpace(prefix)) return false;
+        if (string.IsNullOrWhiteSpace(prefix))
+        {
+            return false;
+        }
+
         try
         {
             _ = new UTF8Encoding(false, true).GetByteCount(prefix);

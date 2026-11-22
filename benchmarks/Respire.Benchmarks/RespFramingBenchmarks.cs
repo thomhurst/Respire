@@ -20,8 +20,11 @@ public class RespFramingSerializationBenchmarks
     public void Setup()
     {
         _buffer = new WriteBuffer(256);
+
         if (WriteGetCommand() <= 0 || WriteSetOptions() <= 0 || WriteBulkInteger(long.MinValue) != 27)
+        {
             throw new InvalidOperationException("Unexpected serialized frame length.");
+        }
     }
 
     [Benchmark]
@@ -98,6 +101,7 @@ public class RespFramingPublicBenchmarks
     {
         var host = Environment.GetEnvironmentVariable("REDIS_HOST");
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort) ? configuredPort : 6379;
+
         if (string.IsNullOrEmpty(host))
         {
             _container = new RedisBuilder("redis:8.10").Build();
@@ -105,16 +109,22 @@ public class RespFramingPublicBenchmarks
             host = _container.Hostname;
             port = _container.GetMappedPublicPort(6379);
         }
+
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(host, port) }, Protocol = RespireProtocol.Resp2, Connections = 1,
+            Endpoints = { new RespireEndpoint(host, port) },
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         await _client.SortedSets.AddAsync(_rangeKey, "one", 1);
         await _client.SortedSets.AddAsync(_rangeKey, "two", 2);
+
         if (!await SetWithExpiry() || (await ReverseRangeWithScores()).Length != 2
             || await SetWithExpiryPipeline() != 8 || await ReverseRangeWithScoresPipeline() != 16)
+        {
             throw new InvalidOperationException("Public framing fixture did not preserve all replies.");
+        }
     }
 
     [Benchmark]
@@ -159,7 +169,14 @@ public class RespFramingPublicBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync();
-        if (_container is not null) await _container.DisposeAsync();
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+        }
     }
 }

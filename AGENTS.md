@@ -16,6 +16,14 @@ Do not recreate `docs/API_DESIGN.md` or add another spec, status list, or roadma
 
 Several PR builds failed with `CS1010: Newline in constant` because a tool expanded `\r\n` inside a C# string literal into real line breaks before the file was written. Write source with file-editing tools, or with a quoted heredoc (`<<'EOF'`). Do not use `echo -e`, `printf` format strings, interpolated PowerShell strings, or non-raw string literals in a generating script for this. Build the changed projects before you push.
 
+## C# style
+
+For C# changes, follow the [shared EditorConfig profile](https://github.com/thomhurst/editorconfig/blob/0cef31e579d76c43b19a02024e672c1d0173629c/.editorconfig) and [C# style guide](https://github.com/thomhurst/editorconfig/blob/0cef31e579d76c43b19a02024e672c1d0173629c/csharp.md). Use the repository's local settings if these references are unavailable, and report the unavailable references.
+
+Use braces for all control-flow bodies, including single statements. Separate logical groups with one blank line and keep related statements together. Preserve the supported language version and local EditorConfig overrides.
+
+Use [Curb](https://github.com/nullean/curb) for formatting. Run `curb format <changed-path>` and `curb check <changed-path>` on changed C# files. Install the CLI with `dotnet tool install --global curb-cli --version 0.16.0` if needed; the repository was formatted with that version. Keep Roslyn build analysis enabled for style rules that require compilation. Limit formatting to the code you change.
+
 ## Allocation tests
 
 Zero-allocation assertions must use `AllocationMeasurement.WithoutConcurrentGc` with an unkeyed `[NotInParallel]` test, warmed no-inline measurement methods, and a positive control. A bare `GC.GetAllocatedBytesForCurrentThread()` delta is flaky on CI. See `docs/ALLOCATION_MEASUREMENT.md`.

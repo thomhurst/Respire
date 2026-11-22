@@ -20,17 +20,25 @@ public class RedisReplicaPairStartupTests
         var container = await RedisReplicaPair.StartContainerAsync(() =>
         {
             foreach (var previous in probes)
-                if (previous.DisposeCount != 1) throw new InvalidOperationException("Replacement preceded cleanup.");
+            {
+                if (previous.DisposeCount != 1)
+                {
+                    throw new InvalidOperationException("Replacement preceded cleanup.");
+                }
+            }
+
             var next = ContainerProbe.Create(probes.Count < collisions ? Error(Collision) : null);
             probes.Add((ContainerProbe)next);
             return next;
         }, deadline.Token);
         await Assert.That(probes.Count).IsEqualTo(collisions + 1);
+
         foreach (var probe in probes)
         {
             await Assert.That(probe.StartCount).IsEqualTo(1);
             await Assert.That(probe.Token).IsEqualTo(deadline.Token);
         }
+
         await Assert.That(probes[^1].DisposeCount).IsEqualTo(0);
         await container.DisposeAsync();
         await Assert.That(probes[^1].DisposeCount).IsEqualTo(1);
@@ -50,7 +58,12 @@ public class RedisReplicaPairStartupTests
             return container;
         }, default)).Throws<DockerApiException>();
         await Assert.That(probes.Count).IsEqualTo(3);
-        foreach (var probe in probes) await Assert.That(probe.DisposeCount).IsEqualTo(1);
+
+        foreach (var probe in probes)
+        {
+            await Assert.That(probe.DisposeCount).IsEqualTo(1);
+        }
+
         await Assert.That(ReferenceEquals(error, failures[2])).IsTrue();
         var previous = (Exception[])error!.Data["RedisReplicaPair.PreviousPortCollisions"]!;
         await Assert.That(previous.SequenceEqual(failures.Take(2))).IsTrue();
@@ -86,7 +99,11 @@ public class RedisReplicaPairStartupTests
             attempts++;
             var container = ContainerProbe.Create(Error(Collision));
             probe = (ContainerProbe)container;
-            probe.Cleanup = () => { deadline.Cancel(); return ValueTask.CompletedTask; };
+            probe.Cleanup = () =>
+            {
+                deadline.Cancel();
+                return ValueTask.CompletedTask;
+            };
             return container;
         }, deadline.Token)).Throws<OperationCanceledException>();
         await Assert.That(attempts).IsEqualTo(1);
@@ -144,10 +161,26 @@ public class RedisReplicaPairStartupTests
     public class ContainerProbe : DispatchProxy
     {
         private Exception? _failure;
-        public Func<ValueTask>? Cleanup { get; set; }
-        public int StartCount { get; private set; }
-        public int DisposeCount { get; private set; }
-        public CancellationToken Token { get; private set; }
+
+        public Func<ValueTask>? Cleanup
+        {
+            get; set;
+        }
+
+        public int StartCount
+        {
+            get; private set;
+        }
+
+        public int DisposeCount
+        {
+            get; private set;
+        }
+
+        public CancellationToken Token
+        {
+            get; private set;
+        }
 
         internal static IContainer Create(Exception? failure)
         {
@@ -167,7 +200,8 @@ public class RedisReplicaPairStartupTests
                 case "DisposeAsync":
                     DisposeCount++;
                     return Cleanup?.Invoke() ?? ValueTask.CompletedTask;
-                default: throw new NotSupportedException(method.Name);
+                default:
+                    throw new NotSupportedException(method.Name);
             }
         }
     }

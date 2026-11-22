@@ -15,16 +15,29 @@ namespace Respire.Benchmarks;
 [CategoriesColumn]
 public class ValueCodecBenchmarks
 {
-    public enum PayloadPattern { RepeatedText, RandomBytes }
+    public enum PayloadPattern
+    {
+        RepeatedText,
+        RandomBytes
+    }
 
     [Params(64, 1024, 16384)]
-    public int Length { get; set; }
+    public int Length
+    {
+        get; set;
+    }
 
     [Params(PayloadPattern.RepeatedText, PayloadPattern.RandomBytes)]
-    public PayloadPattern Pattern { get; set; }
+    public PayloadPattern Pattern
+    {
+        get; set;
+    }
 
     [Params(0, 1024)]
-    public int MinimumLength { get; set; }
+    public int MinimumLength
+    {
+        get; set;
+    }
 
     private byte[] _payload = null!;
     private string _payloadSha256 = null!;
@@ -42,13 +55,19 @@ public class ValueCodecBenchmarks
     public void Setup()
     {
         _payload = new byte[Length];
+
         if (Pattern == PayloadPattern.RandomBytes)
+        {
             new Random(527).NextBytes(_payload);
+        }
         else
         {
             ReadOnlySpan<byte> record = "tenant=demo;type=event;status=active;value=12345;\n"u8;
+
             for (var index = 0; index < _payload.Length; index++)
+            {
                 _payload[index] = record[index % record.Length];
+            }
         }
 
         _payloadSha256 = Convert.ToHexString(SHA256.HashData(_payload));
@@ -65,20 +84,31 @@ public class ValueCodecBenchmarks
         _deflateFrame = Validate("Deflate", _deflate);
         _lz4Frame = Validate("Lz4", _lz4);
         _zstdFrame = Validate("Zstd", _zstd);
+
         if (!RawEncode().Span.SequenceEqual(_payload) || !RawDecode().Span.SequenceEqual(_payload))
+        {
             throw new InvalidOperationException("The disabled path changed the raw value.");
+        }
+
         ReportSize("Raw", _payload, algorithm: null);
     }
 
     private byte[] Validate(string name, IRespireValueCodec codec)
     {
         var frame = codec.Encode(_payload);
+
         if (!Encode(codec).Span.SequenceEqual(frame)
             || !Decode(codec, frame).Span.SequenceEqual(_payload)
             || !codec.Decode(frame).AsSpan().SequenceEqual(_payload))
+        {
             throw new InvalidOperationException($"{name} array/destination round trip failed.");
+        }
+
         if (Length < MinimumLength && (frame[5] != 0 || frame.Length != Length + RespireValueCodec.HeaderLength))
+        {
             throw new InvalidOperationException("Below-threshold framing changed.");
+        }
+
         ReportSize(name, frame, frame[5]);
         return frame;
     }
@@ -89,7 +119,10 @@ public class ValueCodecBenchmarks
         // launches and joins these exact sizes to each BDN time/allocation measurement.
         Console.WriteLine("VALUE_CODEC_SIZE " + JsonSerializer.Serialize(new
         {
-            Length, Pattern = Pattern.ToString(), MinimumLength, Codec = codec,
+            Length,
+            Pattern = Pattern.ToString(),
+            MinimumLength,
+            Codec = codec,
             EncodedBytes = encoded.Length,
             RespBulkStringBytes = encoded.Length + encoded.Length.ToString(System.Globalization.CultureInfo.InvariantCulture).Length + 5,
             Algorithm = algorithm,
@@ -99,23 +132,31 @@ public class ValueCodecBenchmarks
 
     [Benchmark(Baseline = true), BenchmarkCategory("Encode")]
     public ReadOnlyMemory<byte> RawEncode() => CopyRaw();
+
     [Benchmark, BenchmarkCategory("Encode")]
     public ReadOnlyMemory<byte> BrotliEncode() => Encode(_brotli);
+
     [Benchmark, BenchmarkCategory("Encode")]
     public ReadOnlyMemory<byte> DeflateEncode() => Encode(_deflate);
+
     [Benchmark, BenchmarkCategory("Encode")]
     public ReadOnlyMemory<byte> Lz4Encode() => Encode(_lz4);
+
     [Benchmark, BenchmarkCategory("Encode")]
     public ReadOnlyMemory<byte> ZstdEncode() => Encode(_zstd);
 
     [Benchmark(Baseline = true), BenchmarkCategory("Decode")]
     public ReadOnlyMemory<byte> RawDecode() => CopyRaw();
+
     [Benchmark, BenchmarkCategory("Decode")]
     public ReadOnlyMemory<byte> BrotliDecode() => Decode(_brotli, _brotliFrame);
+
     [Benchmark, BenchmarkCategory("Decode")]
     public ReadOnlyMemory<byte> DeflateDecode() => Decode(_deflate, _deflateFrame);
+
     [Benchmark, BenchmarkCategory("Decode")]
     public ReadOnlyMemory<byte> Lz4Decode() => Decode(_lz4, _lz4Frame);
+
     [Benchmark, BenchmarkCategory("Decode")]
     public ReadOnlyMemory<byte> ZstdDecode() => Decode(_zstd, _zstdFrame);
 

@@ -46,6 +46,7 @@ public class DistributedCacheAccessorTests
             }
             : new RespireCacheOptions();
         options.InstanceName = "cache:";
+
         await using (var cache = prefixed.AsDistributedCache(options))
         {
             await Assert.That(Encoding.UTF8.GetString((await cache.GetAsync("key"))!)).IsEqualTo("hello");

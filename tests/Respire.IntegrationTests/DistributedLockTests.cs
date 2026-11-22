@@ -19,6 +19,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
     private IDatabase? _stackExchangeDb;
 
     private RespireClient Client => _respireClient!;
+
     private IDatabase Db => _stackExchangeDb!;
 
     [Before(Test)]
@@ -138,6 +139,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
         var keepAlive = await mutex.KeepAliveAsync();
         // Captured up front: the scope disposes its token source when it stops.
         var renewalStopped = keepAlive.CancellationToken;
+
         try
         {
             var (previousTtl, renewedTtl) = await WaitForLeaseRenewalAsync(lease);
@@ -172,9 +174,11 @@ public class DistributedLockTests(RedisTestContainer fixture)
     {
         TimeSpan? previous = null;
         var timeout = Stopwatch.StartNew();
+
         while (timeout.Elapsed < lease * 3)
         {
             var ttl = await Db.KeyTimeToLiveAsync(Key);
+
             if (ttl is null)
             {
                 throw new InvalidOperationException(

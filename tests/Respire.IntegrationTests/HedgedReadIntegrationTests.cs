@@ -41,7 +41,9 @@ public class HedgedReadIntegrationTests
         });
         var replicaOptions = new RespireOptions
         {
-            Endpoints = [fixture.DataEndpoints[1]], Protocol = protocol, Connections = 1,
+            Endpoints = [fixture.DataEndpoints[1]],
+            Protocol = protocol,
+            Connections = 1,
         };
         await using var control = await RespireClient.ConnectAsync(replicaOptions);
         await using var witness = await RespireClient.ConnectAsync(replicaOptions);
@@ -50,8 +52,11 @@ public class HedgedReadIntegrationTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await reader.SetAsync("hedged-first", "first", cancellationToken: deadline.Token);
         await reader.SetAsync("hedged-second", "second", cancellationToken: deadline.Token);
+
         while (await strict.GetStringAsync("hedged-second", deadline.Token) != "second")
+        {
             await Task.Delay(20, deadline.Token);
+        }
 
         await AssertPausedReplicaLosesAsync(reader, control, witness, fixture.DataEndpoints[0].Port, "hedged-first", deadline.Token);
         // The losing reply must drain before the next response on the same replica socket.
@@ -68,7 +73,9 @@ public class HedgedReadIntegrationTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(cluster.Host, cluster.Port(0))],
-            UseCluster = true, Protocol = protocol, Connections = 1,
+            UseCluster = true,
+            Protocol = protocol,
+            Connections = 1,
             HedgedReads = new() { Delay = TimeSpan.FromMilliseconds(20), MaximumExtraLoadPercent = 100 },
         });
         var key = Enumerable.Range(0, 1000).Select(i => $"{{hedged-cluster-{i}}}:first")
@@ -78,11 +85,17 @@ public class HedgedReadIntegrationTests
         await client.SetAsync(key, "first", cancellationToken: deadline.Token);
         await client.SetAsync(second, "second", cancellationToken: deadline.Token);
         var strict = client.WithReadFrom(RespireReadFrom.Replica);
+
         while (await strict.GetStringAsync(second, deadline.Token) != "second")
+        {
             await Task.Delay(20, deadline.Token);
+        }
+
         var replicaOptions = new RespireOptions
         {
-            Endpoints = [new(cluster.Host, cluster.Port(3))], Protocol = protocol, Connections = 1,
+            Endpoints = [new(cluster.Host, cluster.Port(3))],
+            Protocol = protocol,
+            Connections = 1,
         };
         await using var control = await RespireClient.ConnectAsync(replicaOptions);
         await using var witness = await RespireClient.ConnectAsync(replicaOptions);
@@ -99,19 +112,28 @@ public class HedgedReadIntegrationTests
         listener.InstrumentPublished = (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.read.hedge.won")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
+            {
                 if (tag.Key == "server.port" && Convert.ToInt32(tag.Value) == primaryPort)
+                {
                     Interlocked.Add(ref won, value);
+                }
+            }
         });
         listener.Start();
         // The hedge fires after 20 ms, so the primary answers long before the bounded pause ends.
-        using (await control.ExecuteAsync("CLIENT", "PAUSE", 1_500, "ALL")) { }
+        using (await control.ExecuteAsync("CLIENT", "PAUSE", 1_500, "ALL"))
+        {
+        }
         // A separate socket proves the replica has not resumed when the hedge returns.
         var pausedPing = witness.PingAsync(cancellationToken).AsTask();
+
         try
         {
             (await reader.GetStringAsync(key, cancellationToken).AsTask()

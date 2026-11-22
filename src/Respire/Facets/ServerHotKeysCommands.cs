@@ -10,16 +10,20 @@ public partial interface IRespireServerCommands
     /// <summary>Pins an existing connection for Redis 8.6+ node-local HOTKEYS operations; does not start tracking.</summary>
     /// <remarks>The handle never switches connections or nodes. Reacquire explicitly after disconnection.</remarks>
     ValueTask<RespireHotKeysTracker> GetHotKeysTrackerAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Starts tracking separately on every currently discovered node. Requires AllowAdmin; true means OK.</summary>
     /// <remarks>Includes replicas. Sessions are shared with other users, not owned by this client. Partial success is possible.</remarks>
     ValueTask<RespireServerResult<bool>[]> StartHotKeysOnAllNodesAsync(RespireHotKeysOptions options, CancellationToken cancellationToken = default);
+
     /// <summary>Returns each currently discovered node's owned snapshots; null means no session on that node.</summary>
     /// <remarks>Does not require AllowAdmin; server ACLs still apply. Discovery can change between calls.
     /// Compare endpoints; results are not a global ranking. Snapshot arrays preserve the server's outer array
     /// without assuming that future servers always return exactly one element.</remarks>
     ValueTask<RespireServerResult<RespireHotKeysSnapshot[]?>[]> GetHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Stops tracking on every currently discovered node. Requires AllowAdmin; false means no active session.</summary>
     ValueTask<RespireServerResult<bool>[]> StopHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Releases stopped tracking data on every currently discovered node. Requires AllowAdmin; true means OK.</summary>
     /// <remarks>Active sessions fail on the server. No rollback, replication, or automatic stop is performed.</remarks>
     ValueTask<RespireServerResult<bool>[]> ResetHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default);
@@ -42,13 +46,18 @@ internal sealed partial class ServerCommands
     {
         var owner = DispatchResponseSource<RespireServerResult<bool>[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             EnsureAdminAllowed("HOTKEYS START");
             ArgumentNullException.ThrowIfNull(options);
             var command = options.BuildCommand();
             // Configured fan-out owns cancellation after hook admission.
-            if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+            if (client.Core.Options.CommandHook is null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
             return owner.Attach(FanOutAsync("HOTKEYS START", command, cancellationToken,
                 static (ServerCommands _, in RespValue value) => HotKeysParser.Ok(in value), observation: observation));
         }
@@ -59,6 +68,7 @@ internal sealed partial class ServerCommands
     {
         var owner = DispatchResponseSource<RespireServerResult<RespireHotKeysSnapshot[]?>[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(FanOutAsync("HOTKEYS GET", new Cmd(HotKeysCommands.Get), cancellationToken,
@@ -71,6 +81,7 @@ internal sealed partial class ServerCommands
     {
         var owner = DispatchResponseSource<RespireServerResult<bool>[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(MutateHotKeysOnAllNodesAsync("HOTKEYS STOP", new Cmd(HotKeysCommands.Stop), cancellationToken,
@@ -83,6 +94,7 @@ internal sealed partial class ServerCommands
     {
         var owner = DispatchResponseSource<RespireServerResult<bool>[]>.Start();
         var observation = owner.Observation;
+
         try
         {
             return owner.Attach(MutateHotKeysOnAllNodesAsync("HOTKEYS RESET", new Cmd(HotKeysCommands.Reset), cancellationToken,
@@ -96,7 +108,12 @@ internal sealed partial class ServerCommands
         where TCommand : struct, IRespCommand
     {
         EnsureAdminAllowed(operation);
-        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+
+        if (client.Core.Options.CommandHook is null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         return FanOutAsync(operation, command, cancellationToken, convert, observation: observation);
     }
 }
@@ -119,7 +136,11 @@ public sealed class RespireHotKeysTracker
     }
 
     /// <summary>The endpoint of the pinned physical connection.</summary>
-    public RespireEndpoint Endpoint { get; }
+    public RespireEndpoint Endpoint
+    {
+        get;
+    }
+
     /// <summary>A point-in-time observation of the original connection, not a guarantee of future availability.</summary>
     public bool IsConnected => !_client.Core.Disposed && _connection.IsConnected;
 
@@ -188,6 +209,8 @@ public sealed class RespireHotKeysTracker
     private void EnsureAdmin(string operation)
     {
         if (!_client.Core.Options.AllowAdmin)
+        {
             throw new NotSupportedException($"{operation} requires RespireOptions.AllowAdmin = true.");
+        }
     }
 }

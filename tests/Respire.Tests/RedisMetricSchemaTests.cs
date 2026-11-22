@@ -29,12 +29,20 @@ public class RedisMetricSchemaTests
         await Assert.That(item.Value).IsEqualTo(1);
         await Assert.That(item.Tags["server.address"]).IsEqualTo(endpoint.Host);
         await Assert.That(item.Tags.ContainsKey("server.port")).IsEqualTo(port != 6379);
-        if (port != 6379) await Assert.That(item.Tags["server.port"]).IsEqualTo(port);
+
+        if (port != 6379)
+        {
+            await Assert.That(item.Tags["server.port"]).IsEqualTo(port);
+        }
+
         await Assert.That(item.Tags["db.response.status_code"]).IsEqualTo("WRONGTYPE");
         await Assert.That(item.Tags["redis.client.operation.retry_attempts"]).IsEqualTo(2);
         var durationTags = RespireTelemetry.CreateOperationMetricTags(endpoint.Host, port, "0", null, null);
+
         foreach (var tag in durationTags.Where(tag => tag.Key.StartsWith("server.", StringComparison.Ordinal)))
+        {
             await Assert.That(item.Tags[tag.Key]).IsEqualTo(tag.Value);
+        }
     }
 
     [Test]
@@ -63,17 +71,26 @@ public class RedisMetricSchemaTests
         var query = new ClientCacheCommandKey("HGET", "query-callback", "first");
         using var response = RespValue.BulkString("value"u8.ToArray());
         store.Set(in query, new(response.ToOwned(), [key], 100, capacity ? 0 : 1));
+
         if (capacity)
         {
             var other = new ClientCacheCommandKey("HGET", "query-callback", "second");
             store.Set(in other, new(response.ToOwned(), [key], 100, 0));
         }
+
         var removal = Task.Run(() =>
         {
-            if (capacity) store.Trim();
-            else store.TryGet(in query, out _);
+            if (capacity)
+            {
+                store.Trim();
+            }
+            else
+            {
+                store.TryGet(in query, out _);
+            }
         });
         Task<bool>? publication = null;
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -89,7 +106,11 @@ public class RedisMetricSchemaTests
         {
             release.TrySetResult();
             await removal.WaitAsync(TimeSpan.FromSeconds(10));
-            if (publication is not null) await publication.WaitAsync(TimeSpan.FromSeconds(10));
+
+            if (publication is not null)
+            {
+                await publication.WaitAsync(TimeSpan.FromSeconds(10));
+            }
         }
     }
 
@@ -120,6 +141,7 @@ public class RedisMetricSchemaTests
         });
         Task invalidating = Task.CompletedTask;
         Task flushing = Task.CompletedTask;
+
         try
         {
             await held.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -146,6 +168,7 @@ public class RedisMetricSchemaTests
             release.TrySetResult();
             await Task.WhenAll(holder, invalidating, flushing).WaitAsync(TimeSpan.FromSeconds(10));
         }
+
         await Assert.That(capture.Items.Where(item => item.Name == "redis.client.csc.evictions").Sum(item => item.Value)).IsEqualTo(2);
         await Assert.That(cache.Count).IsEqualTo(0);
     }
@@ -160,6 +183,7 @@ public class RedisMetricSchemaTests
         var cache = new ClientSideCacheCoordinator(new() { LocalExpiration = TimeSpan.Zero });
         var key = new RespireKey("retired-expiration");
         var query = new ClientCacheCommandKey("HGET", "retired-expiration", "field");
+
         if (queryEntry)
         {
             var request = new ClientSideCacheCoordinator.QueryRequest(query, key);
@@ -167,7 +191,11 @@ public class RedisMetricSchemaTests
             using var response = RespValue.BulkString("value"u8.ToArray());
             cache.CompleteRead(in token, in response, allowInsert: true);
         }
-        else Fill(cache, key);
+        else
+        {
+            Fill(cache, key);
+        }
+
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var store = (ClientSideCacheCoordinator.CacheStore)typeof(ClientSideCacheCoordinator).GetField("_store", flags)!.GetValue(cache)!;
         using var flush = RespValue.Array(RespValue.SimpleString("invalidate"u8.ToArray()), RespValue.Null);
@@ -202,17 +230,29 @@ public class RedisMetricSchemaTests
         var cache = new ClientSideCacheCoordinator(new());
         var key = new RespireKey("local-removal");
         Fill(cache, key);
+
         switch (operation)
         {
-            case "clear": cache.Clear(); break;
-            case "mutation": cache.Invalidate(in key); break;
-            case "unknown": cache.FlushForUnknownCommand(); break;
-            case "continuity": cache.FlushForContinuityLoss(); break;
+            case "clear":
+                cache.Clear();
+                break;
+            case "mutation":
+                cache.Invalidate(in key);
+                break;
+            case "unknown":
+                cache.FlushForUnknownCommand();
+                break;
+            case "continuity":
+                cache.FlushForContinuityLoss();
+                break;
             case "deferred-continuity":
                 ClientSideCacheCoordinator.PublishContinuityFlushMetrics(cache.FlushForContinuityLossWithoutMetrics());
                 break;
-            case "moving": cache.FlushForMovingRetirementFence(); break;
+            case "moving":
+                cache.FlushForMovingRetirementFence();
+                break;
         }
+
         await Assert.That(cache.Count).IsEqualTo(0);
         await Assert.That(capture.Items.Any(item => item.Name == "redis.client.csc.evictions")).IsFalse();
     }
@@ -223,6 +263,7 @@ public class RedisMetricSchemaTests
         using var capture = new Capture();
         var cache = new ClientSideCacheCoordinator(new());
         var key = new RespireKey("hash");
+
         foreach (var field in new[] { "first", "second" })
         {
             var request = new ClientSideCacheCoordinator.QueryRequest(new ClientCacheCommandKey("HGET", "hash", field), key);
@@ -230,6 +271,7 @@ public class RedisMetricSchemaTests
             var response = RespValue.BulkString("value"u8.ToArray());
             cache.CompleteRead(in token, in response, allowInsert: true);
         }
+
         await Assert.That(cache.Count).IsEqualTo(2);
         cache.Invalidate(in key, RespireClientCacheInvalidationReason.ServerInvalidation);
         cache.Invalidate(in key, RespireClientCacheInvalidationReason.ServerInvalidation);
@@ -262,7 +304,9 @@ public class RedisMetricSchemaTests
         throwing.InstrumentPublished = (instrument, listener) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name.StartsWith("redis.client.", StringComparison.Ordinal))
+            {
                 listener.EnableMeasurementEvents(instrument);
+            }
         };
         throwing.SetMeasurementEventCallback<long>((_, _, _, _) => throw new InvalidOperationException("Listener failure."));
         throwing.Start();
@@ -280,7 +324,11 @@ public class RedisMetricSchemaTests
     [Test]
     public async Task DisabledMappedCountersAllocateNothing()
     {
-        for (var index = 0; index < 20; index++) MeasureMappedCounters();
+        for (var index = 0; index < 20; index++)
+        {
+            MeasureMappedCounters();
+        }
+
         MeasurePositiveControl();
         var measurements = AllocationMeasurement.WithoutConcurrentGc(() => (MeasureMappedCounters(), MeasurePositiveControl()));
         await Assert.That(measurements.Item1).IsEqualTo(0);
@@ -293,6 +341,7 @@ public class RedisMetricSchemaTests
         var first = new RespireEndpoint("first");
         var second = new RespireEndpoint("second");
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             RespireTelemetry.RecordCacheRequest(hit: true);
@@ -301,6 +350,7 @@ public class RedisMetricSchemaTests
             RespireTelemetry.RecordMaintenanceNotification("maintenance", 6379, "MOVING");
             RespireTelemetry.RecordFailoverSwitch(first, second, RespireFailoverSwitchReasons.ActiveEndpointUnhealthy);
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -325,12 +375,14 @@ public class RedisMetricSchemaTests
         var requests = capture.Items.Where(item => item.Name == "redis.client.csc.requests").ToArray();
         await Assert.That(requests.Length).IsEqualTo(2);
         await Assert.That(requests.Select(item => item.Tags["redis.client.csc.result"])).IsEquivalentTo(new object?[] { "miss", "hit" });
+
         foreach (var item in requests)
         {
             await Assert.That(item.Unit).IsEqualTo("{request}");
             await Assert.That(item.Value).IsEqualTo(1);
             await CheckIdentity(item);
         }
+
         await Assert.That(capture.Items.Any(item => item.Name is "respire.client_cache.hits" or "respire.client_cache.misses")).IsFalse();
     }
 
@@ -349,6 +401,7 @@ public class RedisMetricSchemaTests
         var evictions = capture.Items.Where(item => item.Name == "redis.client.csc.evictions").ToArray();
         await Assert.That(evictions.Length).IsEqualTo(2);
         await Assert.That(evictions.Select(item => item.Tags["redis.client.csc.reason"])).IsEquivalentTo(new object?[] { "full", "invalidation" });
+
         foreach (var item in evictions)
         {
             await Assert.That(item.Unit).IsEqualTo("{eviction}");
@@ -402,13 +455,20 @@ public class RedisMetricSchemaTests
     {
         private readonly MetricConfigurationScope _metrics = new();
         private readonly MeterListener _listener = new();
-        internal ConcurrentQueue<Item> Items { get; } = new();
+
+        internal ConcurrentQueue<Item> Items
+        {
+            get;
+        } = new();
 
         internal Capture()
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
-                if (instrument.Meter.Name == "Respire") listener.EnableMeasurementEvents(instrument);
+                if (instrument.Meter.Name == "Respire")
+                {
+                    listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
                 Items.Enqueue(new(instrument.Name, instrument.Unit, value, tags.ToArray().ToDictionary(pair => pair.Key, pair => pair.Value),

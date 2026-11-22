@@ -11,12 +11,18 @@ internal readonly struct MGetCommand(RespireValue[] arguments, int? clusterSlot)
     // Metadata delegates to CmdN; audit forwarding when IRespCommand gains a member.
     /// <summary>Builds transient command metadata without retaining an execution policy.</summary>
     private CmdN Command => new(Verbs.MGet, arguments);
+
     /// <inheritdoc />
     public ReadCommandKind ReadKind => Verbs.MGet.ReadKind;
+
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.MGet.CacheMetadata;
+
     public RespireCommandRetryCategory RetryCategory => Verbs.MGet.RetryCategory;
+
     public RespireCacheMutation GetCacheMutation(string operation) => Verbs.MGet.CacheMetadata.Policy;
+
     public int GetWriteSizeHint() => Command.GetWriteSizeHint();
+
     /// <summary>Uses the validated slot, falling back to normal command hashing when none was supplied.</summary>
     public bool TryGetClusterSlot(out int slot)
     {
@@ -25,15 +31,20 @@ internal readonly struct MGetCommand(RespireValue[] arguments, int? clusterSlot)
             slot = validated;
             return true;
         }
+
         return Command.TryGetClusterSlot(out slot);
     }
+
     /// <inheritdoc />
     public bool TryGetPrimaryKey(out RespireValue key) => Command.TryGetPrimaryKey(out key);
+
     /// <inheritdoc />
     public bool TryGetArgument(int index, out RespireValue value) => Command.TryGetArgument(index, out value);
+
     /// <inheritdoc />
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
         => Command.TryGetClientCacheKey(operation, out key);
+
     /// <inheritdoc />
     public void Write(ref RespWriter writer) => Command.Write(ref writer);
 }

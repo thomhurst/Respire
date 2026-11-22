@@ -17,8 +17,14 @@ internal static class RateLimiterMetrics
     {
         try
         {
-            if (acquired) Allowed.Value.Add(1);
-            else Blocked.Value.Add(1, new KeyValuePair<string, object?>("reason", denyList ? "deny_list" : "capacity"));
+            if (acquired)
+            {
+                Allowed.Value.Add(1);
+            }
+            else
+            {
+                Blocked.Value.Add(1, new KeyValuePair<string, object?>("reason", denyList ? "deny_list" : "capacity"));
+            }
         }
         catch (Exception)
         {

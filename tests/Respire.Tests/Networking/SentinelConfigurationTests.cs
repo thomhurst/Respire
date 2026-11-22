@@ -31,16 +31,28 @@ public class SentinelConfigurationTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", reporter.Port)],
         };
         var state = new SentinelDiscoveryState(options.Endpoints);
-        if (newerEpoch) state.AcceptConfiguration(source, 1);
+
+        if (newerEpoch)
+        {
+            state.AcceptConfiguration(source, 1);
+        }
+
         var announcedSource = capturedHostnameSource ? new RespireEndpoint("former.internal", source.Port) : source;
         var hint = SentinelHint.FromSwitchMaster("switch", announcedSource, target, options.Endpoints[0]);
-        if (capturedHostnameSource) hint = hint.WithSourceAddresses(announcedSource, [source.Host]);
+
+        if (capturedHostnameSource)
+        {
+            hint = hint.WithSourceAddresses(announcedSource, [source.Host]);
+        }
+
         var validations = 0;
         var accepted = false;
+
         try
         {
             await SentinelResolver.ResolveAndConnectPrimaryAsync(options, (candidate, _, _) =>
@@ -72,7 +84,8 @@ public class SentinelConfigurationTests
         var target = new RespireEndpoint("2001:db8::1", 6379);
         var options = new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", reporter.Port)],
         };
         var hint = SentinelHintBuilder.Create("confirmation", target, target);
@@ -101,7 +114,8 @@ public class SentinelConfigurationTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", stale.Port), new("127.0.0.1", reporter.Port)],
         };
         var hint = SentinelNotificationCoalescer.Merge(SentinelHintBuilder.Create("a-b", second, first),

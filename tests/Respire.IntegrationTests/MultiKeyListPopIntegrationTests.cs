@@ -6,7 +6,13 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
 {
-    public enum PopMode { Immediate, Batch, Transaction, Blocking }
+    public enum PopMode
+    {
+        Immediate,
+        Batch,
+        Transaction,
+        Blocking
+    }
 
     [Test]
     [Arguments(2, PopMode.Immediate, RespireListSide.Left)]
@@ -91,11 +97,18 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         await client.SetAsync("wrong", "text");
-        Func<Task> many = async () => { await PopMany(client, mode, ["missing", "wrong"], 1, side); };
+        Func<Task> many = async () =>
+        {
+            await PopMany(client, mode, ["missing", "wrong"], 1, side);
+        };
         await many.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
+
         if (mode == PopMode.Blocking)
         {
-            Func<Task> one = async () => { await client.Lists.PopAsync(["missing", "wrong"], TimeSpan.FromSeconds(1), side); };
+            Func<Task> one = async () =>
+            {
+                await client.Lists.PopAsync(["missing", "wrong"], TimeSpan.FromSeconds(1), side);
+            };
             await one.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
         }
     }
@@ -104,9 +117,12 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
         IRespireClient client, PopMode mode, RespireKey[] keys, long count, RespireListSide side)
     {
         if (mode is PopMode.Immediate or PopMode.Blocking)
+        {
             return await (mode == PopMode.Blocking
                 ? client.Lists.PopManyAsync(keys, TimeSpan.FromMilliseconds(10), count, side)
                 : client.Lists.PopManyAsync(keys, count, side));
+        }
+
         if (mode == PopMode.Batch)
         {
             using var batch = client.CreateBatch();
@@ -114,6 +130,7 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
             await batch.TryExecuteAsync();
             return pending.Result;
         }
+
         await using var transaction = client.CreateTransaction();
         var result = transaction.Lists.PopMany(keys, count, side);
         await transaction.CommitAsync();

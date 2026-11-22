@@ -16,7 +16,7 @@ public partial class ErrorMetricsTests
         [Matrix("function", "script")] string route, [Matrix(false, true)] bool listenerThrows)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = RespireMetricGroups.Resiliency | RespireMetricGroups.Command });
+        { Groups = RespireMetricGroups.Resiliency | RespireMetricGroups.Command });
         await using var first = new FakeRespServer(16, "-NOPERM first target\r\n"u8.ToArray());
         await using var second = new FakeRespServer(16, "-WRONGTYPE second target\r\n"u8.ToArray());
         var topology = Encoding.ASCII.GetBytes(
@@ -26,12 +26,20 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 2, UseCluster = true,
-            ClusterTopologyRefreshInterval = null, Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null, observation: default);
-        foreach (var connection in connections) _ = connection.Multiplexer!.GetConnection();
+
+        foreach (var connection in connections)
+        {
+            _ = connection.Multiplexer!.GetConnection();
+        }
+
         var operation = route == "function" ? "FUNCTION FLUSH" : "SCRIPT FLUSH";
         var retired = new HashSet<int>();
         var retirements = new List<Task>();
@@ -41,20 +49,36 @@ public partial class ErrorMetricsTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
             ActivityStarted = activity =>
             {
-                if (activity.GetTagItem("db.operation.name")?.ToString() != operation) return;
+                if (activity.GetTagItem("db.operation.name")?.ToString() != operation)
+                {
+                    return;
+                }
+
                 var port = (int)activity.GetTagItem("server.port")!;
-                if (retired.Add(port)) retirements.Add(connections.Single(connection => connection.Port == port).RetireAsync());
+
+                if (retired.Add(port))
+                {
+                    retirements.Add(connections.Single(connection => connection.Port == port).RetireAsync());
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
         using var capture = new Capture(throwOnMeasurement: listenerThrows);
         Exception? failure = null;
+
         try
         {
-            if (route == "function") await client.Functions.FlushAsync();
-            else await client.Scripts.FlushAsync();
+            if (route == "function")
+            {
+                await client.Functions.FlushAsync();
+            }
+            else
+            {
+                await client.Scripts.FlushAsync();
+            }
         }
         catch (Exception error) { failure = error; }
+
         await Task.WhenAll(retirements);
         await Assert.That(retired.Count).IsEqualTo(2);
         await Assert.That(failure is RespireServerException).IsTrue();

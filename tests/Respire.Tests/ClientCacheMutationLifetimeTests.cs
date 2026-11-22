@@ -1,9 +1,9 @@
+using System.Diagnostics.Metrics;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
-using System.Runtime.CompilerServices;
-using System.Diagnostics.Metrics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -27,11 +27,17 @@ public class ClientCacheMutationLifetimeTests
         listener.InstrumentPublished = (instrument, publishedListener) =>
         {
             if (ReferenceEquals(instrument, invalidations))
+            {
                 publishedListener.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
-            if (++observed != 2) return;
+            if (++observed != 2)
+            {
+                return;
+            }
+
             first.Release();
             var attached = fence.BindNative();
             retained = attached.IsRequired;
@@ -61,6 +67,7 @@ public class ClientCacheMutationLifetimeTests
             .Where(order => Array.IndexOf(order, 1) < Array.IndexOf(order, 3)
                 && Array.IndexOf(order, 2) < Array.IndexOf(order, 4)).ToArray();
         await Assert.That(orders.Length).IsEqualTo(30);
+
         foreach (var order in orders)
         {
             var cache = new ClientSideCacheCoordinator(new());
@@ -70,6 +77,7 @@ public class ClientCacheMutationLifetimeTests
             var references = new ClientSideCacheCoordinator.MutationReference[2];
             var logicalCompleted = false;
             var nativeOwners = 0;
+
             foreach (var step in order)
             {
                 if (step == 0)
@@ -84,14 +92,23 @@ public class ClientCacheMutationLifetimeTests
                     var live = !logicalCompleted || nativeOwners != 0;
                     references[step - 1] = fence.BindNative();
                     await Assert.That(references[step - 1].IsRequired).IsEqualTo(live);
-                    if (live) nativeOwners++;
+
+                    if (live)
+                    {
+                        nativeOwners++;
+                    }
                 }
                 else
                 {
                     var reference = references[step - 3];
                     reference.Release();
-                    if (reference.IsRequired) nativeOwners--;
+
+                    if (reference.IsRequired)
+                    {
+                        nativeOwners--;
+                    }
                 }
+
                 var active = !logicalCompleted || nativeOwners != 0;
                 await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(active ? 1 : 0);
                 using var value = RespValue.BulkString("new"u8.ToArray());
@@ -104,10 +121,18 @@ public class ClientCacheMutationLifetimeTests
 
     private static IEnumerable<int[]> Permutations(int[] prefix, int[] remaining)
     {
-        if (remaining.Length == 0) yield return prefix;
+        if (remaining.Length == 0)
+        {
+            yield return prefix;
+        }
+
         foreach (var next in remaining)
+        {
             foreach (var order in Permutations([.. prefix, next], remaining.Where(value => value != next).ToArray()))
+            {
                 yield return order;
+            }
+        }
     }
 
     [Test]
@@ -122,6 +147,7 @@ public class ClientCacheMutationLifetimeTests
         var waiting = knownKey
             ? cache.BeforeCommand("BLPOP", in pop, blocking: true)
             : cache.BeforeCommand("XREADGROUP", in group, blocking: true);
+
         try
         {
             var arguments = Enumerable.Range(0, 5000).Select(index => (RespireValue)("key:" + index)).ToArray();
@@ -152,6 +178,7 @@ public class ClientCacheMutationLifetimeTests
         var fence = unknown ? cache.BeginUnknownMutation() : cache.BeforeCommand("SET", in command);
         PendingResponse source;
         ValueTask<RespValue> response;
+
         if (multiple)
         {
             var transaction = MultiReplyPendingResponseSource.Rent(2, 0, "MULTI/EXEC");
@@ -164,6 +191,7 @@ public class ClientCacheMutationLifetimeTests
             source = single;
             response = single.Task;
         }
+
         source.BindMutationFence(in fence);
         var observed = -1;
         var awaiter = response.GetAwaiter();
@@ -178,13 +206,20 @@ public class ClientCacheMutationLifetimeTests
         });
         var scheduler = new CompletionScheduler();
         var reply = RespValue.Integer(1);
+
         if (multiple)
         {
             scheduler.Add(source, in reply);
             await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
         }
+
         scheduler.Add(source, in reply);
-        if (scheduler.FlushDeferred()) scheduler.Execute();
+
+        if (scheduler.FlushDeferred())
+        {
+            scheduler.Execute();
+        }
+
         await Assert.That(observed).IsEqualTo(1);
         await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
     }
@@ -196,18 +231,27 @@ public class ClientCacheMutationLifetimeTests
         var fence = cache.BeginUnknownMutation();
         var references = new ClientSideCacheCoordinator.MutationReference[131_071];
         var retained = 0;
+
         try
         {
             for (; retained < references.Length; retained++)
+            {
                 references[retained] = fence.BindNative();
+            }
+
             cache.CompleteMutation(in fence, succeeded: true);
             await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
         }
         finally
         {
             cache.CompleteMutation(in fence);
-            for (var index = 0; index < retained; index++) references[index].Release();
+
+            for (var index = 0; index < retained; index++)
+            {
+                references[index].Release();
+            }
         }
+
         await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
     }
 
@@ -220,13 +264,19 @@ public class ClientCacheMutationLifetimeTests
         listener.InstrumentPublished = (instrument, publishedListener) =>
         {
             if (ReferenceEquals(instrument, invalidations))
+            {
                 publishedListener.EnableMeasurementEvents(instrument);
+            }
         };
         var original = new InvalidOperationException("admission observer failed");
         var observed = 0;
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
-            if (++observed == 1) throw original;
+            if (++observed == 1)
+            {
+                throw original;
+            }
+
             throw new InvalidOperationException("cleanup must not replace the admission error");
         });
         listener.Start();
@@ -267,12 +317,17 @@ public class ClientCacheMutationLifetimeTests
         listener.InstrumentPublished = (instrument, publishedListener) =>
         {
             if (ReferenceEquals(instrument, invalidations))
+            {
                 publishedListener.EnableMeasurementEvents(instrument);
+            }
         };
         var observed = 0;
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
-            if (++observed == 2) throw new InvalidOperationException("completion observer failed");
+            if (++observed == 2)
+            {
+                throw new InvalidOperationException("completion observer failed");
+            }
         });
         listener.Start();
         var cache = new ClientSideCacheCoordinator(new());
@@ -303,14 +358,20 @@ public class ClientCacheMutationLifetimeTests
         var identity = new ClientCacheCommandKey("LCS", new RespireValue[] { "first", "second", "LEN" });
         var release = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
+
         ValueTask<RespValue> Read(int _, CancellationToken cancellation)
         {
             Interlocked.Increment(ref calls);
             return new(release.Task.WaitAsync(cancellation));
         }
+
         var first = cache.CoalesceReadAsync(identity, 0, Read, CancellationToken.None);
         var second = cache.CoalesceReadAsync(identity, 0, Read, CancellationToken.None);
-        try { await Assert.That(calls).IsEqualTo(affected || unknown ? 2 : 1); }
+
+        try
+        {
+            await Assert.That(calls).IsEqualTo(affected || unknown ? 2 : 1);
+        }
         finally
         {
             cache.CompleteMutation(in fence);
@@ -318,6 +379,7 @@ public class ClientCacheMutationLifetimeTests
             using var firstResult = await first;
             using var secondResult = await second;
         }
+
         await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(0);
     }
 
@@ -351,8 +413,16 @@ public class ClientCacheMutationLifetimeTests
         var projection = query ? cache.BeginRead("STRLEN", in request) : default;
         cache.CompleteMutation(in fence);
         using var response = query ? RespValue.Integer(3) : RespValue.BulkString("old"u8.ToArray());
-        if (query) cache.CompleteRead(in projection, in response, allowInsert: true);
-        else cache.CompleteRead(in get, in response, allowInsert: true);
+
+        if (query)
+        {
+            cache.CompleteRead(in projection, in response, allowInsert: true);
+        }
+        else
+        {
+            cache.CompleteRead(in get, in response, allowInsert: true);
+        }
+
         await Assert.That(cache.Count).IsEqualTo(0);
 
         if (query)
@@ -365,6 +435,7 @@ public class ClientCacheMutationLifetimeTests
             var after = cache.BeginRead(in key);
             cache.CompleteRead(in after, in response, allowInsert: true);
         }
+
         await Assert.That(cache.Count).IsEqualTo(1);
     }
 
@@ -382,6 +453,7 @@ public class ClientCacheMutationLifetimeTests
         var first = cache.BeforeCommand("SET", in firstCommand);
         var second = unknown ? cache.BeginUnknownMutation() : cache.BeforeCommand("SET", in secondCommand);
         cache.CompleteMutation(in first);
+
         try
         {
             cache.Clear();
@@ -393,6 +465,7 @@ public class ClientCacheMutationLifetimeTests
             await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
         }
         finally { cache.CompleteMutation(in second); }
+
         await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
     }
 
@@ -479,6 +552,7 @@ public class ClientCacheMutationLifetimeTests
         PendingResponsePool pool, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             var fence = cache.BeforeCommand("SET", in command);
@@ -487,12 +561,22 @@ public class ClientCacheMutationLifetimeTests
             var reply = RespValue.Integer(1);
             source.TrySetResult(in reply);
             var pending = source.Task;
-            if (!pending.IsCompletedSuccessfully) throw new InvalidOperationException("The measured response must complete inline.");
+
+            if (!pending.IsCompletedSuccessfully)
+            {
+                throw new InvalidOperationException("The measured response must complete inline.");
+            }
+
             using var received = pending.Result;
             cache.CompleteMutation(in fence, succeeded: true);
             source.ReleaseRef();
-            if (allocate) GC.KeepAlive(new byte[37]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -509,11 +593,21 @@ public class ClientCacheMutationLifetimeTests
         var key = new RespireKey("key");
         var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
         var fence = cache.BeforeCommand("SET", in command);
+
         try
         {
-            if (flush == 1) cache.Clear();
-            if (flush == 2) cache.FlushForContinuityLoss();
+            if (flush == 1)
+            {
+                cache.Clear();
+            }
+
+            if (flush == 2)
+            {
+                cache.FlushForContinuityLoss();
+            }
+
             using var response = query ? RespValue.Integer(3) : RespValue.BulkString("old"u8.ToArray());
+
             if (query)
             {
                 var request = new ClientSideCacheCoordinator.QueryRequest(new ClientCacheCommandKey("STRLEN", "key"), key);
@@ -529,6 +623,7 @@ public class ClientCacheMutationLifetimeTests
             }
         }
         finally { cache.CompleteMutation(in fence); }
+
         using var fresh = RespValue.BulkString("new"u8.ToArray());
         var after = cache.BeginRead(in key);
         cache.CompleteRead(in after, in fresh, allowInsert: true);
@@ -564,6 +659,7 @@ public class ClientCacheMutationLifetimeTests
         var fence = cache.BeforeCommand("SET", in command);
         var source = new PendingResponsePool(1).Rent();
         source.BindMutationFence(in fence);
+
         if (success)
         {
             using var reply = RespValue.Integer(1);
@@ -577,7 +673,9 @@ public class ClientCacheMutationLifetimeTests
             source.TrySetCanceled(cancelled.Token);
             await Assert.That(async () => await source.Task).Throws<OperationCanceledException>();
         }
+
         cache.CompleteMutation(in fence, success);
+
         try
         {
             await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
@@ -587,6 +685,7 @@ public class ClientCacheMutationLifetimeTests
             await Assert.That(cache.TryGet(in key, out _)).IsFalse();
         }
         finally { source.ReleaseRef(); }
+
         await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
         using var fresh = RespValue.BulkString("new"u8.ToArray());
         var after = cache.BeginRead(in key);
@@ -601,9 +700,11 @@ public class ClientCacheMutationLifetimeTests
         var command = new CatalogCommand(RespireCommands.String.SET, ["key", "new"]);
         var ancient = cache.BeforeCommand("SET", in command);
         cache.CompleteMutation(in ancient);
+
         for (var index = 0; index < 1000; index++)
         {
             var current = cache.BeforeCommand("SET", in command);
+
             try
             {
                 cache.CompleteMutation(in ancient);
@@ -612,6 +713,7 @@ public class ClientCacheMutationLifetimeTests
             }
             finally { cache.CompleteMutation(in current); }
         }
+
         await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
     }
 }

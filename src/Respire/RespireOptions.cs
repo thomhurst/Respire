@@ -19,12 +19,22 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
     public static RespireEndpoint UnixSocket(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
         if (path.Contains('\0'))
+        {
             throw new ArgumentException("A Unix socket path cannot contain NUL characters.", nameof(path));
+        }
+
         if (!path.StartsWith('/') && !Path.IsPathFullyQualified(path))
+        {
             path = Path.GetFullPath(path);
+        }
+
         if (!IsValidUnixPath(path))
+        {
             throw new ArgumentException("A Unix socket requires a non-root filesystem path.", nameof(path));
+        }
+
         return new RespireEndpoint(path, 0);
     }
 
@@ -39,7 +49,10 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
     internal static RespireEndpoint FromUnixUri(Uri uri)
     {
         if (uri.Host.Length != 0 || uri.UserInfo.Length != 0 || uri.Port != -1 || uri.Fragment.Length != 0)
+        {
             throw new ArgumentException("A Unix socket URI must have a local path without authority or fragment.", nameof(uri));
+        }
+
         return UnixSocket(Uri.UnescapeDataString(uri.AbsolutePath));
     }
 
@@ -52,28 +65,41 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
         value = value.TrimStart();
 
         if (value.StartsWith("!@", StringComparison.Ordinal))
+        {
             throw new RespireConfigurationException("Endpoint '!@name' uses a Linux abstract Unix socket, which Respire does not support. Use a filesystem socket (!/path) instead.");
-        if (value[0] == '!') return UnixSocket(value[1..]);
+        }
+
+        if (value[0] == '!')
+        {
+            return UnixSocket(value[1..]);
+        }
 
         value = value.TrimEnd();
+
         if (value.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
             || value.StartsWith("redis+unix://", StringComparison.OrdinalIgnoreCase))
         {
             var uri = new Uri(value, UriKind.Absolute);
+
             if (uri.Query.Length != 0)
+            {
                 throw new ArgumentException("Endpoint URIs cannot contain options; use RespireOptions.Parse.", nameof(value));
+            }
+
             return FromUnixUri(uri);
         }
 
         if (value[0] == '[')
         {
             var closingBracket = value.IndexOf(']');
+
             if (closingBracket < 0)
             {
                 throw new ArgumentException("An IPv6 endpoint is missing its closing bracket.", nameof(value));
             }
 
             var host = value[1..closingBracket];
+
             if (closingBracket == value.Length - 1)
             {
                 return new RespireEndpoint(host, defaultPort);
@@ -90,6 +116,7 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
         }
 
         var colon = value.IndexOf(':');
+
         if (colon > 0 && colon == value.LastIndexOf(':'))
         {
             if (!int.TryParse(value.AsSpan(colon + 1), CultureInfo.InvariantCulture, out var port)
@@ -112,7 +139,11 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
     /// <inheritdoc/>
     public override string ToString()
     {
-        if (IsUnixSocket) return $"!{Host}";
+        if (IsUnixSocket)
+        {
+            return $"!{Host}";
+        }
+
         return Host.Contains(':', StringComparison.Ordinal) ? $"[{Host}]:{Port}" : $"{Host}:{Port}";
     }
 }
@@ -150,12 +181,18 @@ public sealed record RespireOptions
     /// <summary>Include the conflicting physical key as hex in local cross-slot exceptions. Default: false.</summary>
     /// <remarks>Explicit diagnostic opt-in: keys may contain secrets or personal data.
     /// Hex is reversible. Key context is never added to telemetry tags or exception messages.</remarks>
-    public bool IncludeCrossSlotKeyContext { get; init; }
+    public bool IncludeCrossSlotKeyContext
+    {
+        get; init;
+    }
 
     /// <summary>Split immediate cross-slot MGET, MSET, DEL, UNLINK, EXISTS and TOUCH commands by slot. Default: false.</summary>
     /// <remarks>Groups run concurrently and are not atomic together. A failure can leave some writes applied.
     /// Transactions and deferred batches still require each command's keys to share one slot.</remarks>
-    public bool SplitCrossSlotCommands { get; init; }
+    public bool SplitCrossSlotCommands
+    {
+        get; init;
+    }
 
     /// <summary>Returns a diagnostic representation without credentials or nested configuration material.</summary>
     public override string ToString() => "RespireOptions { <redacted> }";
@@ -176,14 +213,20 @@ public sealed record RespireOptions
     /// The factory owns DNS, socket options, and tunnel negotiation; built-in TCP options do not configure its stream.
     /// Null uses Respire's ordinary socket transport.
     /// </remarks>
-    public Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>? ConnectionFactory { get; init; }
+    public Func<RespireEndpoint, CancellationToken, ValueTask<Stream>>? ConnectionFactory
+    {
+        get; init;
+    }
 
     /// <summary>Request Multipath TCP for built-in TCP connections on Linux. Default: false.</summary>
     /// <remarks>Falls back to TCP with an informational log when the local kernel cannot create MPTCP sockets.
     /// On other platforms this is a logged no-op. Custom connection factories (including proxy helpers)
     /// and Unix sockets take precedence. Reconnects, discovered nodes, Sentinel and dedicated connections
     /// retain this setting. Multiple paths require MPTCP support and path configuration at both ends.</remarks>
-    public bool EnableMultipathTcp { get; init; }
+    public bool EnableMultipathTcp
+    {
+        get; init;
+    }
 
     // Compatibility adapter for friend tests. All connections use the public factory path.
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory
@@ -199,41 +242,65 @@ public sealed record RespireOptions
     /// Cluster seed nodes or Sentinel discovery endpoints. Standalone mode requires exactly one
     /// endpoint; use ConnectAnyAsync for connection-time fallback between independent deployments.
     /// </summary>
-    public IList<RespireEndpoint> Endpoints { get; init; } = [];
+    public IList<RespireEndpoint> Endpoints
+    {
+        get; init;
+    } = [];
 
     /// <summary>Explicit read replicas for standalone primary/replica deployments. Sentinel ignores this list.</summary>
-    public IList<RespireEndpoint> ReplicaEndpoints { get; init; } = [];
+    public IList<RespireEndpoint> ReplicaEndpoints
+    {
+        get; init;
+    } = [];
 
     /// <summary>Maps logical TCP endpoints to reachable socket addresses. Unlisted endpoints are unchanged.</summary>
     /// <remarks>Applies to seeds, discovered nodes, redirects, replicas, Sentinel peers, and maintenance handoffs.
     /// Routing, diagnostics, and TLS retain the original endpoint. Host matching ignores case; ports match exactly.
     /// The map is copied when connecting.
     /// Cannot be combined with <see cref="NodeAddressResolver"/>.</remarks>
-    public IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? NodeAddressMap { get; init; }
+    public IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? NodeAddressMap
+    {
+        get; init;
+    }
 
     /// <summary>Resolves each logical TCP endpoint immediately before connecting its socket.</summary>
     /// <remarks>Return the input for unchanged endpoints. The callback must be thread-safe and return a valid TCP endpoint.
     /// Cannot be combined with <see cref="NodeAddressMap"/>. Unix sockets bypass address mapping.</remarks>
-    public Func<RespireEndpoint, RespireEndpoint>? NodeAddressResolver { get; init; }
+    public Func<RespireEndpoint, RespireEndpoint>? NodeAddressResolver
+    {
+        get; init;
+    }
 
     /// <summary>Use the mapped socket hostname for TLS SNI and certificate validation. Default: false.</summary>
     /// <remarks>An explicit <see cref="SslClientAuthenticationOptions.TargetHost"/> still takes precedence.</remarks>
-    public bool UseMappedHostForTls { get; init; }
+    public bool UseMappedHostForTls
+    {
+        get; init;
+    }
 
     /// <summary>Optional key namespace for the root client. Empty (the default) disables prefixing.</summary>
     /// <remarks>Text and binary prefixes follow the same contracts as <see cref="IRespireClient.WithKeyPrefix(RespireKey)"/>.
     /// Client creation snapshots binary storage. Derived views append to this prefix.
     /// Regular pub/sub channels and server-wide operations are unchanged.</remarks>
-    public RespireKey KeyPrefix { get; init; }
+    public RespireKey KeyPrefix
+    {
+        get; init;
+    }
 
     /// <summary>Optional, separate namespace for typed pub/sub publishes and subscriptions. Empty disables prefixing.</summary>
     /// <remarks>Binary storage is copied at client creation. Derived pub/sub views append to this prefix.
     /// Text must be valid UTF-16. Keys, notification descriptors and raw/server commands are unchanged.
     /// Received messages and subscription targets retain physical wire identity.</remarks>
-    public RespireKey PubSubPrefix { get; init; }
+    public RespireKey PubSubPrefix
+    {
+        get; init;
+    }
 
     /// <summary>Default routing policy for catalog commands whose metadata confirms they are read-only.</summary>
-    public RespireReadFrom ReadFrom { get; init; } = RespireReadFrom.Primary;
+    public RespireReadFrom ReadFrom
+    {
+        get; init;
+    } = RespireReadFrom.Primary;
 
     /// <summary>
     /// Optional latency band for replica selection and <see cref="RespireReadFrom.Nearest"/>.
@@ -242,7 +309,10 @@ public sealed record RespireOptions
     /// routing; zero selects only fastest ties. Must be nonnegative. Unknown RTTs rotate only
     /// when the tier has no measured candidate. Pending probes remain excluded.
     /// </summary>
-    public TimeSpan? ReplicaLatencyTolerance { get; init; }
+    public TimeSpan? ReplicaLatencyTolerance
+    {
+        get; init;
+    }
 
     /// <summary>Advertise Valkey's CLIENT CAPA REDIRECT and follow standalone replica redirects for individual commands.</summary>
     /// <remarks>Disabled by default. Replica read connections also request READONLY when the capability succeeds.
@@ -250,7 +320,10 @@ public sealed record RespireOptions
     /// Use ReplicaRedirectValidator to constrain server-selected destinations before connecting.
     /// Enable only when you trust the servers to select destinations; restrict network egress to trusted endpoints.
     /// Server-cursor commands, endpoint-bound server operations, transactions, and streamed payloads retain their connection affinity.</remarks>
-    public bool EnableReplicaRedirects { get; init; }
+    public bool EnableReplicaRedirects
+    {
+        get; init;
+    }
 
     /// <summary>Optional policy that permits a replica REDIRECT destination when it returns true.</summary>
     /// <remarks>Called for every hop before creating a target pool, connecting, or forwarding credentials.
@@ -260,18 +333,27 @@ public sealed record RespireOptions
     /// Neither failure is retried by RetryPolicy. Callbacks must be thread-safe and should return promptly.
     /// Applies only to replica REDIRECT replies, not Cluster MOVED/ASK or other discovered endpoints.
     /// Endpoint validation does not authenticate a TLS peer or constrain DNS results, address mapping, or network egress.</remarks>
-    public Func<RespireEndpoint, bool>? ReplicaRedirectValidator { get; init; }
+    public Func<RespireEndpoint, bool>? ReplicaRedirectValidator
+    {
+        get; init;
+    }
 
     /// <summary>Optional bounded duplication of slow idempotent reads. Null (the default) disables hedging.</summary>
     [Experimental("RSP0003", UrlFormat = "https://respire.tomlonghurst.dev/docs/diagnostics/{0}")]
-    public RespireHedgedReadOptions? HedgedReads { get; init; }
+    public RespireHedgedReadOptions? HedgedReads
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Client availability zone used by AZ-affinity read policies. Zone names are compared
     /// ordinally. Configure this before connecting, including when selecting a policy through a view.
     /// Servers without zone metadata remain eligible for fallback.
     /// </summary>
-    public string? ClientAvailabilityZone { get; init; }
+    public string? ClientAvailabilityZone
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Bounds how stale replica read topology can be. A connection's <c>ROLE</c> check is reused
@@ -279,13 +361,19 @@ public sealed record RespireOptions
     /// failed a connection or role check is skipped for this long. Defaults to one second;
     /// <see cref="TimeSpan.Zero"/> revalidates on every read.
     /// </summary>
-    public TimeSpan ReplicaRefreshInterval { get; init; } = TimeSpan.FromSeconds(1);
+    public TimeSpan ReplicaRefreshInterval
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// Age after which a Cluster replica read starts a background topology refresh, so a failover
     /// that promotes a replica is noticed even when no redirect occurs. Tests shorten it.
     /// </summary>
-    internal TimeSpan ReplicaRouteRevalidationInterval { get; init; } = TimeSpan.FromSeconds(30);
+    internal TimeSpan ReplicaRouteRevalidationInterval
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Enables Redis Cluster routing. MOVED and ASK redirects are followed automatically and
@@ -311,116 +399,208 @@ public sealed record RespireOptions
     }
 
     /// <summary>ACL username. Defaults to Redis's "default" user when only a password is set.</summary>
-    public string? Username { get; init; }
+    public string? Username
+    {
+        get; init;
+    }
 
     /// <summary>Password sent by AUTH or HELLO during connection setup.</summary>
-    public string? Password { get; init; }
+    public string? Password
+    {
+        get; init;
+    }
 
     /// <summary>Optional caller-owned credentials for data connections; overrides static username/password.</summary>
-    public IRespireCredentialProvider? CredentialProvider { get; init; }
+    public IRespireCredentialProvider? CredentialProvider
+    {
+        get; init;
+    }
 
     /// <summary>Optional independent Sentinel credentials; null uses Sentinel static credentials or the data provider.</summary>
-    public IRespireCredentialProvider? SentinelCredentialProvider { get; init; }
+    public IRespireCredentialProvider? SentinelCredentialProvider
+    {
+        get; init;
+    }
 
     /// <summary>Time before credential expiry at which renewal starts. Defaults to five minutes.</summary>
-    public TimeSpan CredentialRefreshBeforeExpiry { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan CredentialRefreshBeforeExpiry
+    {
+        get; init;
+    } = TimeSpan.FromMinutes(5);
 
     /// <summary>Delay before retrying failed acquisition or unchanged credentials. Defaults to five seconds.</summary>
-    public TimeSpan CredentialRefreshRetryDelay { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan CredentialRefreshRetryDelay
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(5);
 
-    internal TimeProvider CredentialTimeProvider { get; init; } = TimeProvider.System;
+    internal TimeProvider CredentialTimeProvider
+    {
+        get; init;
+    } = TimeProvider.System;
 
     /// <summary>Optional ACL username for Sentinel endpoints; falls back to <see cref="Username"/>.</summary>
-    public string? SentinelUsername { get; init; }
+    public string? SentinelUsername
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Optional password for Sentinel endpoints. Null falls back to <see cref="Password"/>;
     /// an empty string explicitly disables Sentinel authentication.
     /// </summary>
-    public string? SentinelPassword { get; init; }
+    public string? SentinelPassword
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Whether Sentinel discovery uses TLS. Null inherits <see cref="UseTls"/>; false allows a
     /// plaintext Sentinel to discover a TLS primary.
     /// </summary>
-    public bool? SentinelUseTls { get; init; }
+    public bool? SentinelUseTls
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Optional TLS settings for Sentinel endpoints. Null inherits <see cref="TlsOptions"/>.
     /// </summary>
-    public SslClientAuthenticationOptions? SentinelTlsOptions { get; init; }
+    public SslClientAuthenticationOptions? SentinelTlsOptions
+    {
+        get; init;
+    }
 
     /// <summary>When set, CLIENT SETNAME runs during the handshake — invaluable in CLIENT LIST.</summary>
-    public string? ClientName { get; init; }
+    public string? ClientName
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Library name advertised with CLIENT SETINFO, alongside this package's version. Defaults to Respire.
     /// Wrappers can use a name such as Respire(se-compat). Set null to disable both metadata commands.
     /// Server errors from this optional setup are ignored. Names must be nonempty and contain only ASCII characters from ! through ~.
     /// </summary>
-    public string? LibraryName { get; init; } = "Respire";
+    public string? LibraryName
+    {
+        get; init;
+    } = "Respire";
 
     /// <summary>
     /// Logical database SELECTed during every connection handshake. Non-zero Cluster databases
     /// require Valkey 9+ with cluster-databases configured and INFO/SELECT permissions.
     /// </summary>
-    public int Database { get; init; }
+    public int Database
+    {
+        get; init;
+    }
 
     /// <summary>Allows high-risk administrative commands such as FLUSHDB, FLUSHALL, and CONFIG SET.</summary>
-    public bool AllowAdmin { get; init; }
+    public bool AllowAdmin
+    {
+        get; init;
+    }
 
     /// <summary>Protocol negotiation policy. Auto prefers RESP3 and falls back to RESP2 only for unsupported HELLO.</summary>
     /// <remarks>Explicit Resp2 skips HELLO; explicit Resp3 requires RESP3. Authentication, transport, timeout,
     /// and malformed-reply failures never cause fallback. Client-side caching always requires RESP3.</remarks>
-    public RespireProtocol Protocol { get; init; } = RespireProtocol.Auto;
+    public RespireProtocol Protocol
+    {
+        get; init;
+    } = RespireProtocol.Auto;
 
     /// <summary>Opt-in RESP3 maintenance notifications. Disabled by default; Auto tolerates an unsupported server.</summary>
-    public RespireMaintenanceNotificationMode MaintenanceNotifications { get; init; }
+    public RespireMaintenanceNotificationMode MaintenanceNotifications
+    {
+        get; init;
+    }
 
     /// <summary>Minimum command/receive timeout during maintenance. Never shortens an existing timeout.</summary>
-    public TimeSpan MaintenanceRelaxedTimeout { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan MaintenanceRelaxedTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(30);
 
     /// <summary>Maximum maintenance window when its completion notification is lost.</summary>
-    public TimeSpan MaintenanceWindowTimeout { get; init; } = TimeSpan.FromSeconds(60);
+    public TimeSpan MaintenanceWindowTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(60);
 
     // Shared by all data transports of one failover candidate, including replacements.
     // RespireFailoverGroup replaces this value with its own tracker when it snapshots each member.
-    internal FailoverMaintenanceWindows? FailoverMaintenance { get; init; }
+    internal FailoverMaintenanceWindows? FailoverMaintenance
+    {
+        get; init;
+    }
 
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
-    public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan ConnectTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(10);
 
     /// <summary>Maximum age before a multiplexed connection is replaced or an idle dedicated connection is closed. Null disables recycling.</summary>
     /// <remarks>Replacement connects first and drains accepted work without replay. Busy dedicated leases finish before recycling.</remarks>
-    public TimeSpan? ConnectionMaxLifetime { get; init; }
+    public TimeSpan? ConnectionMaxLifetime
+    {
+        get; init;
+    }
 
     /// <summary>Random additional lifetime, uniformly selected between zero and this value for each new connection. Defaults to zero.</summary>
-    public TimeSpan ConnectionMaxLifetimeJitter { get; init; }
+    public TimeSpan ConnectionMaxLifetimeJitter
+    {
+        get; init;
+    }
 
-    internal TimeProvider ConnectionLifetimeTimeProvider { get; init; } = TimeProvider.System;
+    internal TimeProvider ConnectionLifetimeTimeProvider
+    {
+        get; init;
+    } = TimeProvider.System;
 
     /// <summary>Optional command, dedicated, and pub/sub recovery backoff and Cluster/Sentinel discovery policy. Null preserves existing scheduling.</summary>
     /// <remarks>Dedicated rentals retry failed acquisition with independent budgets. Sentinel fallback shares one budget per resolution.
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
-    public RespireReconnectPolicy? ReconnectPolicy { get; init; }
+    public RespireReconnectPolicy? ReconnectPolicy
+    {
+        get; init;
+    }
 
     /// <summary>Dedicated connection limits and idle retention for blocking commands, transactions and streaming leases.</summary>
-    public RespireDedicatedPoolOptions DedicatedPool { get; init; } = new();
+    public RespireDedicatedPoolOptions DedicatedPool
+    {
+        get; init;
+    } = new();
 
     /// <summary>Admission policy during standalone, Sentinel primary, replica-read and Cluster recovery. Defaults to bounded FIFO waiting.</summary>
     /// <remarks>Cluster queues preserve slot ordering and reselect the current owner and configured read policy.
     /// Replica reads reapply their original policy to the current topology. Does not replay accepted commands
     /// or watched transactions. Dedicated connections retain their existing recovery behavior.</remarks>
-    public RespireBacklogPolicy BacklogPolicy { get; init; } = RespireBacklogPolicy.Queue;
+    public RespireBacklogPolicy BacklogPolicy
+    {
+        get; init;
+    } = RespireBacklogPolicy.Queue;
 
     /// <summary>Maximum waiting operations per standalone endpoint, Sentinel primary, replica router or Cluster slot during reconnect.
     /// A batch slot group or unwatched transaction counts as one.
     /// Defaults to 1024; overflow fails with <see cref="RespireConnectionException"/>.</summary>
-    public int BacklogCapacity { get; init; } = 1024;
-    internal string? ReconnectTelemetryScope { get; init; }
+    public int BacklogCapacity
+    {
+        get; init;
+    } = 1024;
+
+    internal string? ReconnectTelemetryScope
+    {
+        get; init;
+    }
+
     // Invoked synchronously under SubscriptionHub's recovery state lock. The callback must
     // be non-blocking and non-reentrant; capture state only, without acquiring other locks.
-    internal Action? ReconnectEpisodeStarted { get; init; }
+    internal Action? ReconnectEpisodeStarted
+    {
+        get; init;
+    }
 
     /// <summary>Interval for background Redis Cluster topology refresh. Defaults to 60 seconds. Null,
     /// <see cref="TimeSpan.Zero"/>, or <see cref="Timeout.InfiniteTimeSpan"/> disables the periodic timer;
@@ -436,29 +616,53 @@ public sealed record RespireOptions
     /// is bounded to 60 seconds regardless of this interval, and a failed pass keeps the last published
     /// slot map.</para>
     /// </remarks>
-    public TimeSpan? ClusterTopologyRefreshInterval { get; init; } = TimeSpan.FromSeconds(60);
+    public TimeSpan? ClusterTopologyRefreshInterval
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(60);
 
     // Test seam: drives the Cluster topology refresh schedule, debounce and discovery deadlines.
-    internal TimeProvider ClusterTopologyRefreshClock { get; init; } = TimeProvider.System;
+    internal TimeProvider ClusterTopologyRefreshClock
+    {
+        get; init;
+    } = TimeProvider.System;
 
     /// <summary>Clock used for cluster discovery retry delays.</summary>
-    internal TimeProvider ClusterDiscoveryClock { get; init; } = TimeProvider.System;
+    internal TimeProvider ClusterDiscoveryClock
+    {
+        get; init;
+    } = TimeProvider.System;
 
     // Test seam: advances READONLY recovery phases independently of socket setup.
-    internal TimeProvider ClusterRecoveryClock { get; init; } = TimeProvider.System;
+    internal TimeProvider ClusterRecoveryClock
+    {
+        get; init;
+    } = TimeProvider.System;
 
     // Test seam: ceiling on replica missing-function retries, before any shorter CommandTimeout.
-    internal TimeSpan FunctionPropagationLimit { get; init; } = FunctionCommands.DefaultFunctionPropagationLimit;
+    internal TimeSpan FunctionPropagationLimit
+    {
+        get; init;
+    } = FunctionCommands.DefaultFunctionPropagationLimit;
 
     /// <summary>Optional hook around every physical connection attempt, including reconnects and topology connections.</summary>
     /// <remarks>Null adds no hook context, delegate or async-wrapper allocations. Callbacks may run concurrently.</remarks>
-    public RespireConnectionHook? ConnectionHook { get; init; }
+    public RespireConnectionHook? ConnectionHook
+    {
+        get; init;
+    }
 
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>
-    public bool UseTls { get; init; }
+    public bool UseTls
+    {
+        get; init;
+    }
 
     /// <summary>Optional TLS authentication and certificate-validation settings.</summary>
-    public SslClientAuthenticationOptions? TlsOptions { get; init; }
+    public SslClientAuthenticationOptions? TlsOptions
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Aborts a connection when commands are awaiting replies and no bytes arrive within this
@@ -487,7 +691,10 @@ public sealed record RespireOptions
     /// which still waits for the kernel to release it, even after cancellation or a deadline.
     /// With both bounds disabled, memory can remain owned until the peer resumes or the connection closes.
     /// </remarks>
-    public TimeSpan? GatheredWriteStallTimeout { get; init; }
+    public TimeSpan? GatheredWriteStallTimeout
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Client-side cap on how long a command waits for its response. Defaults to ten seconds;
@@ -496,7 +703,10 @@ public sealed record RespireOptions
     /// Replica function propagation retries have a five-second budget, even when this cap is disabled.
     /// That retry budget does not cancel a function invocation already accepted by the server.
     /// </summary>
-    public TimeSpan? CommandTimeout { get; init; } = DefaultCommandTimeout;
+    public TimeSpan? CommandTimeout
+    {
+        get; init;
+    } = DefaultCommandTimeout;
 
     /// <summary>
     /// Where command await continuations run when their replies arrive. Defaults to
@@ -509,7 +719,10 @@ public sealed record RespireOptions
     /// still complete in wire order, but pool-dispatched continuations may run concurrently and in
     /// any order. Already-completed awaits can still run synchronously.
     /// </remarks>
-    public RespireContinuationDispatch ContinuationDispatch { get; init; }
+    public RespireContinuationDispatch ContinuationDispatch
+    {
+        get; init;
+    }
 
     /// <summary>
     /// How long replies may wait behind a slow or blocked inline continuation before delivery
@@ -518,17 +731,26 @@ public sealed record RespireOptions
     /// Timer resolution can lengthen short thresholds, to about 15 milliseconds on Windows.
     /// </summary>
     /// <remarks>This is a rescue threshold, not a latency guarantee under thread-pool starvation.</remarks>
-    public TimeSpan StalledDeliveryThreshold { get; init; } = TimeSpan.FromMilliseconds(20);
+    public TimeSpan StalledDeliveryThreshold
+    {
+        get; init;
+    } = TimeSpan.FromMilliseconds(20);
 
     /// <summary>Enables the shared process-wide thread-pool scheduling probe. Defaults to true.</summary>
     /// <remarks>One background thread samples once per second while enabled clients exist. Disabling this
     /// client removes its warning subscription; other clients may still provide process-wide timeout samples.</remarks>
-    public bool ThreadPoolMonitoring { get; init; } = true;
+    public bool ThreadPoolMonitoring
+    {
+        get; init;
+    } = true;
 
     /// <summary>Scheduling delay that triggers a diagnostic warning. Defaults to 500 milliseconds.</summary>
     /// <remarks>Must be positive. Warnings are limited to one per client per 30 seconds.
     /// This is a diagnostic threshold; no thread-pool settings are changed.</remarks>
-    public TimeSpan ThreadPoolWarningThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
+    public TimeSpan ThreadPoolWarningThreshold
+    {
+        get; init;
+    } = TimeSpan.FromMilliseconds(500);
 
     /// <summary>
     /// Multiplexed connections to open. Defaults to one. A single connection maximizes command
@@ -536,25 +758,40 @@ public sealed record RespireOptions
     /// one connection doubled small-command PING throughput versus eight. Raise this only if
     /// profiling shows a single socket saturated.
     /// </summary>
-    public int Connections { get; init; } = 1;
+    public int Connections
+    {
+        get; init;
+    } = 1;
 
     /// <summary>Serializer behind non-primitive typed values. System.Text.Json by default.
     /// Wrap with RespireValueCodecSerializer to opt into framed value compression.</summary>
-    public IRespireSerializer Serializer { get; init; } = RespireSerializer.Default;
+    public IRespireSerializer Serializer
+    {
+        get; init;
+    } = RespireSerializer.Default;
 
     /// <summary>
     /// Enables RESP3 server-assisted client-side caching. Assign <c>new()</c> for bounded defaults.
     /// Null (default) disables caching with no tracking commands, invalidation processing, or storage overhead.
     /// </summary>
-    public RespireClientSideCacheOptions? ClientSideCache { get; init; }
+    public RespireClientSideCacheOptions? ClientSideCache
+    {
+        get; init;
+    }
 
     /// <summary>Optional admission and completion hook for explicit pipelines and transaction commits.</summary>
     /// <remarks>Shared by client views. Does not intercept individual commands. Null adds no hook state or async wrapper.</remarks>
-    public RespirePipelineHook? PipelineHook { get; init; }
+    public RespirePipelineHook? PipelineHook
+    {
+        get; init;
+    }
 
     /// <summary>Optional admission/completion hook for ordinary command dispatch. Null disables it.</summary>
     /// <remarks>See <see cref="RespireCommandHook"/> for supported command and resource boundaries; this is not a client-wide blocking policy.</remarks>
-    public RespireCommandHook? CommandHook { get; init; }
+    public RespireCommandHook? CommandHook
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Opt-in retries for buffered immediate commands on standalone, Sentinel and Cluster clients,
@@ -570,7 +807,10 @@ public sealed record RespireOptions
     /// A lost EXEC reply can mean execution;
     /// permitting accumulating writes accepts repeated transaction effects.
     /// Retrying cannot recover a lost reply or guarantee exactly-once execution.</remarks>
-    public RespireRetryPolicy? RetryPolicy { get; init; }
+    public RespireRetryPolicy? RetryPolicy
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Producer identity attached to automatic idempotent stream appends. Null (the default)
@@ -586,13 +826,22 @@ public sealed record RespireOptions
     /// appends. Servers that reject IDMP receive ordinary XADD, which keeps its conservative
     /// <see cref="RespireCommandRetryCategory.WriteAccumulating"/> category.
     /// </remarks>
-    public string? StreamProducerId { get; init; }
+    public string? StreamProducerId
+    {
+        get; init;
+    }
 
     /// <summary>Optional factory for Respire diagnostic logs.</summary>
-    public ILoggerFactory? LoggerFactory { get; init; }
+    public ILoggerFactory? LoggerFactory
+    {
+        get; init;
+    }
 
     // Retained through record copies so callers can attach a logger after parsing.
-    internal string[] IgnoredConnectionStringOptions { get; init; } = [];
+    internal string[] IgnoredConnectionStringOptions
+    {
+        get; init;
+    } = [];
 
     /// <summary>
     /// Enables TCP keepalive on every connection and sets how long a connection may sit idle
@@ -602,7 +851,10 @@ public sealed record RespireOptions
     /// The upper bound is OS-dependent: Linux permits at most 32,767 seconds. Values outside
     /// the OS range can fail connection creation with a SocketException.
     /// </summary>
-    public TimeSpan? TcpKeepAliveTime { get; init; }
+    public TimeSpan? TcpKeepAliveTime
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Interval between keepalive probes once <see cref="TcpKeepAliveTime"/> has elapsed
@@ -611,7 +863,10 @@ public sealed record RespireOptions
     /// The upper bound is OS-dependent: Linux permits at most 32,767 seconds. Values outside
     /// the OS range can fail connection creation with a SocketException.
     /// </summary>
-    public TimeSpan? TcpKeepAliveInterval { get; init; }
+    public TimeSpan? TcpKeepAliveInterval
+    {
+        get; init;
+    }
 
     /// <summary>
     /// Unanswered keepalive probes before the kernel declares the connection dead. Null keeps
@@ -619,24 +874,42 @@ public sealed record RespireOptions
     /// The upper bound is OS-dependent: Linux permits at most 127 probes. Values outside
     /// the OS range can fail connection creation with a SocketException.
     /// </summary>
-    public int? TcpKeepAliveRetryCount { get; init; }
+    public int? TcpKeepAliveRetryCount
+    {
+        get; init;
+    }
 
     /// <summary>Buffered messages per subscription before <see cref="SubscriptionOverflow"/> applies.</summary>
-    public int SubscriptionBufferSize { get; init; } = 1024;
+    public int SubscriptionBufferSize
+    {
+        get; init;
+    } = 1024;
 
     /// <summary>Policy used when a subscription consumer falls behind.</summary>
-    public RespireSubscriptionOverflow SubscriptionOverflow { get; init; } = RespireSubscriptionOverflow.DropOldest;
+    public RespireSubscriptionOverflow SubscriptionOverflow
+    {
+        get; init;
+    } = RespireSubscriptionOverflow.DropOldest;
 
     // Advanced wire tuning — the defaults are right for almost everyone.
 
     /// <summary>Initial size of the pooled parse buffer each connection reads into.</summary>
-    public int ReceiveBufferSize { get; init; } = 64 * 1024;
+    public int ReceiveBufferSize
+    {
+        get; init;
+    } = 64 * 1024;
 
     /// <summary>Initial size of each connection's two coalescing write buffers.</summary>
-    public int WriteBufferSize { get; init; } = 64 * 1024;
+    public int WriteBufferSize
+    {
+        get; init;
+    } = 64 * 1024;
 
     /// <summary>Maximum commands awaiting responses per connection.</summary>
-    public int MaxInflightCommands { get; init; } = 16 * 1024;
+    public int MaxInflightCommands
+    {
+        get; init;
+    } = 16 * 1024;
 
     internal RespireEndpoint PrimaryEndpoint
         => Endpoints.Count > 0 ? Endpoints[0] : new RespireEndpoint("localhost");
@@ -646,22 +919,34 @@ public sealed record RespireOptions
     /// have independent histories; Sentinel discovery and primary validation are not gated. Each batch command acquires
     /// admission independently; a transaction acquires one permit for its MULTI/EXEC sequence.
     /// WATCH setup and durability acknowledgements acquire independent admission.</remarks>
-    public RespireCircuitBreakerOptions? CircuitBreaker { get; init; }
+    public RespireCircuitBreakerOptions? CircuitBreaker
+    {
+        get; init;
+    }
 
     internal RespireOptions ValidateAndSnapshot()
     {
         if (NodeAddressMap is not null && NodeAddressResolver is not null)
+        {
             throw new RespireConfigurationException("Specify either NodeAddressMap or NodeAddressResolver, not both.");
+        }
+
         var addressMap = NodeAddressMapping.Snapshot(NodeAddressMap);
+
         if (Endpoints is null || Endpoints.Count == 0)
         {
             throw new RespireConfigurationException("At least one Redis endpoint is required.");
         }
+
         if (ReplicaEndpoints is null)
+        {
             throw new RespireConfigurationException("RespireOptions.ReplicaEndpoints cannot be null.");
+        }
 
         if (UseCluster && !string.IsNullOrWhiteSpace(SentinelPrimaryName))
+        {
             throw new RespireConfigurationException("Cluster and Sentinel routing cannot be enabled together.");
+        }
 
         Require(Enum.IsDefined(ReadFrom), nameof(ReadFrom), "must be a defined RespireReadFrom policy");
         Require(ReplicaLatencyTolerance is null || ReplicaLatencyTolerance >= TimeSpan.Zero,
@@ -687,11 +972,18 @@ public sealed record RespireOptions
             ReplicaRouteRevalidationInterval >= TimeSpan.Zero && ReplicaRouteRevalidationInterval <= TimeSpan.FromHours(1),
             nameof(ReplicaRouteRevalidationInterval),
             "must be between zero and one hour");
+
         if (UseCluster && ReplicaEndpoints.Count != 0)
+        {
             throw new RespireConfigurationException("RespireOptions.ReplicaEndpoints is for standalone deployments; Redis Cluster discovers its own topology.");
+        }
+
         if (ReadFrom != RespireReadFrom.Primary && !UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName)
             && ReplicaEndpoints.Count == 0)
+        {
             throw new RespireConfigurationException("RespireOptions.ReadFrom requires Sentinel discovery or at least one ReplicaEndpoints entry.");
+        }
+
         if (Endpoints.Count > 1 && !UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName))
         {
             throw new RespireConfigurationException(
@@ -726,7 +1018,12 @@ public sealed record RespireOptions
                     ? ConnectionMaxLifetimeJitter <= TimeSpan.MaxValue - lifetime
                     : ConnectionMaxLifetimeJitter == TimeSpan.Zero),
             nameof(ConnectionMaxLifetimeJitter), "must be non-negative, fit within the total lifetime, and be zero when ConnectionMaxLifetime is null");
-        if (DedicatedPool is null) throw new RespireConfigurationException("RespireOptions.DedicatedPool cannot be null.");
+
+        if (DedicatedPool is null)
+        {
+            throw new RespireConfigurationException("RespireOptions.DedicatedPool cannot be null.");
+        }
+
         DedicatedPool.Validate();
         Require(Enum.IsDefined(BacklogPolicy), nameof(BacklogPolicy), "must be a defined backlog policy");
         Require(BacklogCapacity > 0, nameof(BacklogCapacity), "must be positive");
@@ -767,7 +1064,12 @@ public sealed record RespireOptions
             // OPTIN/OPTOUT Cluster ASK redirects can send ASKING, CACHING, and the read atomically.
             var hasCachingPrelude = cache.TrackingMode != RespireClientTrackingMode.Broadcast;
             var requiredInflightCommands = hasCachingPrelude ? 2 : 1;
-            if (UseCluster) requiredInflightCommands = hasCachingPrelude ? 3 : 2;
+
+            if (UseCluster)
+            {
+                requiredInflightCommands = hasCachingPrelude ? 3 : 2;
+            }
+
             var requirement = requiredInflightCommands switch
             {
                 3 => "must be at least three for OPTIN/OPTOUT caching with Cluster ASK redirects",
@@ -795,6 +1097,7 @@ public sealed record RespireOptions
                 ValidateUnixEndpoint(endpoint, nameof(Endpoints));
                 continue;
             }
+
             if (endpoint.Port is < 1 or > 65535)
             {
                 throw new RespireConfigurationException(
@@ -809,11 +1112,18 @@ public sealed record RespireOptions
                 ValidateUnixEndpoint(endpoint, nameof(ReplicaEndpoints));
                 continue;
             }
+
             if (endpoint.Port is < 1 or > 65535)
+            {
                 throw new RespireConfigurationException($"RespireOptions.ReplicaEndpoints contains invalid TCP port {endpoint.Port}.");
+            }
         }
 
-        if (PubSubPrefix.Text is { } pubSubPrefixText) Internal.Utf8RouteName.Validate(pubSubPrefixText);
+        if (PubSubPrefix.Text is { } pubSubPrefixText)
+        {
+            Internal.Utf8RouteName.Validate(pubSubPrefixText);
+        }
+
         return this with
         {
             Endpoints = new List<RespireEndpoint>(Endpoints),
@@ -829,8 +1139,11 @@ public sealed record RespireOptions
     private void ValidateUnixEndpoint(RespireEndpoint endpoint, string optionName)
     {
         UnixSocketConfiguration.Validate(endpoint.Host, UseTls, MaintenanceNotifications, $"RespireOptions.{optionName}");
+
         if (UseCluster || !string.IsNullOrWhiteSpace(SentinelPrimaryName))
+        {
             throw new RespireConfigurationException("Unix socket endpoints cannot be mixed with Cluster or Sentinel discovery, which advertises TCP endpoints.");
+        }
     }
 
     private static void Require(bool condition, string optionName, string requirement)
@@ -953,12 +1266,16 @@ public sealed record RespireOptions
     private static RespireOptions ParseCore(string connectionString)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
         if (connectionString.TrimStart().StartsWith('!'))
+        {
             return ParseStackExchangeConnectionString(connectionString);
+        }
 
         var uriMarker = connectionString.IndexOf("://", StringComparison.Ordinal);
         var optionMarker = connectionString.IndexOf(',');
         var equalsMarker = connectionString.IndexOf('=');
+
         if (optionMarker < 0 || (equalsMarker >= 0 && equalsMarker < optionMarker))
         {
             optionMarker = equalsMarker;
@@ -978,6 +1295,7 @@ public sealed record RespireOptions
         var uri = new Uri(connectionString, UriKind.Absolute);
         var useTls = uri.Scheme.Equals("rediss", StringComparison.OrdinalIgnoreCase);
         var useUnixSocket = RespireEndpoint.IsUnixScheme(uri.Scheme);
+
         if (!useUnixSocket && !useTls && !uri.Scheme.Equals("redis", StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException(
@@ -986,9 +1304,11 @@ public sealed record RespireOptions
 
         string? username = null;
         string? password = null;
+
         if (uri.UserInfo.Length > 0)
         {
             var colon = uri.UserInfo.IndexOf(':');
+
             if (colon < 0)
             {
                 password = Uri.UnescapeDataString(uri.UserInfo);
@@ -1002,6 +1322,7 @@ public sealed record RespireOptions
 
         var database = 0;
         var path = uri.AbsolutePath.Trim('/');
+
         if (!useUnixSocket && path.Length > 0)
         {
             database = ParseNonNegativeIntegerOption("database", path);
@@ -1024,6 +1345,7 @@ public sealed record RespireOptions
             var eq = pair.IndexOf('=');
             var name = eq < 0 ? pair : pair[..eq];
             var value = eq < 0 ? string.Empty : Uri.UnescapeDataString(pair[(eq + 1)..]);
+
             if (mode.TryApply(name, value))
             {
                 continue;
@@ -1108,13 +1430,40 @@ public sealed record RespireOptions
 
     private sealed class ConnectionStringMode
     {
-        public bool UseCluster { get; private set; }
-        public string? ServiceName { get; private set; }
-        public string? SentinelUsername { get; private set; }
-        public string? SentinelPassword { get; private set; }
-        public bool? SentinelUseTls { get; private set; }
-        public IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? NodeAddressMap { get; private set; }
-        public bool UseMappedHostForTls { get; private set; }
+        public bool UseCluster
+        {
+            get; private set;
+        }
+
+        public string? ServiceName
+        {
+            get; private set;
+        }
+
+        public string? SentinelUsername
+        {
+            get; private set;
+        }
+
+        public string? SentinelPassword
+        {
+            get; private set;
+        }
+
+        public bool? SentinelUseTls
+        {
+            get; private set;
+        }
+
+        public IReadOnlyDictionary<RespireEndpoint, RespireEndpoint>? NodeAddressMap
+        {
+            get; private set;
+        }
+
+        public bool UseMappedHostForTls
+        {
+            get; private set;
+        }
 
         public void Validate()
         {
@@ -1190,15 +1539,14 @@ public sealed record RespireOptions
         return result;
     }
 
-    private static RespireProtocol ParseProtocolOption(string name, string value)
-        => value.ToLowerInvariant() switch
-        {
-            "auto" => RespireProtocol.Auto,
-            "2" or "resp2" => RespireProtocol.Resp2,
-            "3" or "resp3" => RespireProtocol.Resp3,
-            _ => throw new ArgumentException(
-                $"Option '{name}' requires 'auto', '2', 'resp2', '3', or 'resp3'.", ConnectionStringParameterName),
-        };
+    private static RespireProtocol ParseProtocolOption(string name, string value) => value.ToLowerInvariant() switch
+    {
+        "auto" => RespireProtocol.Auto,
+        "2" or "resp2" => RespireProtocol.Resp2,
+        "3" or "resp3" => RespireProtocol.Resp3,
+        _ => throw new ArgumentException(
+            $"Option '{name}' requires 'auto', '2', 'resp2', '3', or 'resp3'.", ConnectionStringParameterName),
+    };
 
     private static readonly SslProtocols[] DefinedSslProtocols = Enum.GetValues<SslProtocols>();
 
@@ -1219,6 +1567,7 @@ public sealed record RespireOptions
     private static SslProtocols ParseSslProtocols(string value)
     {
         var protocols = SslProtocols.None;
+
         foreach (var name in value.Split('|', StringSplitOptions.TrimEntries))
         {
             if (!Enum.TryParse<SslProtocols>(name, ignoreCase: true, out var protocol) || !IsCompleteSslProtocolMask(protocol))
@@ -1261,9 +1610,11 @@ public sealed record RespireOptions
 
         var segments = connectionString.Split(
             ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
         foreach (var segment in segments)
         {
             var equals = segment.IndexOf('=');
+
             if (equals < 0)
             {
                 endpointTexts.Add(segment);
@@ -1272,6 +1623,7 @@ public sealed record RespireOptions
 
             var name = segment[..equals].Trim();
             var value = segment[(equals + 1)..].Trim();
+
             if (mode.TryApply(name, value))
             {
                 continue;
@@ -1305,13 +1657,21 @@ public sealed record RespireOptions
                     break;
                 case "abortconnect":
                     // Create is always lazy; ConnectAsync always waits for a connection.
-                    if (ParseBooleanOption(name, value)) ignored.Add(name);
-                    else ignored.Remove(name);
+                    if (ParseBooleanOption(name, value))
+                    {
+                        ignored.Add(name);
+                    }
+                    else
+                    {
+                        ignored.Remove(name);
+                    }
                     break;
                 case "keepalive":
                     var seconds = ParseIntegerOption(name, value);
                     if (seconds < -1)
+                    {
                         throw new RespireConfigurationException($"Option '{name}' requires -1, zero, or a positive number of seconds.");
+                    }
                     keepAlive = seconds <= 0 ? null : TimeSpan.FromSeconds(seconds);
                     break;
                 case "connectretry":
@@ -1324,12 +1684,16 @@ public sealed record RespireOptions
                 case "topologyrefreshseconds":
                     var refreshSeconds = ParseIntegerOption(name, value);
                     if (refreshSeconds < 0)
+                    {
                         throw new RespireConfigurationException($"Option '{name}' requires a non-negative number of seconds.");
+                    }
                     topologyRefresh = TimeSpan.FromSeconds(refreshSeconds);
                     break;
                 case "maintnotifications":
                     if (!Enum.TryParse(value, true, out maintenance) || !Enum.IsDefined(maintenance))
+                    {
                         throw new RespireConfigurationException($"Option '{name}' requires Disabled, Auto, or Enabled.");
+                    }
                     break;
                 case "maintrelaxedtimeout":
                     maintenanceTimeout = ParseMaintenanceSeconds(name, value);
@@ -1339,11 +1703,15 @@ public sealed record RespireOptions
                     break;
                 case "proxy":
                     if (!value.Equals("none", StringComparison.OrdinalIgnoreCase))
+                    {
                         throw new RespireConfigurationException($"Option '{name}' only supports None; proxy command routing is not supported.");
+                    }
                     break;
                 case "tunnel":
                     if (value.Length != 0)
+                    {
                         throw new RespireConfigurationException($"Option '{name}' is not supported; configure a direct Redis endpoint.");
+                    }
                     break;
                 case "defaultdatabase":
                 case "db":
@@ -1382,9 +1750,13 @@ public sealed record RespireOptions
                     break;
                 default:
                     if (name.StartsWith('$'))
+                    {
                         throw new RespireConfigurationException($"Option '{name}' remaps a Redis command, which Respire does not support.");
+                    }
                     if (name.Length == 0)
+                    {
                         throw new RespireConfigurationException("A connection string option key cannot be empty.");
+                    }
                     ignored.Add(name);
                     break;
             }
@@ -1413,7 +1785,9 @@ public sealed record RespireOptions
         var endpoints = endpointTexts.Select(endpoint => RespireEndpoint.Parse(endpoint, defaultPort)).ToList();
 
         if (maintenance == RespireMaintenanceNotificationMode.Enabled && protocol == RespireProtocol.Resp2)
+        {
             throw new RespireConfigurationException("Option 'maintNotifications=Enabled' requires RESP3; protocol=2 is incompatible.");
+        }
 
         return new RespireOptions
         {
@@ -1453,24 +1827,36 @@ public sealed record RespireOptions
     private static int ParsePositiveIntegerOption(string name, string value)
     {
         var result = ParseIntegerOption(name, value);
+
         if (result <= 0)
+        {
             throw new RespireConfigurationException($"Option '{name}' requires a positive 32-bit integer.");
+        }
+
         return result;
     }
 
     private static int ParseNonNegativeIntegerOption(string name, string value)
     {
         var result = ParseIntegerOption(name, value);
+
         if (result < 0)
+        {
             throw new RespireConfigurationException($"Option '{name}' requires a non-negative 32-bit integer.");
+        }
+
         return result;
     }
 
     private static TimeSpan ParseMaintenanceSeconds(string name, string value)
     {
         var seconds = ParsePositiveIntegerOption(name, value);
+
         if (seconds > 86400)
+        {
             throw new RespireConfigurationException($"Option '{name}' requires at most 86400 seconds (one day).");
+        }
+
         return TimeSpan.FromSeconds(seconds);
     }
 }

@@ -22,19 +22,30 @@ public class JsonDepthTests
     internal static DeepJsonRecord CreateRecord()
     {
         DeepJsonNode? node = null;
-        for (var i = 0; i < 100; i++) node = new(i, node);
+
+        for (var i = 0; i < 100; i++)
+        {
+            node = new(i, node);
+        }
+
         return new("deep", [1, 0], node);
     }
 
     internal static int Depth(DeepJsonNode? node)
     {
         var count = 0;
-        for (; node is not null; node = node.Next) count++;
+
+        for (; node is not null; node = node.Next)
+        {
+            count++;
+        }
+
         return count;
     }
 }
 
 public sealed record DeepJsonRecord(string Id, float[]? Vector, DeepJsonNode? Data);
+
 public sealed record DeepJsonNode(int Value, DeepJsonNode? Next);
 
 [JsonSourceGenerationOptions(MaxDepth = 128)]
@@ -44,5 +55,6 @@ public partial class DeepJsonContext : JsonSerializerContext;
 internal sealed class DeepJsonMapper() : RespireVectorDataJsonMapper<DeepJsonRecord>(DeepJsonContext.Default.DeepJsonRecord)
 {
     public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => [new(nameof(DeepJsonRecord.Vector), "Vector", 2)];
+
     public override string GetKey(DeepJsonRecord record) => record.Id;
 }

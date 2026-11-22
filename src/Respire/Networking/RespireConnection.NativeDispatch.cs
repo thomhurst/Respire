@@ -17,6 +17,7 @@ internal sealed partial class RespireConnection
         retirement = null;
         bool enqueued;
         bool startedBatch;
+
         try
         {
             enqueued = TryEnqueue(in command, source, deadline, out startedBatch);
@@ -43,11 +44,13 @@ internal sealed partial class RespireConnection
             source.ReleaseRef();
             return true;
         }
+
         if (!enqueued)
         {
             ReclaimUnpublished(source);
             return false;
         }
+
         source.RegisterCancellation(command.GetResponseCancellationToken(cancellationToken), this);
         ScheduleFlush(startedBatch);
         return true;
@@ -60,12 +63,21 @@ internal sealed partial class RespireConnection
         var source = _sourcePool.Rent(throwOnError: true, operation, observeErrors: true);
         // Capture the token before admission: completion may race publication.
         var response = source.Task;
-        if (TryAdmitNative(in command, source, cancellationToken, false, out var destination, out var deadline, out var retirement)) return response;
+
+        if (TryAdmitNative(in command, source, cancellationToken, false, out var destination, out var deadline, out var retirement))
+        {
+            return response;
+        }
+
         return DispatchResponseSource<RespValue>.Run(
             (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement, FailedEndpoint: new RespireEndpoint(Host, Port)),
             static (state, observation) =>
             {
-                if (state.Retirement is not null) observation.Handled(state.Retirement, state.FailedEndpoint);
+                if (state.Retirement is not null)
+                {
+                    observation.Handled(state.Retirement, state.FailedEndpoint);
+                }
+
                 return state.Connection.SendCheckedAsync(state.Command, state.Token, state.Operation,
                     commandDeadline: state.Deadline, observation: observation);
             });
@@ -80,12 +92,21 @@ internal sealed partial class RespireConnection
             duration: new RespireTelemetry.DurationObservation(this, started),
             runContinuationsAsynchronously: _runContinuationsAsynchronously);
         var response = source.Task;
-        if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement)) return response;
+
+        if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement))
+        {
+            return response;
+        }
+
         return DispatchResponseSource<string?>.Run(
             (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement, Started: started, FailedEndpoint: new RespireEndpoint(Host, Port)),
             static (state, observation) =>
             {
-                if (state.Retirement is not null) observation.Handled(state.Retirement, state.FailedEndpoint);
+                if (state.Retirement is not null)
+                {
+                    observation.Handled(state.Retirement, state.FailedEndpoint);
+                }
+
                 return state.Connection.SendStringAsync(state.Command, state.Token, state.Operation,
                     commandDeadline: state.Deadline, observation: observation, durationStarted: state.Started);
             });
@@ -100,12 +121,21 @@ internal sealed partial class RespireConnection
             duration: new RespireTelemetry.DurationObservation(this, started),
             runContinuationsAsynchronously: _runContinuationsAsynchronously);
         var response = source.Task;
-        if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement)) return response;
+
+        if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement))
+        {
+            return response;
+        }
+
         return DispatchResponseSource<byte[]?>.Run(
             (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline, Retirement: retirement, Started: started, FailedEndpoint: new RespireEndpoint(Host, Port)),
             static (state, observation) =>
             {
-                if (state.Retirement is not null) observation.Handled(state.Retirement, state.FailedEndpoint);
+                if (state.Retirement is not null)
+                {
+                    observation.Handled(state.Retirement, state.FailedEndpoint);
+                }
+
                 return state.Connection.SendBytesAsync(state.Command, state.Token, state.Operation,
                     commandDeadline: state.Deadline, observation: observation, durationStarted: state.Started);
             });
@@ -121,14 +151,23 @@ internal sealed partial class RespireConnection
             duration: new RespireTelemetry.DurationObservation(this, started),
             runContinuationsAsynchronously: _runContinuationsAsynchronously);
         var response = source.Task;
-        if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement)) return response;
+
+        if (TryAdmitNative(in command, source, cancellationToken, started.Timestamp != 0, out var destination, out var deadline, out var retirement))
+        {
+            return response;
+        }
+
         return DispatchResponseSource<TResult>.Run(
             (Connection: destination, Command: command, Token: cancellationToken, Operation: operation, Deadline: deadline,
                 Retirement: retirement, Started: started, State: state, Converter: converter, Transfer: transferOwnership,
                 FailedEndpoint: new RespireEndpoint(Host, Port)),
             static (state, observation) =>
             {
-                if (state.Retirement is not null) observation.Handled(state.Retirement, state.FailedEndpoint);
+                if (state.Retirement is not null)
+                {
+                    observation.Handled(state.Retirement, state.FailedEndpoint);
+                }
+
                 return state.Connection.SendConvertedAsync(state.Command, state.State, state.Converter, state.Transfer,
                     state.Token, state.Operation, commandDeadline: state.Deadline, observation: observation, durationStarted: state.Started);
             });

@@ -28,30 +28,65 @@ public class TransactionReadViewTests
         proxy.RejectCacheView = rejectCacheView;
         var callbacks = 0;
         Exception? observed = null;
+
         try
         {
             if (generic)
-                await client.RunTransactionWithReadsAsync(["watched"], (_, _, _) => { callbacks++; return ValueTask.FromResult(1); });
+            {
+                await client.RunTransactionWithReadsAsync(["watched"], (_, _, _) =>
+                {
+                    callbacks++;
+                    return ValueTask.FromResult(1);
+                });
+            }
             else
-                await client.RunTransactionWithReadsAsync(["watched"], (_, _, _) => { callbacks++; return ValueTask.CompletedTask; });
+            {
+                await client.RunTransactionWithReadsAsync(["watched"], (_, _, _) =>
+                {
+                    callbacks++;
+                    return ValueTask.CompletedTask;
+                });
+            }
         }
         catch (Exception error) { observed = error; }
 
         await Assert.That(observed).IsSameReferenceAs(proxy.Failure);
         await Assert.That(proxy.Attempts).IsEqualTo(1);
         await Assert.That(callbacks).IsEqualTo(0);
-        await Assert.That(() => { _ = proxy.Transaction!.Set("watched", "never"); }).Throws<InvalidOperationException>();
+        await Assert.That(() =>
+        {
+            _ = proxy.Transaction!.Set("watched", "never");
+        }).Throws<InvalidOperationException>();
         await root.SetAsync("still-owned", "value");
         await Assert.That(await root.GetStringAsync("still-owned")).IsEqualTo("value");
     }
 
     public class UnsupportedViewClient : DispatchProxy
     {
-        public IRespireClient Root { get; set; } = null!;
-        public bool RejectCacheView { get; set; }
-        public int Attempts { get; private set; }
-        public RespireWatchedTransaction? Transaction { get; private set; }
-        public NotSupportedException Failure { get; } = new("custom view unavailable");
+        public IRespireClient Root
+        {
+            get; set;
+        } = null!;
+
+        public bool RejectCacheView
+        {
+            get; set;
+        }
+
+        public int Attempts
+        {
+            get; private set;
+        }
+
+        public RespireWatchedTransaction? Transaction
+        {
+            get; private set;
+        }
+
+        public NotSupportedException Failure
+        {
+            get;
+        } = new("custom view unavailable");
 
         protected override object? Invoke(MethodInfo? method, object?[]? args) => method!.Name switch
         {
@@ -87,7 +122,9 @@ public class TransactionReadViewTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-            ReadFrom = RespireReadFrom.Replica, Database = 3, Serializer = serializer,
+            ReadFrom = RespireReadFrom.Replica,
+            Database = 3,
+            Serializer = serializer,
             ClientSideCache = new(),
         });
 #pragma warning restore RESP010
@@ -137,7 +174,12 @@ public class TransactionReadViewTests
         {
             views.Add(reads);
             var current = int.Parse((await reads.GetStringAsync("balance", token))!);
-            if (++attempts == 1) await client.SetAsync("balance", "2", cancellationToken: token);
+
+            if (++attempts == 1)
+            {
+                await client.SetAsync("balance", "2", cancellationToken: token);
+            }
+
             _ = transaction.Set("balance", current + 10);
             return current + 10;
         });
@@ -146,7 +188,12 @@ public class TransactionReadViewTests
         await Assert.That(ReferenceEquals(views[0], views[1])).IsFalse();
         await Assert.That(await root.GetStringAsync("tenant:balance")).IsEqualTo("12");
         await Assert.That(await root.ExistsAsync("balance")).IsFalse();
-        foreach (var view in views) await view.DisposeAsync();
+
+        foreach (var view in views)
+        {
+            await view.DisposeAsync();
+        }
+
         await Assert.That(root.IsConnected).IsTrue();
     }
 
@@ -163,18 +210,25 @@ public class TransactionReadViewTests
         var attempts = 0;
         var expected = new InvalidOperationException("callback");
         Exception? observed = null;
+
         try
         {
             await client.RunTransactionWithReadsAsync(["result"], (reads, transaction, token) =>
             {
                 attempts++;
                 _ = transaction.Set("result", "never");
-                if (!cancel) throw expected;
+
+                if (!cancel)
+                {
+                    throw expected;
+                }
+
                 cancellation.Cancel();
                 return ValueTask.CompletedTask;
             }, cancellationToken: cancellation.Token);
         }
         catch (Exception error) { observed = error; }
+
         await Assert.That(cancel ? observed is OperationCanceledException : ReferenceEquals(observed, expected)).IsTrue();
         await Assert.That(attempts).IsEqualTo(1);
         await Assert.That(await client.ExistsAsync("result")).IsFalse();
@@ -226,9 +280,18 @@ public class TransactionReadViewTests
         await using var client = RespireClient.Create("127.0.0.1:1");
 #pragma warning restore RESP010
         // Void callbacks deliberately discard ValueTask: only synchronous validation can satisfy these assertions.
-        await Assert.That(() => { _ = client.RunTransactionWithReadsAsync([], null!); }).Throws<ArgumentNullException>();
-        await Assert.That(() => { _ = client.RunTransactionAsync([], null!); }).Throws<ArgumentNullException>();
-        await Assert.That(() => { _ = client.RunTransactionWithReadsAsync([], (_, _, _) => ValueTask.CompletedTask, new() { MaxAttempts = 0 }); }).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() =>
+        {
+            _ = client.RunTransactionWithReadsAsync([], null!);
+        }).Throws<ArgumentNullException>();
+        await Assert.That(() =>
+        {
+            _ = client.RunTransactionAsync([], null!);
+        }).Throws<ArgumentNullException>();
+        await Assert.That(() =>
+        {
+            _ = client.RunTransactionWithReadsAsync([], (_, _, _) => ValueTask.CompletedTask, new() { MaxAttempts = 0 });
+        }).Throws<ArgumentOutOfRangeException>();
     }
 
     private static byte[] Reply(string command, string value, bool replica) => command switch

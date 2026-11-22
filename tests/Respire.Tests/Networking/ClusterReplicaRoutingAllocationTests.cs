@@ -72,6 +72,7 @@ public class ClusterReplicaRoutingAllocationTests
         RespireReadFrom policy, bool pinned, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1_000; i++)
         {
             var pending = pinned
@@ -79,12 +80,23 @@ public class ClusterReplicaRoutingAllocationTests
                 : router.GetReadConnectionAsync(slot, policy, default, observation: default);
             // A prepared route must complete inline; no task allocation may hide in the measurement.
             if (!pending.IsCompletedSuccessfully)
+            {
                 throw new InvalidOperationException("The prepared cluster route did not complete synchronously.");
+            }
+
             var connection = pending.GetAwaiter().GetResult();
+
             if (!ReferenceEquals(connection.Multiplexer, expectedNode))
+            {
                 throw new InvalidOperationException("The prepared cluster route selected a different node.");
-            if (allocate) GC.KeepAlive(new byte[37]);
+            }
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

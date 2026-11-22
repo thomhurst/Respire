@@ -10,47 +10,46 @@ using Moq;
 using TUnit.Core;
 using Assert = Xunit.Assert;
 
-namespace Hangfire.Redis.Tests
+namespace Hangfire.Redis.Tests;
+
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[NotInParallel]
+public class ProcessingStateHandlerFacts : UpstreamRedisTest
 {
-    [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-    [NotInParallel]
-    public class ProcessingStateHandlerFacts : UpstreamRedisTest
+    private const string JobId = "1";
+
+    private readonly ApplyStateContextMock _context;
+    private readonly Mock<IWriteOnlyTransaction> _transaction;
+
+    public ProcessingStateHandlerFacts(RedisTestContainer fixture) : base(fixture)
     {
-        private const string JobId = "1";
+        _context = new ApplyStateContextMock(JobId);
+        _transaction = new Mock<IWriteOnlyTransaction>();
+    }
 
-        private readonly ApplyStateContextMock _context;
-        private readonly Mock<IWriteOnlyTransaction> _transaction;
+    [Test]
+    public void StateName_ShouldBeEqualToProcessingState()
+    {
+        var handler = new ProcessingStateHandler();
+        Assert.Equal(ProcessingState.StateName, handler.StateName);
+    }
 
-        public ProcessingStateHandlerFacts(RedisTestContainer fixture) : base(fixture)
-        {
-            _context = new ApplyStateContextMock(JobId);
-            _transaction = new Mock<IWriteOnlyTransaction>();
-        }
+    [Test]
+    public void Apply_ShouldAddTheJob_ToTheProcessingSet()
+    {
+        var handler = new ProcessingStateHandler();
+        handler.Apply(_context.Object, _transaction.Object);
 
-        [Test]
-        public void StateName_ShouldBeEqualToProcessingState()
-        {
-            var handler = new ProcessingStateHandler();
-            Assert.Equal(ProcessingState.StateName, handler.StateName);
-        }
+        _transaction.Verify(x => x.AddToSet(
+            "processing", JobId, It.IsAny<double>()));
+    }
 
-        [Test]
-        public void Apply_ShouldAddTheJob_ToTheProcessingSet()
-        {
-            var handler = new ProcessingStateHandler();
-            handler.Apply(_context.Object, _transaction.Object);
+    [Test]
+    public void Unapply_ShouldRemoveTheJob_FromTheProcessingSet()
+    {
+        var handler = new ProcessingStateHandler();
+        handler.Unapply(_context.Object, _transaction.Object);
 
-            _transaction.Verify(x => x.AddToSet(
-                "processing", JobId, It.IsAny<double>()));
-        }
-
-        [Test]
-        public void Unapply_ShouldRemoveTheJob_FromTheProcessingSet()
-        {
-            var handler = new ProcessingStateHandler();
-            handler.Unapply(_context.Object, _transaction.Object);
-
-            _transaction.Verify(x => x.RemoveFromSet("processing", JobId));
-        }
+        _transaction.Verify(x => x.RemoveFromSet("processing", JobId));
     }
 }

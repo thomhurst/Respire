@@ -38,10 +38,16 @@ internal sealed class RemoteInvocationLifetime
     {
         lock (_gate)
         {
-            if (_completed) return;
+            if (_completed)
+            {
+                return;
+            }
+
             _lifetime.CancelAfter(_timeout);
         }
+
         var registration = _token.UnsafeRegister(static state => ((RemoteInvocationLifetime)state!).Expire(), this);
+
         lock (_gate)
         {
             if (!_completed)
@@ -50,6 +56,7 @@ internal sealed class RemoteInvocationLifetime
                 return;
             }
         }
+
         registration.Dispose();
     }
 
@@ -59,12 +66,18 @@ internal sealed class RemoteInvocationLifetime
     internal async Task CompleteAsync(CompletionMessage message)
     {
         CancellationTokenRegistration registration;
+
         lock (_gate)
         {
-            if (_completed) return;
+            if (_completed)
+            {
+                return;
+            }
+
             _completed = true;
             registration = _registration;
         }
+
         _lifetime.Dispose();
         // Async disposal also works when completion runs inside this registration.
         await registration.DisposeAsync().ConfigureAwait(false);

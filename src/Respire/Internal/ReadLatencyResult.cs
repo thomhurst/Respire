@@ -14,10 +14,16 @@ internal readonly record struct ReadLatencyResult
 
     private ReadLatencyResult(ReadLatencyKind kind, long ticks) => (Kind, _ticks) = (kind, ticks);
 
-    internal ReadLatencyKind Kind { get; }
+    internal ReadLatencyKind Kind
+    {
+        get;
+    }
+
     internal long Ticks => Kind == ReadLatencyKind.Measured ? _ticks
         : throw new InvalidOperationException("This sample has no measured latency.");
+
     internal static ReadLatencyResult Unknown => default;
+
     internal static ReadLatencyResult Pending => new(ReadLatencyKind.Pending, 0);
 
     internal static ReadLatencyResult Measured(long ticks)

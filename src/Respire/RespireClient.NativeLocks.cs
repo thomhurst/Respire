@@ -14,13 +14,19 @@ public sealed partial class RespireClient
     private static readonly ConditionalWeakTable<RespireConnection, LockCapabilities> LockConnectionCapabilities = new();
 
     [Flags]
-    private enum LockCapability { ConditionalSet = 1, Delex = 2, Delifeq = 4 }
+    private enum LockCapability
+    {
+        ConditionalSet = 1,
+        Delex = 2,
+        Delifeq = 4
+    }
 
     private sealed class LockCapabilities
     {
         private int _unsupported;
 
         internal bool CanTry(LockCapability capability) => (Volatile.Read(ref _unsupported) & (int)capability) == 0;
+
         internal void Reject(LockCapability capability) => Interlocked.Or(ref _unsupported, (int)capability);
     }
 
@@ -28,13 +34,23 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation errorObservation = default,
         DispatchResponseSource<bool>? finalOwner = null) : ITrackedCorrectionExecution<bool>
     {
-        internal TrackedConnectionIdentity ConnectionIdentity { get; set; } = connectionIdentity;
+        internal TrackedConnectionIdentity ConnectionIdentity
+        {
+            get; set;
+        } = connectionIdentity;
         private ValueTask<bool> _response;
-        internal RespireTelemetry.ErrorObservation ErrorObservation { get; } = errorObservation;
+
+        internal RespireTelemetry.ErrorObservation ErrorObservation
+        {
+            get;
+        } = errorObservation;
+
         internal void SetResponse(ValueTask<bool> response) => _response = response;
+
         // Direct readers consume once; correction dispatch borrows the raw response and lease.
         internal ValueTask<bool> ConsumeResponseAsync()
             => CompleteResponseAsync(_response);
+
         public ValueTask<bool> CompleteResponseAsync(ValueTask<bool> response)
             => finalOwner is { } owner ? owner.Attach(response) : response;
 
@@ -48,10 +64,17 @@ public sealed partial class RespireClient
         /// loop stays uncertain and fails closed; only proof clears it. Read only after
         /// <see cref="ConsumeResponseAsync"/> completes.
         /// </summary>
-        internal bool CommandMayBeOutstanding { get; set; } = true;
+        internal bool CommandMayBeOutstanding
+        {
+            get; set;
+        } = true;
+
         ValueTask<bool> ITrackedCorrectionExecution<bool>.Response => _response;
+
         RespireTelemetry.ErrorObservation ITrackedCorrectionExecution<bool>.ErrorObservation => ErrorObservation;
+
         TrackedConnectionIdentity ITrackedCorrectionExecution<bool>.ConnectionIdentity => ConnectionIdentity;
+
         bool ITrackedCorrectionExecution<bool>.CommandMayBeOutstanding => CommandMayBeOutstanding;
     }
 
@@ -111,11 +134,13 @@ public sealed partial class RespireClient
         var cache = core.ClientCache;
         var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
         var responseOwnsFence = false;
+
         try
         {
             var wireKey = Key(in key);
             int? slot = wireKey.TryGetClusterSlot(out var keySlot) ? keySlot : null;
             RespireConnection connection;
+
             if (requireIdentity && core.Cluster is { } cluster)
             {
                 connection = await GetTrackedClusterConnectionAsync(cluster, slot, requireIdentity, cancellationToken, observation)
@@ -165,9 +190,11 @@ public sealed partial class RespireClient
     {
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
+
         try
         {
             var sendAsking = false;
+
             for (var attempt = 0; ; attempt++)
             {
                 try
@@ -177,8 +204,7 @@ public sealed partial class RespireClient
                             execution.ErrorObservation)
                         .ConfigureAwait(false);
                 }
-                catch (RespireConnectionRetiredException error) when (
-                    _core.Cluster is { } cluster && cluster.CanRetryRetirement(attempt, cancellationToken))
+                catch (RespireConnectionRetiredException error) when (_core.Cluster is { } cluster && cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
                     // Retirement rejected the command before execution.
                     execution.CommandMayBeOutstanding = false;
@@ -186,6 +212,7 @@ public sealed partial class RespireClient
                     execution.ErrorObservation.Handled(error);
                     discoveryPending = true;
                     var source = sendAsking ? connection : null;
+
                     if (!requireIdentity)
                     {
                         connection = await cluster.GetReplacementConnectionAsync(
@@ -196,6 +223,7 @@ public sealed partial class RespireClient
                         connection = await GetTrackedReplacementConnectionAsync(
                             cluster, source, slot, !allowUnfencedFallback, cancellationToken, discovery,
                             execution.ErrorObservation).ConfigureAwait(false);
+
                         if (RequiresStrictIdentityRetry(connection, allowUnfencedFallback))
                         {
                             connection = await GetTrackedReplacementConnectionAsync(
@@ -208,8 +236,7 @@ public sealed partial class RespireClient
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(
                         connection, IsFenceable(connection, requireIdentity, allowUnfencedFallback), sendAsking);
                 }
-                catch (RespireServerException error) when (
-                    _core.Cluster is { } cluster && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
+                catch (RespireServerException error) when (_core.Cluster is { } cluster && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
                     // MOVED and ASK are definitive: this node did not run the command.
                     execution.CommandMayBeOutstanding = false;
@@ -217,6 +244,7 @@ public sealed partial class RespireClient
                     execution.ErrorObservation.Handled(error);
                     discoveryPending = true;
                     var source = connection;
+
                     if (!requireIdentity)
                     {
                         connection = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot, discovery, execution.ErrorObservation)
@@ -228,6 +256,7 @@ public sealed partial class RespireClient
                                 cluster, error, source, !allowUnfencedFallback, cancellationToken, slot, discovery,
                                 execution.ErrorObservation)
                             .ConfigureAwait(false);
+
                         if (RequiresStrictIdentityRetry(connection, allowUnfencedFallback))
                         {
                             connection = await GetTrackedRedirectConnectionAsync(
@@ -296,6 +325,7 @@ public sealed partial class RespireClient
         // The correction owner captures this connection's identity before submission.
         // Only ExecuteRoutedLockAsync may move it and publish a replacement identity.
         var capabilities = LockConnectionCapabilities.GetValue(connection, static _ => new LockCapabilities());
+
         if (milliseconds is { } duration)
         {
             if (capabilities.CanTry(LockCapability.ConditionalSet))
@@ -308,7 +338,11 @@ public sealed partial class RespireClient
                             mutationFence, cancellationToken, sendAsking: sendAsking, observation: observation,
                             allowReplicaRedirects: false)
                         .ConfigureAwait(false);
-                    try { return !reply.IsNull; }
+
+                    try
+                    {
+                        return !reply.IsNull;
+                    }
                     finally { reply.Dispose(); }
                 }
                 catch (RespireServerException error) when (error.Message == "ERR syntax error" || IsBareUnknownCommand(error))
@@ -356,6 +390,7 @@ public sealed partial class RespireClient
 
         var script = milliseconds.HasValue ? LockCommands.ExtendScript : LockCommands.ReleaseScript;
         RespireValue[] args = milliseconds is { } expiry ? [key, token, expiry] : [key, token];
+
         try
         {
             return await SendLockIntegerAsync(script.EvalShaOperation, connection,
@@ -380,7 +415,11 @@ public sealed partial class RespireClient
         var reply = await SendMutationOnConnectionAsync(operation, connection, command, mutationFence, cancellationToken,
                 storedProcedureName, sendAsking, observation: observation, allowReplicaRedirects: false)
             .ConfigureAwait(false);
-        try { return reply.AsInteger() >= 1; }
+
+        try
+        {
+            return reply.AsInteger() >= 1;
+        }
         finally { reply.Dispose(); }
     }
 

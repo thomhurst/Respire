@@ -49,19 +49,24 @@ internal static class RespParser
         ReadOnlySpan<byte> buffer, ref int pos, out RespValue value, RespParseState? progressOwner)
     {
         value = default;
+
         if (pos >= buffer.Length)
+        {
             return RespParseStatus.NeedMoreData;
+        }
 
         // Scalar replies need neither aggregate depth nor a storage budget.
         if (buffer[pos] is not ((byte)'*' or (byte)'~' or (byte)'>' or (byte)'%' or (byte)'|'))
         {
             var cursor = pos;
             var status = TryParseScalar(buffer, ref cursor, out value);
+
             if (status == RespParseStatus.Done)
             {
                 value.AssertMaterialized();
                 pos = cursor;
             }
+
             return status;
         }
 
@@ -71,12 +76,17 @@ internal static class RespParser
         var deferredPayloadBytes = 0;
         var aggregateStatus = TryParseValue(buffer, ref pos, out value,
             new ParseContext(0, ref remainingElements, ref deferredPayloadBytes), progressOwner, out var start);
+
         if (aggregateStatus == RespParseStatus.Done)
         {
             if (deferredPayloadBytes != 0)
+            {
                 value = value.CopyDeferredPayloads(buffer, start, pos - start, deferredPayloadBytes);
+            }
+
             value.AssertMaterialized();
         }
+
         return aggregateStatus;
     }
 
@@ -87,12 +97,25 @@ internal static class RespParser
     {
         private readonly ref int _remainingElements;
         private readonly ref int _deferredPayloadBytes;
-        public int Depth { get; }
+
+        public int Depth
+        {
+            get;
+        }
+
         // Constructed contexts defer payloads; ImmediateCopy is only for scalar/bulk
         // entry points and has no aggregate budget for ForChildren/TryReserve.
         public static ParseContext ImmediateCopy => default;
-        public bool DeferPayloads { get; }
-        public int DeferredPayloadBytes { get => _deferredPayloadBytes; set => _deferredPayloadBytes = value; }
+
+        public bool DeferPayloads
+        {
+            get;
+        }
+
+        public int DeferredPayloadBytes
+        {
+            get => _deferredPayloadBytes; set => _deferredPayloadBytes = value;
+        }
 
         public ParseContext(int depth, ref int remainingElements, ref int deferredPayloadBytes)
         {
@@ -113,8 +136,11 @@ internal static class RespParser
         public bool TryReserve(int count)
         {
             Debug.Assert(DeferPayloads, "ImmediateCopy has no aggregate budget.");
+
             if (count > _remainingElements)
+            {
                 return false;
+            }
 
             // Each child, including a nested aggregate header, needs three wire bytes.
             _remainingElements -= count;
@@ -146,6 +172,7 @@ internal static class RespParser
             var priorPayloadBytes = context.DeferredPayloadBytes;
             var attrStatus = TryParseAggregate(buffer, ref cursor, RespireDataType.Map, pairCount: true,
                 out var attribute, context, progressOwner: null);
+
             if (attrStatus != RespParseStatus.Done)
             {
                 return attrStatus;
@@ -162,6 +189,7 @@ internal static class RespParser
         Debug.Assert(status != RespParseStatus.NeedMoreData || cursor == valueStart
             || progressOwner is { IsIdle: false },
             "An incomplete value can advance the cursor only after adopting progress.");
+
         if (status == RespParseStatus.Done
             || (status == RespParseStatus.NeedMoreData && progressOwner is not null))
         {
@@ -188,12 +216,14 @@ internal static class RespParser
         }
 
         var typeByte = buffer[pos];
+
         if (typeByte is not ((byte)'$' or (byte)'=' or (byte)'!'))
         {
             return false;
         }
 
         var cursor = pos + 1;
+
         if (TryReadInt64Line(buffer, ref cursor, out payloadLength) != RespParseStatus.Done)
         {
             return false;
@@ -243,6 +273,7 @@ internal static class RespParser
 
         var length = (int)payloadLength;
         var total = length + 2;
+
         if (buffer.Length - headerEnd < total)
         {
             return RespParseStatus.NeedMoreData;
@@ -320,6 +351,7 @@ internal static class RespParser
     {
         value = default;
         var pos = cursor + 1;
+
         if (!TryReadLine(buffer, ref pos, out var line))
         {
             return RespParseStatus.NeedMoreData;
@@ -335,6 +367,7 @@ internal static class RespParser
         value = default;
         var pos = cursor + 1;
         var status = TryReadInt64Line(buffer, ref pos, out var integer);
+
         if (status != RespParseStatus.Done)
         {
             return status;
@@ -349,6 +382,7 @@ internal static class RespParser
     {
         value = default;
         var pos = cursor + 1;
+
         if (!TryReadLine(buffer, ref pos, out var line))
         {
             return RespParseStatus.NeedMoreData;
@@ -368,6 +402,7 @@ internal static class RespParser
     {
         value = default;
         var pos = cursor + 1;
+
         if (!TryReadLine(buffer, ref pos, out var line))
         {
             return RespParseStatus.NeedMoreData;
@@ -403,6 +438,7 @@ internal static class RespParser
     {
         value = default;
         var pos = cursor + 1;
+
         if (!TryReadLine(buffer, ref pos, out _))
         {
             return RespParseStatus.NeedMoreData;
@@ -419,6 +455,7 @@ internal static class RespParser
         value = default;
         var pos = cursor + 1;
         var status = TryReadInt64Line(buffer, ref pos, out var length);
+
         if (status != RespParseStatus.Done)
         {
             return status;
@@ -434,6 +471,7 @@ internal static class RespParser
         value = default;
         var pos = cursor + 1;
         var headerStatus = TryReadInt64Line(buffer, ref pos, out var declaredCount);
+
         if (headerStatus != RespParseStatus.Done)
         {
             return headerStatus;
@@ -465,12 +503,14 @@ internal static class RespParser
 
         var elements = RespirePools.ValueArrays.Rent(count);
         var childContext = context.ForChildren();
+
         for (var i = 0; i < count; i++)
         {
 #if DEBUG
             var childStart = pos;
 #endif
             RespParseStatus status;
+
             if (pos >= buffer.Length)
             {
                 status = RespParseStatus.NeedMoreData;
@@ -522,7 +562,10 @@ internal static class RespParser
         {
             // Adoption clears moved slots. Only unmoved children remain ours.
             for (var i = 0; i < completedCount; i++)
+            {
                 elements[i].Dispose();
+            }
+
             System.Array.Clear(elements, 0, completedCount);
             RespirePools.ValueArrays.Return(elements);
         }
@@ -535,9 +578,14 @@ internal static class RespParser
     private static RespValue CreatePayload(RespireDataType type, ReadOnlySpan<byte> buffer, int offset, int length, ParseContext context)
     {
         if (!context.DeferPayloads || length == 0)
+        {
             return CopyToPooled(type, buffer.Slice(offset, length));
+        }
+
         if (type == RespireDataType.SimpleString && TryGetInternedSimpleString(buffer.Slice(offset, length), out var interned))
+        {
             return RespValue.SimpleString(interned);
+        }
         // Empty and interned strings are already materialized, so positive bytes also
         // indicate whether the root has any deferred payloads to copy.
         context.DeferredPayloadBytes += length;
@@ -554,7 +602,9 @@ internal static class RespParser
         // The constant replies that dominate write-heavy traffic (+OK, +PONG, +QUEUED) are
         // interned: no pooled rent on this thread + return on the caller's thread per reply.
         if (type == RespireDataType.SimpleString && TryGetInternedSimpleString(payload, out var interned))
+        {
             return RespValue.SimpleString(interned);
+        }
 
         var array = RespirePools.ResponsePayloads.Rent(payload.Length);
         payload.CopyTo(array);
@@ -564,14 +614,24 @@ internal static class RespParser
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool TryGetInternedSimpleString(ReadOnlySpan<byte> payload, out ReadOnlyMemory<byte> interned)
     {
-        if (payload.SequenceEqual("OK"u8)) interned = InternedOk;
-        else if (payload.SequenceEqual("PONG"u8)) interned = InternedPong;
-        else if (payload.SequenceEqual("QUEUED"u8)) interned = InternedQueued;
+        if (payload.SequenceEqual("OK"u8))
+        {
+            interned = InternedOk;
+        }
+        else if (payload.SequenceEqual("PONG"u8))
+        {
+            interned = InternedPong;
+        }
+        else if (payload.SequenceEqual("QUEUED"u8))
+        {
+            interned = InternedQueued;
+        }
         else
         {
             interned = default;
             return false;
         }
+
         return true;
     }
 
@@ -579,6 +639,7 @@ internal static class RespParser
     internal static bool TryReadLine(ReadOnlySpan<byte> buffer, ref int pos, out ReadOnlySpan<byte> line)
     {
         var index = buffer[pos..].IndexOf("\r\n"u8);
+
         if (index < 0)
         {
             line = default;
@@ -615,6 +676,7 @@ internal static class RespParser
     {
         var i = pos;
         var negative = (uint)i < (uint)buffer.Length && buffer[i] == (byte)'-';
+
         if (negative)
         {
             i++;
@@ -623,9 +685,11 @@ internal static class RespParser
         var digitsStart = i;
         var digitsLimit = Math.Min(buffer.Length, digitsStart + MaxFastInt64Digits);
         ulong magnitude = 0;
+
         while (i < digitsLimit)
         {
             var digit = (uint)(buffer[i] - (byte)'0');
+
             if (digit > 9)
             {
                 break;
@@ -652,6 +716,7 @@ internal static class RespParser
     private static RespParseStatus TryReadInt64LineSlow(ReadOnlySpan<byte> buffer, ref int pos, out long value)
     {
         var cursor = pos;
+
         if (!TryReadLine(buffer, ref cursor, out var line))
         {
             value = 0;

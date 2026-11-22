@@ -190,11 +190,14 @@ public class ServiceCollectionTests(RedisTestContainer fixture)
     public async Task NoClientAndNoConnectionString_ThrowsOnResolve()
     {
         var services = new ServiceCollection();
-        services.AddRespireDistributedCache(_ => { });
+        services.AddRespireDistributedCache(_ =>
+        {
+        });
 
         await using var provider = services.BuildServiceProvider();
 
         var threw = false;
+
         try
         {
             provider.GetRequiredService<IDistributedCache>();

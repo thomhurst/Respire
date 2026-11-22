@@ -132,9 +132,21 @@ public class SemaphoreWireTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command == "CLIENT ID") return ClientIdReply;
-                if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)) return ClientKillReply;
-                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+                if (command == "CLIENT ID")
+                {
+                    return ClientIdReply;
+                }
+
+                if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal))
+                {
+                    return ClientKillReply;
+                }
+
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
                 return Interlocked.Increment(ref evals) switch
                 {
                     1 => ":1\r\n"u8.ToArray(),
@@ -150,7 +162,12 @@ public class SemaphoreWireTests
         await permit.DisposeAsync();
         await Assert.That(permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
         using var retryDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (Volatile.Read(ref evals) < 3) await Task.Delay(10, retryDeadline.Token);
+
+        while (Volatile.Read(ref evals) < 3)
+        {
+            await Task.Delay(10, retryDeadline.Token);
+        }
+
         await Assert.That(permit.IsReleased).IsTrue();
     }
 
@@ -174,6 +191,7 @@ public class SemaphoreWireTests
             Endpoints = [new("127.0.0.1", server.Port)],
             LoggerFactory = logger,
         });
+
         try
         {
             var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
@@ -192,7 +210,10 @@ public class SemaphoreWireTests
         }
         finally
         {
-            try { await client.DisposeAsync(); }
+            try
+            {
+                await client.DisposeAsync();
+            }
             catch (Exception) { }
         }
     }
@@ -232,9 +253,21 @@ public class SemaphoreWireTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command == "CLIENT ID") return ClientIdReply;
-                if (command.StartsWith("CLIENT KILL", StringComparison.Ordinal)) return ClientKillReply;
-                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+                if (command == "CLIENT ID")
+                {
+                    return ClientIdReply;
+                }
+
+                if (command.StartsWith("CLIENT KILL", StringComparison.Ordinal))
+                {
+                    return ClientKillReply;
+                }
+
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
                 return Interlocked.Increment(ref evals) switch
                 {
                     1 => ":1\r\n"u8.ToArray(),
@@ -258,7 +291,12 @@ public class SemaphoreWireTests
         await permit.DisposeAsync();
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (Volatile.Read(ref evals) < 5) await Task.Delay(10, deadline.Token);
+
+        while (Volatile.Read(ref evals) < 5)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         await Assert.That(EvalCommands(server).Length).IsGreaterThanOrEqualTo(5);
     }
 
@@ -329,9 +367,13 @@ public class SemaphoreWireTests
             .TryAcquireAsync(TimeSpan.FromSeconds(30))).Permit;
 
         var firstRenewal = permit.ResetExpiryAsync(TimeSpan.FromSeconds(60)).AsTask();
+
         using (var started = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
         {
-            while (EvalCommands(server).Length < 2) await Task.Delay(10, started.Token);
+            while (EvalCommands(server).Length < 2)
+            {
+                await Task.Delay(10, started.Token);
+            }
         }
 
         using var waitingCancellation = new CancellationTokenSource();
@@ -423,10 +465,15 @@ public class SemaphoreWireTests
             .TryAcquireAsync()).Permit;
 
         var renewal = permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(100)).AsTask();
+
         using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
         {
-            while (EvalCommands(server).Length < 2) await Task.Delay(10, sent.Token);
+            while (EvalCommands(server).Length < 2)
+            {
+                await Task.Delay(10, sent.Token);
+            }
         }
+
         await Task.Delay(150);
 
         await Assert.That(permit.Expiry).IsNull();
@@ -463,8 +510,14 @@ public class SemaphoreWireTests
         server.DelayReply(nextReply + 1, 1000);
 
         var blocker = client.PingAsync().AsTask();
+
         using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-            while (!server.ReceivedCommands.Contains("PING")) await Task.Delay(5, sent.Token);
+        {
+            while (!server.ReceivedCommands.Contains("PING"))
+            {
+                await Task.Delay(5, sent.Token);
+            }
+        }
 
         var renewal = permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(100)).AsTask();
         await Task.Delay(150);
@@ -473,7 +526,13 @@ public class SemaphoreWireTests
         await Assert.That(permit.Expiry).IsEqualTo(TimeSpan.FromMinutes(5));
 
         using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-            while (EvalCommands(server).Length < 2) await Task.Delay(5, sent.Token);
+        {
+            while (EvalCommands(server).Length < 2)
+            {
+                await Task.Delay(5, sent.Token);
+            }
+        }
+
         await Task.Delay(150);
         await Assert.That(permit.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
         await Assert.That(permit.Expiry).IsEqualTo(TimeSpan.FromMinutes(5));
@@ -514,11 +573,14 @@ public class SemaphoreWireTests
 
         var renewal = permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(1000)).AsTask();
         int seedIndex;
+
         using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
         {
             while ((seedIndex = seed.ReceivedCommands.ToList().FindIndex(command =>
                        command.StartsWith($"EVALSHA {renewalSha} ", StringComparison.Ordinal))) < 0)
+            {
                 await Task.Delay(5, sent.Token);
+            }
         }
 
         await Task.Delay(1200);
@@ -526,12 +588,16 @@ public class SemaphoreWireTests
         await seed.SendRawAsync(Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"), seedConnectionId);
 
         int targetIndex;
+
         using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
         {
             while ((targetIndex = target.ReceivedCommands.ToList().FindIndex(command =>
                        command.StartsWith($"EVALSHA {renewalSha} ", StringComparison.Ordinal))) < 0)
+            {
                 await Task.Delay(5, sent.Token);
+            }
         }
+
         await Task.Delay(200);
 
         await Assert.That(permit.RemainingEstimate.GetValueOrDefault()).IsGreaterThan(TimeSpan.Zero);
@@ -550,9 +616,21 @@ public class SemaphoreWireTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command == "CLIENT ID") return ClientIdReply;
-                if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)) return ClientKillReply;
-                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return null;
+                if (command == "CLIENT ID")
+                {
+                    return ClientIdReply;
+                }
+
+                if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal))
+                {
+                    return ClientKillReply;
+                }
+
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
                 return Interlocked.Increment(ref evals) switch
                 {
                     1 => ":1\r\n"u8.ToArray(),
@@ -573,7 +651,12 @@ public class SemaphoreWireTests
         await permit.DisposeAsync();
 
         using var retryDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (Volatile.Read(ref evals) < 5) await Task.Delay(10, retryDeadline.Token);
+
+        while (Volatile.Read(ref evals) < 5)
+        {
+            await Task.Delay(10, retryDeadline.Token);
+        }
+
         await Assert.That(EvalCommands(server).Length).IsGreaterThanOrEqualTo(5);
     }
 
@@ -611,7 +694,11 @@ public class SemaphoreWireTests
             SuppressReply = command =>
             {
                 if (command.StartsWith("EVALSHA ", StringComparison.Ordinal)
-                    && Interlocked.Increment(ref evalCount) == 1) return true;
+                    && Interlocked.Increment(ref evalCount) == 1)
+                {
+                    return true;
+                }
+
                 return IsFence(command) && Interlocked.Increment(ref fenceCount) == 1;
             },
             ReplyOverride = (_, command) => IsFence(command) ? ":1\r\n"u8.ToArray() : null,
@@ -633,8 +720,12 @@ public class SemaphoreWireTests
         await Assert.That(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(3)).IsTrue();
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (Volatile.Read(ref evalCount) < 2 || Volatile.Read(ref fenceCount) < 2)
+        {
             await Task.Delay(10, deadline.Token);
+        }
+
         var commands = server.ReceivedCommands;
         var fences = commands.Select((command, index) => (command, index))
             .Where(entry => IsFence(entry.command)).Select(entry => entry.index).ToArray();
@@ -663,7 +754,11 @@ public class SemaphoreWireTests
             SuppressReply = command =>
             {
                 if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)
-                    || Interlocked.Increment(ref evalCount) != 1) return false;
+                    || Interlocked.Increment(ref evalCount) != 1)
+                {
+                    return false;
+                }
+
                 _ = Task.Run(cancellation.Cancel);
                 return true;
             },
@@ -685,8 +780,12 @@ public class SemaphoreWireTests
             .Throws<OperationCanceledException>();
 
         var waitStarted = Stopwatch.GetTimestamp();
+
         while (EvalCommands(server).Length < 2 && Stopwatch.GetElapsedTime(waitStarted) < TimeSpan.FromSeconds(10))
+        {
             await Task.Delay(10);
+        }
+
         var commands = server.ReceivedCommands.ToList();
         await Assert.That(EvalCommands(server).Length).IsEqualTo(2)
             .Because(string.Join(" | ", server.ReceivedConnectionIds.Zip(commands,
@@ -722,7 +821,13 @@ public class SemaphoreWireTests
         // runner connects, and then nothing was sent and there is no uncertain acquisition to clean up.
         // Wait for the EVALSHA itself: connection preflight (CLIENT ID, the CLIENT KILL probe) comes first.
         using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
-            while (EvalCommands(server).Length < 1) await Task.Delay(10, sent.Token);
+        {
+            while (EvalCommands(server).Length < 1)
+            {
+                await Task.Delay(10, sent.Token);
+            }
+        }
+
         cancellation.Cancel();
 
         await Assert.That(async () => await acquire.WaitAsync(TimeSpan.FromSeconds(3)))
@@ -755,7 +860,9 @@ public class SemaphoreWireTests
             {
                 if (activity.GetTagItem("db.operation.name") is "EVALSHA"
                     && activity.GetTagItem("server.port") is int port && port == server.Port)
+                {
                     cancellation.Cancel();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -770,7 +877,11 @@ public class SemaphoreWireTests
         // The permit has no expiry, so its release keeps retrying in the background after the
         // caller has seen the cancellation.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (EvalCommands(server).Length < 3) await Task.Delay(10, deadline.Token);
+
+        while (EvalCommands(server).Length < 3)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
     }
 
     [Test]
@@ -860,8 +971,14 @@ public class SemaphoreWireTests
         });
 
         var blocker = client.PingAsync().AsTask();
+
         using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
-            while (server.CommandsSeen < 1) await Task.Delay(10, sent.Token);
+        {
+            while (server.CommandsSeen < 1)
+            {
+                await Task.Delay(10, sent.Token);
+            }
+        }
 
         var started = Stopwatch.GetTimestamp();
         await using var attempt = await new RespireSemaphore(client, "{inflight}:semaphore", capacity: 1)
@@ -891,19 +1008,33 @@ public class SemaphoreWireTests
             Connections = 1,
             CommandTimeout = null,
         });
+
         try
         {
             var permit = (await new RespireSemaphore(client, "{dispose}:pending-renewal", capacity: 1)
                 .TryAcquireAsync(TimeSpan.FromMilliseconds(200))).Permit;
             var renewal = permit.ResetExpiryAsync(null).AsTask();
+
             using (var sent = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
-                while (Volatile.Read(ref evalCount) < 2) await Task.Delay(10, sent.Token);
+            {
+                while (Volatile.Read(ref evalCount) < 2)
+                {
+                    await Task.Delay(10, sent.Token);
+                }
+            }
 
             // Disposal stops waiting for the renewal after one second, when the old 200 ms estimate
             // has run out. Redis may already have made the permit non-expiring, so release is still sent.
             await permit.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+
             using (var released = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-                while (Volatile.Read(ref evalCount) < 3) await Task.Delay(10, released.Token);
+            {
+                while (Volatile.Read(ref evalCount) < 3)
+                {
+                    await Task.Delay(10, released.Token);
+                }
+            }
+
             await Assert.That(renewal.IsCompleted).IsFalse();
 
             await client.DisposeAsync();
@@ -925,9 +1056,18 @@ public class SemaphoreWireTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 var call = Interlocked.Increment(ref evalCount);
-                if (call == 2) renewalStarted.TrySetResult();
+
+                if (call == 2)
+                {
+                    renewalStarted.TrySetResult();
+                }
+
                 return call >= 2;
             },
         };
@@ -947,21 +1087,40 @@ public class SemaphoreWireTests
         await Assert.That(await renewal.WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (Volatile.Read(ref evalCount) < 3) await Task.Delay(10, deadline.Token);
+
+        while (Volatile.Read(ref evalCount) < 3)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         await Assert.That(server.ReceivedCommands.Count).IsGreaterThanOrEqualTo(3);
         await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds.ToList()[^1]);
         using var releaseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!permit.IsReleased) await Task.Delay(10, releaseDeadline.Token);
+
+        while (!permit.IsReleased)
+        {
+            await Task.Delay(10, releaseDeadline.Token);
+        }
     }
 
     private sealed class ThrowOnceDisconnectLogger : ILoggerFactory, ILogger
     {
         private int _thrown;
+
         internal bool DisconnectFailureThrown => Volatile.Read(ref _thrown) != 0;
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
@@ -970,7 +1129,9 @@ public class SemaphoreWireTests
             if (logLevel == LogLevel.Debug
                 && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal)
                 && Interlocked.Exchange(ref _thrown, 1) == 0)
+            {
                 throw new InvalidOperationException("Injected original connection retirement failure.");
+            }
         }
     }
 }

@@ -36,8 +36,10 @@ public sealed record RespireCommandLogEntry(
 {
     /// <summary>Execution microseconds for Slow entries; null for size logs.</summary>
     public long? DurationMicroseconds => Type == RespireCommandLogType.Slow ? MetricValue : null;
+
     /// <summary>Request bytes for LargeRequest entries; null otherwise.</summary>
     public long? RequestBytes => Type == RespireCommandLogType.LargeRequest ? MetricValue : null;
+
     /// <summary>Reply bytes for LargeReply entries; null otherwise.</summary>
     public long? ReplyBytes => Type == RespireCommandLogType.LargeReply ? MetricValue : null;
 }
@@ -46,15 +48,20 @@ public partial interface IRespireServerCommands
 {
     /// <summary>Returns owned Valkey 8.1+ command log entries in server order. Count -1 means all, 0 means none.</summary>
     ValueTask<RespireCommandLogEntry[]> CommandLogAsync(RespireCommandLogType type, long count = 10, CancellationToken cancellationToken = default);
+
     /// <summary>Returns one node's current log length. Valkey 8.1+: COMMANDLOG LEN.</summary>
     ValueTask<long> CommandLogLengthAsync(RespireCommandLogType type, CancellationToken cancellationToken = default);
+
     /// <summary>Clears one node's selected log; IDs are not reset. Requires AllowAdmin. Valkey 8.1+.</summary>
     ValueTask ResetCommandLogAsync(RespireCommandLogType type, CancellationToken cancellationToken = default);
+
     /// <summary>Returns owned logs separately from every discovered node, including replicas, with endpoint provenance.</summary>
     /// <remarks>Discovery cancellation throws. Later cancellation and failures are per-node results; standalone returns one result.</remarks>
     ValueTask<RespireServerResult<RespireCommandLogEntry[]>[]> CommandLogOnAllNodesAsync(RespireCommandLogType type, long count = 10, CancellationToken cancellationToken = default);
+
     /// <summary>Returns each discovered node's log length. Failures remain endpoint-associated results.</summary>
     ValueTask<RespireServerResult<long>[]> CommandLogLengthOnAllNodesAsync(RespireCommandLogType type, CancellationToken cancellationToken = default);
+
     /// <summary>Explicitly clears every discovered node's selected log, including replicas and slotless members. Requires AllowAdmin; true means OK on that node.</summary>
     /// <remarks>Partial success is possible; resets are neither replicated nor rolled back across nodes.</remarks>
     ValueTask<RespireServerResult<bool>[]> ResetCommandLogOnAllNodesAsync(RespireCommandLogType type, CancellationToken cancellationToken = default);
@@ -68,13 +75,21 @@ internal sealed partial class ServerCommands
 
     public ValueTask<RespireCommandLogEntry[]> CommandLogAsync(RespireCommandLogType type, long count = 10, CancellationToken cancellationToken = default)
     {
-        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         return ConvertAsync("COMMANDLOG GET", BuildCommandLogGet(type, count), cancellationToken, CommandLogConverter(type));
     }
 
     public ValueTask<long> CommandLogLengthAsync(RespireCommandLogType type, CancellationToken cancellationToken = default)
     {
-        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         return ConvertAsync("COMMANDLOG LEN", new Cmd1(CommandLogLen, CommandLogTypeToken(type)), cancellationToken,
             static (ServerCommands _, in RespValue value) => CommandLogParser.NonnegativeInteger(in value));
     }
@@ -82,7 +97,12 @@ internal sealed partial class ServerCommands
     public ValueTask ResetCommandLogAsync(RespireCommandLogType type, CancellationToken cancellationToken = default)
     {
         EnsureAdminAllowed("COMMANDLOG RESET");
-        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+
+        if (client.Core.Options.CommandHook is null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         return DiscardCommandLogResetAsync(ConvertAsync("COMMANDLOG RESET", new Cmd1(CommandLogReset, CommandLogTypeToken(type)),
             cancellationToken, static (ServerCommands _, in RespValue value) => CommandLogParser.Ok(in value)));
     }
@@ -114,6 +134,7 @@ internal sealed partial class ServerCommands
         var command = new Cmd1(CommandLogReset, CommandLogTypeToken(type));
         var cache = client.Core.ClientCache;
         var fence = cache is null ? default : cache.BeforeCommand("COMMANDLOG RESET", command);
+
         try
         {
             return await FanOutUnhookedAsync("COMMANDLOG RESET", new MutationCommand<Cmd1>(command, fence), cancellationToken,
@@ -121,7 +142,10 @@ internal sealed partial class ServerCommands
         }
         finally
         {
-            if (fence.IsRequired) cache!.CompleteMutation(in fence);
+            if (fence.IsRequired)
+            {
+                cache!.CompleteMutation(in fence);
+            }
         }
     }
 
@@ -129,7 +153,11 @@ internal sealed partial class ServerCommands
 
     private static Cmd2 BuildCommandLogGet(RespireCommandLogType type, long count)
     {
-        if (count < -1) throw new ArgumentOutOfRangeException(nameof(count), "Count must be at least -1; -1 requests all entries.");
+        if (count < -1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "Count must be at least -1; -1 requests all entries.");
+        }
+
         return new(CommandLogGet, count, CommandLogTypeToken(type));
     }
 

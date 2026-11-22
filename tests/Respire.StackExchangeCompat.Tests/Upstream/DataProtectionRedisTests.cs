@@ -54,11 +54,13 @@ public class DataProtectionRedisTests(RedisTestContainer fixture)
     {
         var guid = Guid.NewGuid().ToString();
         RedisKey key = "Test:DP:Key" + guid;
+
         await using (var redis = Connect())
         {
             var repo = new RedisXmlRepository(() => redis.GetDatabase(), key);
             repo.StoreElement(new XElement("HelloRedis", guid), guid);
         }
+
         await using (var redis = Connect())
         {
             var repo = new RedisXmlRepository(() => redis.GetDatabase(), key);

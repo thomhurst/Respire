@@ -1,8 +1,8 @@
-using System.Runtime.CompilerServices;
-using System.Text;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
+using System.Text;
 using Respire.Commands;
 using Respire.Infrastructure;
 using Respire.Internal;
@@ -31,9 +31,16 @@ public sealed class SentinelCircuitDispatchTests
         Open(client, replica);
         var registry = client.Core.Circuits!;
         registry.Acquire(new("127.0.0.1", primary.Port), default).Dispose();
+
         foreach (var port in ports.Skip(1))
+        {
             registry.Acquire(new("127.0.0.1", port), default).Dispose();
-        for (var i = 0; i < 64; i++) registry.Acquire(new("history", 1000 + i), default).Dispose();
+        }
+
+        for (var i = 0; i < 64; i++)
+        {
+            registry.Acquire(new("history", 1000 + i), default).Dispose();
+        }
 
         await Assert.That(ReferenceEquals(registry.GetForTests(new("127.0.0.1", replica.Port)), circuit)).IsTrue();
         await Assert.That(() => registry.Acquire(new("127.0.0.1", replica.Port), default))
@@ -65,7 +72,12 @@ public sealed class SentinelCircuitDispatchTests
         await router.RefreshNowAsync(default);
         var endpoint = new RespireEndpoint("127.0.0.1", replica.Port);
         var connection = (await router.SelectAsync(RespireReadFrom.Replica, default, observation: default)).Connection;
-        for (var i = 1; i < ports.Length; i++) ports[i] = 20000 + i;
+
+        for (var i = 1; i < ports.Length; i++)
+        {
+            ports[i] = 20000 + i;
+        }
+
         await router.RefreshNowAsync(default);
         var entry = ReplicaEntries(router)[endpoint];
         var gate = ReplicaEntryGate(entry);
@@ -73,16 +85,26 @@ public sealed class SentinelCircuitDispatchTests
         Open(client, replica);
         var registry = client.Core.Circuits!;
         registry.Acquire(new("127.0.0.1", primary.Port), default).Dispose();
-        foreach (var port in ports.Skip(1)) registry.Acquire(new("127.0.0.1", port), default).Dispose();
+
+        foreach (var port in ports.Skip(1))
+        {
+            registry.Acquire(new("127.0.0.1", port), default).Dispose();
+        }
 
         // Hold the entry gate so grace expiry cannot make the selected socket reject retirement first.
         await gate.WaitAsync();
+
         try
         {
             ports[0] = 29999;
             await router.RefreshNowAsync(default);
             await Assert.That(ReplicaRetirements(router).ContainsKey(entry)).IsTrue();
-            for (var i = 0; i < 64; i++) registry.Acquire(new("history", 3000 + i), default).Dispose();
+
+            for (var i = 0; i < 64; i++)
+            {
+                registry.Acquire(new("history", 3000 + i), default).Dispose();
+            }
+
             await Assert.That(ReferenceEquals(registry.GetForTests(endpoint), circuit)).IsTrue();
             connection.ThrowIfRetired();
             var command = new CatalogCommand(RespireCommands.String.GET, ["preselected"]);
@@ -96,7 +118,12 @@ public sealed class SentinelCircuitDispatchTests
         finally { gate.Release(); }
 
         using var finished = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (ReplicaRetirements(router).ContainsKey(entry)) await Task.Delay(10, finished.Token);
+
+        while (ReplicaRetirements(router).ContainsKey(entry))
+        {
+            await Task.Delay(10, finished.Token);
+        }
+
         registry.Acquire(new("127.0.0.1", primary.Port), default).Dispose();
         await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
         await Assert.That(() => registry.GetForTests(endpoint)).Throws<KeyNotFoundException>();
@@ -137,7 +164,10 @@ public sealed class SentinelCircuitDispatchTests
     public async Task PreparedReplicaReadsRespectAdmissionAndCompleteRecovery(RespireReadFrom policy, string shape)
     {
         if (Environment.GetEnvironmentVariable("TUNIT_DISABLE_HTML_REPORTER") == "true")
+        {
             await Assert.That(RespireTelemetry.IsOperationEnabled("GET")).IsFalse();
+        }
+
         await using var primary = Primary();
         await using var replica = Primary();
         var dataReply = replica.ReplyOverride!;
@@ -186,8 +216,15 @@ public sealed class SentinelCircuitDispatchTests
         await using var client = await Connect(sentinel);
         var view = (RespireClient)client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
         await using var enumerator = view.Keys.ScanAsync().GetAsyncEnumerator();
-        if (shape == "typed") await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
-        else { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]); }
+
+        if (shape == "typed")
+        {
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        }
+        else
+        {
+            using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]);
+        }
 
         var issuingConnection = client.Core.Multiplexer.GetConnection();
         var (circuit, _) = Prepare(client, first);
@@ -196,7 +233,10 @@ public sealed class SentinelCircuitDispatchTests
         clock.Arm();
         var pending = Task.Run(async () =>
         {
-            if (shape == "typed") await enumerator.MoveNextAsync();
+            if (shape == "typed")
+            {
+                await enumerator.MoveNextAsync();
+            }
             else if (shape is "queued" or "ordered")
             {
                 var command = new CatalogCommand(RespireCommands.Key.SCAN, ["7"]);
@@ -207,8 +247,12 @@ public sealed class SentinelCircuitDispatchTests
                         command, "SCAN", default, default, client: client);
                 using var page = await response;
             }
-            else { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]); }
+            else
+            {
+                using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]);
+            }
         });
+
         try
         {
             // Pause admission after selection of the cursor's issuing connection.
@@ -247,10 +291,17 @@ public sealed class SentinelCircuitDispatchTests
         await using var client = await Connect(sentinel);
         var view = client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
         await using var enumerator = view.PathHashes.ScanAsync("tree").GetAsyncEnumerator();
+
         if (continuation)
         {
-            if (streaming) await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
-            else await Assert.That((await view.PathHashes.ScanPageAsync("tree")).Cursor.ToArray()).IsEquivalentTo("opaque!"u8.ToArray());
+            if (streaming)
+            {
+                await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            }
+            else
+            {
+                await Assert.That((await view.PathHashes.ScanPageAsync("tree")).Cursor.ToArray()).IsEquivalentTo("opaque!"u8.ToArray());
+            }
         }
 
         var (circuit, _) = Prepare(client, first);
@@ -259,9 +310,16 @@ public sealed class SentinelCircuitDispatchTests
         clock.Arm();
         var pending = Task.Run(async () =>
         {
-            if (streaming) await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
-            else await view.PathHashes.ScanPageAsync("tree", continuation ? "opaque!"u8.ToArray() : "0"u8.ToArray());
+            if (streaming)
+            {
+                await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            }
+            else
+            {
+                await view.PathHashes.ScanPageAsync("tree", continuation ? "opaque!"u8.ToArray() : "0"u8.ToArray());
+            }
         });
+
         try
         {
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -281,6 +339,7 @@ public sealed class SentinelCircuitDispatchTests
             await pending.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(second.ReceivedCommands.Count(command => command == "PHSCAN tree 0 COUNT 100 WITHVALUES")).IsEqualTo(1);
         }
+
         await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("PHSCAN tree opaque!", StringComparison.Ordinal))).IsFalse();
         await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
@@ -300,7 +359,10 @@ public sealed class SentinelCircuitDispatchTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await Connect(sentinel);
         var view = (RespireClient)client.WithReadFrom(RespireReadFrom.PrimaryPreferred);
-        using (await view.ExecuteAsync(RespireCommands.Array.ARSCAN, ["array", "0", "10"])) { }
+
+        using (await view.ExecuteAsync(RespireCommands.Array.ARSCAN, ["array", "0", "10"]))
+        {
+        }
 
         var issuingConnection = client.Core.Multiplexer.GetConnection();
         var (circuit, _) = Prepare(client, first);
@@ -312,7 +374,10 @@ public sealed class SentinelCircuitDispatchTests
         clock.Arm();
         var pending = Task.Run(async () =>
         {
-            if (shape == "batch") await batch.ExecuteAsync();
+            if (shape == "batch")
+            {
+                await batch.ExecuteAsync();
+            }
             else if (shape is "queued" or "ordered")
             {
                 var response = shape == "ordered"
@@ -322,8 +387,12 @@ public sealed class SentinelCircuitDispatchTests
                         command, "ARSCAN", default, default, client: client);
                 using var page = await response;
             }
-            else { using var page = await view.ExecuteAsync(RespireCommands.Array.ARSCAN, ["array", "1", "10"]); }
+            else
+            {
+                using var page = await view.ExecuteAsync(RespireCommands.Array.ARSCAN, ["array", "1", "10"]);
+            }
         });
+
         try
         {
             // Pause admission after selection of the original primary connection.
@@ -334,7 +403,12 @@ public sealed class SentinelCircuitDispatchTests
         finally { clock.Release(); }
 
         await pending.WaitAsync(TimeSpan.FromSeconds(5));
-        if (batched is not null) await Assert.That(batched.Result).IsTrue();
+
+        if (batched is not null)
+        {
+            await Assert.That(batched.Result).IsTrue();
+        }
+
         await Assert.That(first.ReceivedCommands.Contains("ARSCAN array 1 10")).IsFalse();
         await Assert.That(second.ReceivedCommands.Count(value => value == "ARSCAN array 1 10")).IsEqualTo(1);
         await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
@@ -364,9 +438,16 @@ public sealed class SentinelCircuitDispatchTests
         clock.Arm();
         var pending = Task.Run(async () =>
         {
-            if (shape == "typed") await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
-            else { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]); }
+            if (shape == "typed")
+            {
+                await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            }
+            else
+            {
+                using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]);
+            }
         });
+
         try
         {
             await backlog.ReleaseAfterScanQueuesAsync();
@@ -375,6 +456,7 @@ public sealed class SentinelCircuitDispatchTests
             await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
         }
         finally { clock.Release(); }
+
         await pending.WaitAsync(TimeSpan.FromSeconds(5));
 
         if (shape == "typed")
@@ -383,7 +465,11 @@ public sealed class SentinelCircuitDispatchTests
             await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
             await Assert.That(enumerator.Current).IsEqualTo("second");
         }
-        else { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]); }
+        else
+        {
+            using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["7"]);
+        }
+
         await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
         await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("SCAN 0"))).IsEqualTo(1);
         await Assert.That(second.ReceivedCommands.Count(command => command.StartsWith("SCAN 7"))).IsEqualTo(1);
@@ -411,7 +497,13 @@ public sealed class SentinelCircuitDispatchTests
         {
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => { if (activity.OperationName == "SCAN") stopped.Enqueue(activity); },
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName == "SCAN")
+                {
+                    stopped.Enqueue(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         clock.Arm();
@@ -419,6 +511,7 @@ public sealed class SentinelCircuitDispatchTests
         {
             using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]);
         });
+
         try
         {
             await backlog.ReleaseAfterScanQueuesAsync();
@@ -427,6 +520,7 @@ public sealed class SentinelCircuitDispatchTests
             await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
         }
         finally { clock.Release(); }
+
         await pending.WaitAsync(TimeSpan.FromSeconds(5));
 
         // The handled retirement and the reselected send are one logical scan.
@@ -455,7 +549,11 @@ public sealed class SentinelCircuitDispatchTests
         CircuitClock(circuit) = clock;
         clock.Arm();
         var started = Stopwatch.StartNew();
-        var pending = Task.Run(async () => { using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]); });
+        var pending = Task.Run(async () =>
+        {
+            using var page = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]);
+        });
+
         try
         {
             await backlog.ReleaseAfterScanQueuesAsync();
@@ -486,7 +584,11 @@ public sealed class SentinelCircuitDispatchTests
         using var clock = new AdmissionGateClock();
         CircuitClock(circuit) = clock;
         clock.Arm();
-        var pending = Task.Run(async () => { using var reply = await client.ExecuteAsync("BLPOP", ["blocking", "1"]); });
+        var pending = Task.Run(async () =>
+        {
+            using var reply = await client.ExecuteAsync("BLPOP", ["blocking", "1"]);
+        });
+
         try
         {
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -515,8 +617,15 @@ public sealed class SentinelCircuitDispatchTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await Connect(sentinel);
         await using var enumerator = client.Keys.ScanAsync().GetAsyncEnumerator();
-        if (shape == "typed") await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
-        else { using var page = await client.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]); }
+
+        if (shape == "typed")
+        {
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        }
+        else
+        {
+            using var page = await client.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]);
+        }
 
         var (circuit, _) = Prepare(client, first);
         using var clock = new AdmissionGateClock();
@@ -524,9 +633,16 @@ public sealed class SentinelCircuitDispatchTests
         clock.Arm();
         var pending = Task.Run(async () =>
         {
-            if (shape == "typed") await enumerator.MoveNextAsync();
-            else { using var page = await client.ExecuteAsync(RespireCommands.Key.SCAN, [cursor]); }
+            if (shape == "typed")
+            {
+                await enumerator.MoveNextAsync();
+            }
+            else
+            {
+                using var page = await client.ExecuteAsync(RespireCommands.Key.SCAN, [cursor]);
+            }
         });
+
         try
         {
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -548,6 +664,7 @@ public sealed class SentinelCircuitDispatchTests
             await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("SCAN 7"))).IsFalse();
             await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
         }
+
         await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
     }
@@ -576,8 +693,16 @@ public sealed class SentinelCircuitDispatchTests
         var firstReply = first.ReplyOverride!;
         first.ReplyOverride = (connection, command) =>
         {
-            if (command.StartsWith("SET ")) return "+QUEUED\r\n"u8.ToArray();
-            if (command != "EXEC") return firstReply(connection, command);
+            if (command.StartsWith("SET "))
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
+            if (command != "EXEC")
+            {
+                return firstReply(connection, command);
+            }
+
             Volatile.Write(ref port, second.Port);
             return "*1\r\n-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
         };
@@ -591,7 +716,8 @@ public sealed class SentinelCircuitDispatchTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await Connect(sentinel, retryPolicy: new()
         {
-            MaxAttempts = 2, InitialBackoff = TimeSpan.Zero,
+            MaxAttempts = 2,
+            InitialBackoff = TimeSpan.Zero,
             MaxCommandRetryCategory = RespireCommandRetryCategory.WriteLastWins,
         }, circuitBreaker: new());
         await using var transaction = client.CreateTransaction();
@@ -614,7 +740,11 @@ public sealed class SentinelCircuitDispatchTests
         // The first EXEC accepted by the replacement loses its reply, so the unit needs its one permitted resend.
         second.ReplyOverride = (connection, command) =>
         {
-            if (command != "EXEC" || Interlocked.Increment(ref execs) != 1) return healthy(connection, command);
+            if (command != "EXEC" || Interlocked.Increment(ref execs) != 1)
+            {
+                return healthy(connection, command);
+            }
+
             second.CloseConnections();
             return null;
         };
@@ -623,12 +753,19 @@ public sealed class SentinelCircuitDispatchTests
         listener.InstrumentPublished = static (instrument, meter) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.command.retries")
+            {
                 meter.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
             foreach (var tag in tags)
-                if (tag.Key == "respire.command.retry.outcome") events.AddOrUpdate((string)tag.Value!, value, (_, old) => old + value);
+            {
+                if (tag.Key == "respire.command.retry.outcome")
+                {
+                    events.AddOrUpdate((string)tag.Value!, value, (_, old) => old + value);
+                }
+            }
         });
         listener.Start();
         var port = first.Port;
@@ -642,6 +779,7 @@ public sealed class SentinelCircuitDispatchTests
         var value = transaction.Strings.GetString("healthy");
         clock.Arm();
         var execution = Task.Run(async () => await transaction.CommitAsync());
+
         try
         {
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -677,6 +815,7 @@ public sealed class SentinelCircuitDispatchTests
             new CatalogCommand(RespireCommands.Key.SCAN, ["7"]), static (_, _) => true);
         clock.Arm();
         var execution = Task.Run(async () => await transaction.CommitAsync());
+
         try
         {
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -805,19 +944,36 @@ public sealed class SentinelCircuitDispatchTests
         {
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStarted = activity => { if (observed.Value) started.Enqueue(activity); },
-            ActivityStopped = activity => { if (observed.Value) stopped.Enqueue(activity); },
+            ActivityStarted = activity =>
+            {
+                if (observed.Value)
+                {
+                    started.Enqueue(activity);
+                }
+            },
+            ActivityStopped = activity =>
+            {
+                if (observed.Value)
+                {
+                    stopped.Enqueue(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         using var meter = new MeterListener();
         meter.InstrumentPublished = (instrument, owner) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 owner.EnableMeasurementEvents(instrument);
+            }
         };
         meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
-            if (observed.Value) measurements.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            if (observed.Value)
+            {
+                measurements.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            }
         });
         meter.Start();
         using var batch = client.CreateBatch();
@@ -830,11 +986,20 @@ public sealed class SentinelCircuitDispatchTests
             observed.Value = true;
             // The test host can own an ambient activity; the operation must restore it, not leak its own.
             var ambient = Activity.Current;
-            if (transactional) await transaction.CommitAsync();
-            else await batch.ExecuteAsync();
+
+            if (transactional)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch.ExecuteAsync();
+            }
+
             await Assert.That(Activity.Current).IsSameReferenceAs(ambient);
             observed.Value = false;
         });
+
         try
         {
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -842,6 +1007,7 @@ public sealed class SentinelCircuitDispatchTests
             await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
         }
         finally { clock.Release(); }
+
         await execution.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(started.Count).IsEqualTo(1);
         await Assert.That(stopped.Count).IsEqualTo(1);
@@ -875,29 +1041,55 @@ public sealed class SentinelCircuitDispatchTests
         {
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStarted = activity => { if (observed.Value && activity.OperationName == "GET") started.Enqueue(activity); },
-            ActivityStopped = activity => { if (observed.Value && activity.OperationName == "GET") stopped.Enqueue(activity); },
+            ActivityStarted = activity =>
+            {
+                if (observed.Value && activity.OperationName == "GET")
+                {
+                    started.Enqueue(activity);
+                }
+            },
+            ActivityStopped = activity =>
+            {
+                if (observed.Value && activity.OperationName == "GET")
+                {
+                    stopped.Enqueue(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         using var meter = new MeterListener();
         meter.InstrumentPublished = (instrument, owner) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 owner.EnableMeasurementEvents(instrument);
+            }
         };
         meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
-            if (observed.Value) measurements.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            if (observed.Value)
+            {
+                measurements.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
+            }
         });
         meter.Start();
         clock.Arm();
         var execution = Task.Run(async () =>
         {
             observed.Value = true;
-            if (shape == "tracked") await Assert.That(await client.GetStringAsync("healthy")).IsEqualTo("healthy");
-            else await client.ExecuteFireAndForgetAsync("GET", ["healthy"]);
+
+            if (shape == "tracked")
+            {
+                await Assert.That(await client.GetStringAsync("healthy")).IsEqualTo("healthy");
+            }
+            else
+            {
+                await client.ExecuteFireAndForgetAsync("GET", ["healthy"]);
+            }
+
             observed.Value = false;
         });
+
         try
         {
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -905,6 +1097,7 @@ public sealed class SentinelCircuitDispatchTests
             await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
         }
         finally { clock.Release(); }
+
         await execution.WaitAsync(TimeSpan.FromSeconds(5));
         await Received(second, "GET healthy");
         // The handled retirement belongs to the same logical command as the replacement send.
@@ -941,6 +1134,7 @@ public sealed class SentinelCircuitDispatchTests
             new CatalogCommand(RespireCommands.Key.SCAN, [cursorArgument!]), static (_, _) => true) : null;
         clock.Arm();
         var execution = Task.Run(async () => await batch.TryExecuteAsync());
+
         try
         {
             await clock.Selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -948,6 +1142,7 @@ public sealed class SentinelCircuitDispatchTests
             await client.Core.Sentinel!.GetGenerationAsync(default, forceDiscovery: true);
         }
         finally { clock.Release(); }
+
         await execution.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(one.Result).IsEqualTo("first");
         await Assert.That(two.Result).IsEqualTo("second");
@@ -961,6 +1156,7 @@ public sealed class SentinelCircuitDispatchTests
             .Select(entry => connectionIds[entry.index]).Distinct().Count()).IsEqualTo(1);
         await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
+
         if (cursorArgument == "7")
         {
             // The old primary issued cursor 7; its continuation cannot move to the replacement.
@@ -1064,6 +1260,7 @@ public sealed class SentinelCircuitDispatchTests
         await using var sentinel = Sentinel(() => primary.Port);
         await using var client = await Connect(sentinel, TimeSpan.FromMilliseconds(200));
         var (circuit, clock) = Prepare(client, primary);
+
         for (var failure = 0; failure < 2; failure++)
         {
             primary.SuppressReply = command => command == "GET timeout";
@@ -1075,6 +1272,7 @@ public sealed class SentinelCircuitDispatchTests
             await primary.SendRawAsync("$4\r\nlate\r\n"u8.ToArray());
             clock.Advance();
         }
+
         using var recovery = client.CreateBatch();
         var first = recovery.Strings.GetString("first");
         var second = recovery.Strings.GetString("second");
@@ -1091,12 +1289,21 @@ public sealed class SentinelCircuitDispatchTests
     {
         var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
-            Connections = connections, Protocol = clientSideCache ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
-            ClientSideCache = clientSideCache ? new() : null, ThreadPoolMonitoring = false,
-            ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = commandTimeout ?? TimeSpan.FromSeconds(5),
-            CircuitBreaker = circuitBreaker ?? new() { MinimumFailureCount = 1, FailureRateThreshold = 0.25,
-                HalfOpenProbeCount = 2, OpenDuration = TimeSpan.FromMinutes(1) },
+            Endpoints = [new("127.0.0.1", sentinel.Port)],
+            SentinelPrimaryName = "mymaster",
+            Connections = connections,
+            Protocol = clientSideCache ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
+            ClientSideCache = clientSideCache ? new() : null,
+            ThreadPoolMonitoring = false,
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            CommandTimeout = commandTimeout ?? TimeSpan.FromSeconds(5),
+            CircuitBreaker = circuitBreaker ?? new()
+            {
+                MinimumFailureCount = 1,
+                FailureRateThreshold = 0.25,
+                HalfOpenProbeCount = 2,
+                OpenDuration = TimeSpan.FromMinutes(1)
+            },
             RetryPolicy = retryPolicy,
         });
         await SentinelTestSetup.WaitForStartupAsync(client);
@@ -1116,7 +1323,11 @@ public sealed class SentinelCircuitDispatchTests
     private static void Open(RespireClient client, FakeRespServer primary)
     {
         var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", primary.Port), default);
-        try { admission.Failed(new RespireConnectionException("Injected endpoint failure"), default); }
+
+        try
+        {
+            admission.Failed(new RespireConnectionException("Injected endpoint failure"), default);
+        }
         finally { admission.Dispose(); }
     }
 
@@ -1124,11 +1335,23 @@ public sealed class SentinelCircuitDispatchTests
     {
         switch (shape)
         {
-            case "string": await client.GetStringAsync(key); break;
-            case "bytes": await client.GetBytesAsync(key); break;
-            case "converted": await client.Strings.LengthAsync(key); break;
-            case "raw": using (await client.ExecuteAsync("GET", [key])) { } break;
-            case "fire-and-forget": await client.ExecuteFireAndForgetAsync("GET", [key]); break;
+            case "string":
+                await client.GetStringAsync(key);
+                break;
+            case "bytes":
+                await client.GetBytesAsync(key);
+                break;
+            case "converted":
+                await client.Strings.LengthAsync(key);
+                break;
+            case "raw":
+                using (await client.ExecuteAsync("GET", [key]))
+                {
+                }
+                break;
+            case "fire-and-forget":
+                await client.ExecuteFireAndForgetAsync("GET", [key]);
+                break;
             case "batch":
                 using (var batch = client.CreateBatch())
                 {
@@ -1169,14 +1392,23 @@ public sealed class SentinelCircuitDispatchTests
     private static FakeRespServer Sentinel(Func<int> port, params int[] replicaPorts)
     {
         var epochs = new Dictionary<int, int>();
+
         byte[] Configuration()
         {
             var current = port();
             int epoch;
+
             lock (epochs)
-                if (!epochs.TryGetValue(current, out epoch)) epochs[current] = epoch = epochs.Count + 1;
+            {
+                if (!epochs.TryGetValue(current, out epoch))
+                {
+                    epochs[current] = epoch = epochs.Count + 1;
+                }
+            }
+
             return Encoding.ASCII.GetBytes($"*8\r\n+ip\r\n+127.0.0.1\r\n+port\r\n+{current}\r\n+config-epoch\r\n+{epoch}\r\n+flags\r\n+master\r\n");
         }
+
         return new(64, "*0\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command switch
@@ -1195,38 +1427,59 @@ public sealed class SentinelCircuitDispatchTests
     }
 
     private static byte[] Bulk(string value) => Encoding.UTF8.GetBytes($"${value.Length}\r\n{value}\r\n");
+
     private static async Task Received(FakeRespServer server, string command)
     {
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!server.ReceivedCommands.Contains(command)) await Task.Delay(1, limit.Token);
+
+        while (!server.ReceivedCommands.Contains(command))
+        {
+            await Task.Delay(1, limit.Token);
+        }
     }
+
     private static async Task<Exception> Failure(Func<Task> action)
     {
-        try { await action(); }
+        try
+        {
+            await action();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure");
     }
+
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_clock")]
     private static extern ref TimeProvider CircuitClock(EndpointCircuitBreaker circuit);
+
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_entries")]
     private static extern ref ConcurrentDictionary<RespireEndpoint, ReadEndpointRouter.Entry> ReplicaEntries(ReadEndpointRouter router);
+
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_retiring")]
     private static extern ref ConcurrentDictionary<ReadEndpointRouter.Entry, byte> ReplicaRetirements(ReadEndpointRouter router);
+
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_gate")]
     private static extern ref SemaphoreSlim ReplicaEntryGate(ReadEndpointRouter.Entry entry);
+
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "GetCircuitConnectionSlow")]
     private static extern RespireConnection SelectCircuitConnection(RespireClient client,
         RespireConnectionMultiplexer multiplexer, CancellationToken cancellationToken);
+
     [UnsafeAccessor(UnsafeAccessorKind.Method, Name = "TryAcquireReadyConnection")]
     private static extern RespireConnection? SelectReadyConnection(RespireClient client,
         RespireConnectionMultiplexer multiplexer, CancellationToken cancellationToken);
+
     private sealed class Clock : TimeProvider
     {
         private long _timestamp = TimeProvider.System.GetTimestamp();
+
         public override long GetTimestamp() => Interlocked.Read(ref _timestamp);
+
         public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+
         internal void Advance() => Interlocked.Add(ref _timestamp, 60 * TimestampFrequency);
     }
+
     private sealed class HeldReadBacklog(ReadEndpointRouter router) : IAsyncDisposable
     {
         private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1235,7 +1488,12 @@ public sealed class SentinelCircuitDispatchTests
         internal static async Task<HeldReadBacklog> CreateAsync(RespireClient client, bool queued)
         {
             var held = new HeldReadBacklog(client.Core.ReadRouter);
-            if (!queued) return held;
+
+            if (!queued)
+            {
+                return held;
+            }
+
             var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             held._head = client.Core.ReadRouter.EnqueueAsync(RespireReadFrom.PrimaryPreferred, async (_, token) =>
             {
@@ -1249,9 +1507,18 @@ public sealed class SentinelCircuitDispatchTests
 
         internal async Task ReleaseAfterScanQueuesAsync()
         {
-            if (_head is null) return;
+            if (_head is null)
+            {
+                return;
+            }
+
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (ReadBacklog(router)!.Count == 0) await Task.Delay(1, timeout.Token);
+
+            while (ReadBacklog(router)!.Count == 0)
+            {
+                await Task.Delay(1, timeout.Token);
+            }
+
             _release.TrySetResult();
             await _head.WaitAsync(timeout.Token);
         }
@@ -1259,7 +1526,11 @@ public sealed class SentinelCircuitDispatchTests
         public async ValueTask DisposeAsync()
         {
             _release.TrySetResult();
-            if (_head is not null) await _head.WaitAsync(TimeSpan.FromSeconds(5));
+
+            if (_head is not null)
+            {
+                await _head.WaitAsync(TimeSpan.FromSeconds(5));
+            }
         }
 
         [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_backlog")]
@@ -1270,24 +1541,40 @@ public sealed class SentinelCircuitDispatchTests
     {
         private readonly ManualResetEventSlim _release = new();
         private int _armed;
-        internal TaskCompletionSource Selected { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Selected
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         internal void Arm() => Volatile.Write(ref _armed, 1);
+
         internal void Release() => _release.Set();
+
         public override long GetTimestamp()
         {
             if (Interlocked.Exchange(ref _armed, 0) == 1)
             {
                 Selected.TrySetResult();
-                if (!_release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Cursor admission gate was not released.");
+
+                if (!_release.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("Cursor admission gate was not released.");
+                }
             }
+
             return TimeProvider.System.GetTimestamp();
         }
+
         public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+
         public void Dispose() => _release.Dispose();
     }
+
     private readonly struct ThrowingCommand : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer) => throw new IOException("Writer failed before dispatch");
     }
 }

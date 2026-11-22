@@ -175,12 +175,18 @@ public sealed partial class RespireSearchClient
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var page = await AggregateWithCursorAsync(index, expression, options, cursor, cancellationToken).ConfigureAwait(false);
+
         try
         {
             while (true)
             {
                 yield return page.Result;
-                if (page.IsComplete) yield break;
+
+                if (page.IsComplete)
+                {
+                    yield break;
+                }
+
                 page = await ReadCursorAsync(page, count: null, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -188,7 +194,10 @@ public sealed partial class RespireSearchClient
         {
             // A failed cursor read leaves page at the last known cursor ID. Best-effort cleanup
             // may then target a cursor Redis already advanced or expired.
-            if (!page.IsComplete) await TryDeleteCursorAsync(RequirePageIndex(page), page.CursorId).ConfigureAwait(false);
+            if (!page.IsComplete)
+            {
+                await TryDeleteCursorAsync(RequirePageIndex(page), page.CursorId).ConfigureAwait(false);
+            }
         }
     }
 
@@ -209,8 +218,16 @@ public sealed partial class RespireSearchClient
     /// <param name="cancellationToken">Cancels the command.</param>
     public async ValueTask<RespireSearchAggregateCursorPage> ReadCursorAsync(string index, long cursorId, int? count = null, CancellationToken cancellationToken = default)
     {
-        if (cursorId <= 0) throw new ArgumentOutOfRangeException(nameof(cursorId));
-        if (count is <= 0) throw new ArgumentOutOfRangeException(nameof(count));
+        if (cursorId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cursorId));
+        }
+
+        if (count is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
         var name = RequireName(index);
         RespireValue[] arguments = count is { } ? [name, cursorId, "COUNT", count.Value] : [name, cursorId];
         return await ExecuteAsync<RespireSearchAggregateCursorPage>(RespireSearchCommands.CursorRead,
@@ -231,7 +248,11 @@ public sealed partial class RespireSearchClient
     /// <summary>Deletes an aggregation cursor with <c>FT.CURSOR DEL</c>.</summary>
     public async ValueTask DeleteCursorAsync(string index, long cursorId, CancellationToken cancellationToken = default)
     {
-        if (cursorId <= 0) throw new ArgumentOutOfRangeException(nameof(cursorId));
+        if (cursorId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cursorId));
+        }
+
         await ExecuteAsync(RespireSearchCommands.CursorDelete, [RequireName(index), cursorId], cancellationToken).ConfigureAwait(false);
     }
 
@@ -247,7 +268,10 @@ public sealed partial class RespireSearchClient
             // The caller never receives an orphan ID from a malformed page. Cleanup belongs
             // to this page, including a cursor read that returns a different ID.
             if (RespireSearchAggregateCursorPage.ReadCursorId(result) is var orphan and > 0)
+            {
                 await TryDeleteCursorAsync(index, orphan, owner).ConfigureAwait(false);
+            }
+
             throw;
         }
     }
@@ -277,14 +301,23 @@ public sealed partial class RespireSearchClient
     private async ValueTask<bool> IsHybridMissingAsync(RespireServerException error, CancellationToken cancellationToken,
         RespireTelemetry.ErrorObservation owner)
     {
-        if (_hybridConfirmed || error.Code != RespireErrorCodes.Err) return false;
+        if (_hybridConfirmed || error.Code != RespireErrorCodes.Err)
+        {
+            return false;
+        }
+
         try
         {
             using var info = await ExecuteBorrowedAsync(RespireCommands.Server.COMMAND_INFO,
                 ["FT.HYBRID"], cancellationToken, owner).ConfigureAwait(false);
+
             if (info.Type is RespireDataType.Array or RespireDataType.Set && info.Count == 1)
             {
-                if (info[0].IsNull) return true;
+                if (info[0].IsNull)
+                {
+                    return true;
+                }
+
                 _hybridConfirmed = true;
                 return false;
             }
@@ -302,21 +335,39 @@ public sealed partial class RespireSearchClient
     {
         const string marker = "unknown command";
         var markerIndex = message.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (markerIndex < 0) return false;
+
+        if (markerIndex < 0)
+        {
+            return false;
+        }
 
         var token = message.AsSpan(markerIndex + marker.Length).TrimStart();
-        if (token.IsEmpty) return false;
+
+        if (token.IsEmpty)
+        {
+            return false;
+        }
+
         if (token[0] is '\'' or '"')
         {
             var quote = token[0];
             token = token[1..];
             var end = token.IndexOf(quote);
-            if (end >= 0) token = token[..end];
+
+            if (end >= 0)
+            {
+                token = token[..end];
+            }
         }
         else
         {
             var end = 0;
-            while (end < token.Length && !char.IsWhiteSpace(token[end]) && token[end] is not ',' and not ':') end++;
+
+            while (end < token.Length && !char.IsWhiteSpace(token[end]) && token[end] is not ',' and not ':')
+            {
+                end++;
+            }
+
             token = token[..end];
         }
 
@@ -363,6 +414,7 @@ public sealed partial class RespireSearchClient
             [name, .. arguments], cancellationToken, async (response, owner) =>
         {
             RespireResult result;
+
             try
             {
                 result = await response.ConfigureAwait(false);
@@ -375,8 +427,10 @@ public sealed partial class RespireSearchClient
                         "The server does not support FT.HYBRID, which requires Redis Open Source 8.4.0 or later with Redis Search. Server error: " + ex.Message,
                         ex);
                 }
+
                 throw;
             }
+
             using (result)
             {
                 return RespireSearchResult.ParseHybrid(result);
@@ -396,9 +450,18 @@ public sealed partial class RespireSearchClient
         return await ExecuteAsync(selected.Cli ? RespireSearchCommands.ExplainCli : RespireSearchCommands.Explain,
             [RequireName(index), expression.Value, .. arguments], cancellationToken, result =>
         {
-            if (!selected.Cli) return result.AsString();
+            if (!selected.Cli)
+            {
+                return result.AsString();
+            }
+
             var lines = new string[result.Count];
-            for (var i = 0; i < result.Count; i++) lines[i] = result[i].AsString();
+
+            for (var i = 0; i < result.Count; i++)
+            {
+                lines[i] = result[i].AsString();
+            }
+
             return string.Join(Environment.NewLine, lines);
         }).ConfigureAwait(false);
     }

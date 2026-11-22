@@ -5,7 +5,7 @@ public enum RespireDataType : byte
 {
     /// <summary>No parsed value.</summary>
     None = 0,
-    
+
     // RESP2 Types
     /// <summary>RESP simple string (<c>+</c>).</summary>
     SimpleString = (byte)'+',
@@ -17,8 +17,8 @@ public enum RespireDataType : byte
     BulkString = (byte)'$',
     /// <summary>RESP array (<c>*</c>).</summary>
     Array = (byte)'*',
-    
-    // RESP3 Types  
+
+    // RESP3 Types
     /// <summary>RESP null (<c>_</c>).</summary>
     Null = (byte)'_',
     /// <summary>RESP boolean (<c>#</c>).</summary>
@@ -37,7 +37,7 @@ public enum RespireDataType : byte
     Set = (byte)'~',
     /// <summary>RESP push frame (<c>&gt;</c>).</summary>
     Push = (byte)'>',
-    
+
     // Special
     /// <summary>RESP attribute frame (<c>|</c>).</summary>
     Attribute = (byte)'|',

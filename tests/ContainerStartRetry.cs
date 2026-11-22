@@ -30,10 +30,12 @@ internal static class ContainerStartRetry
         where TContainer : IContainer
     {
         var collisions = new List<Exception>();
+
         for (var attempt = 1; ; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var container = createContainer();
+
             try
             {
                 await container.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -41,16 +43,28 @@ internal static class ContainerStartRetry
             }
             catch (Exception startupError)
             {
-                if (collisions.Count != 0) startupError.Data[PreviousPortCollisionsKey] = collisions.ToArray();
-                try { await container.DisposeAsync().ConfigureAwait(false); }
+                if (collisions.Count != 0)
+                {
+                    startupError.Data[PreviousPortCollisionsKey] = collisions.ToArray();
+                }
+
+                try
+                {
+                    await container.DisposeAsync().ConfigureAwait(false);
+                }
                 catch (Exception cleanupError)
                 {
                     throw new AggregateException("Container startup and cleanup both failed.",
                         collisions.Append(startupError).Append(cleanupError));
                 }
+
                 cancellationToken.ThrowIfCancellationRequested();
+
                 if (attempt >= MaximumAttempts || !ContainerPortCollision.IsStandaloneBindCollision(startupError, containerPorts))
+                {
                     throw;
+                }
+
                 collisions.Add(startupError);
             }
         }

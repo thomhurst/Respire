@@ -11,7 +11,9 @@ control while the merge's first parent still predates primary backlog routing.
 Later replica, cluster, circuit, telemetry and mutation ownership helpers move
 into RespireClient.cs unchanged. Apply the patch in reverse to keep the
 baseline's runtime, dependencies, transport and other code identical to the
-merge's first parent.
+merge's first parent. If the candidate's patches do not match, try the
+controls committed with that parent so a reformat can still be benchmarked
+against the previous source layout.
 """
 
 import hashlib
@@ -30,9 +32,14 @@ def git_environment() -> dict[str, str]:
 
 def prepare(checkout: Path, evidence: Path) -> None:
     checkout = checkout.resolve()
-    patches = [Path(__file__).with_name(name).resolve() for name in
-               ('ReadySendStrategy.patch', 'ReadySendStrategy.BeforeReplicaRedirects.patch',
-                'ReadySendStrategy.BeforeOptOut.patch', 'ReadySendStrategy.Standalone.patch')]
+    patch_names = ('ReadySendStrategy.patch', 'ReadySendStrategy.BeforeReplicaRedirects.patch',
+                   'ReadySendStrategy.BeforeOptOut.patch', 'ReadySendStrategy.Standalone.patch')
+    control_directories = (
+        ('candidate', Path(__file__).resolve().parent),
+        ('baseline', checkout / 'scripts/benchmarks'),
+    )
+    patches = [(source, directory / name)
+               for source, directory in control_directories for name in patch_names]
     environment = git_environment()
 
     def git(*arguments: str) -> str:
@@ -52,11 +59,14 @@ def prepare(checkout: Path, evidence: Path) -> None:
 
     before = hashes()
     patch = None
-    for candidate in patches:
-        check = subprocess.run(['git', '-C', str(checkout), 'apply', '--reverse', '--check', str(candidate)],
+    for source, control_patch in patches:
+        if not control_patch.is_file():
+            continue
+        check = subprocess.run(['git', '-C', str(checkout), 'apply', '--reverse', '--check', str(control_patch)],
                                capture_output=True, text=True, env=environment)
         if check.returncode == 0:
-            patch = candidate
+            patch = control_patch
+            patch_source = source
             break
     if patch is None:
         raise RuntimeError(
@@ -79,6 +89,7 @@ def prepare(checkout: Path, evidence: Path) -> None:
         'baseline_commit': git('rev-parse', 'HEAD'),
         'control': 'pre-strategy dispatch; reversed production-only patch',
         'patch_file': patch.name,
+        'patch_source': patch_source,
         'patch_sha256': hashlib.sha256(patch.read_bytes()).hexdigest(),
         'before_sha256': before,
         'after_sha256': hashes(),

@@ -144,13 +144,21 @@ public class RedisRateLimiterBenchmarks
     private static async Task AcquireAsync(RateLimiter limiter)
     {
         using var lease = await limiter.AcquireAsync(1).ConfigureAwait(false);
-        if (!lease.IsAcquired) throw new InvalidOperationException("Benchmark limiter unexpectedly denied a permit.");
+
+        if (!lease.IsAcquired)
+        {
+            throw new InvalidOperationException("Benchmark limiter unexpectedly denied a permit.");
+        }
     }
 #else
     private async Task ExecuteControlAsync(RespireScript script, RespireKey key, RespireValue[] args)
     {
         using var result = await _client.Scripts.ExecuteAsync(script, [key], args).ConfigureAwait(false);
-        if (result.AsInteger() != 1) throw new InvalidOperationException("Benchmark control unexpectedly denied a permit.");
+
+        if (result.AsInteger() != 1)
+        {
+            throw new InvalidOperationException("Benchmark control unexpectedly denied a permit.");
+        }
     }
 #endif
 

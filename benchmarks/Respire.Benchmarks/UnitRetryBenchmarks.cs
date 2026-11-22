@@ -18,10 +18,16 @@ public class UnitRetryBenchmarks
     private readonly RespireKey _second = "{retry-units}:second";
 
     [Params("Standalone", "Sentinel", "Cluster")]
-    public string Owner { get; set; } = "Standalone";
+    public string Owner
+    {
+        get; set;
+    } = "Standalone";
 
     [ParamsSource(nameof(Policies))]
-    public string Policy { get; set; } = "Default";
+    public string Policy
+    {
+        get; set;
+    } = "Default";
 
     // Historical controls predate whole-unit retries. They measure default dispatch only,
     // because an enabled policy there would not own batch or transaction retries.
@@ -47,7 +53,9 @@ public class UnitRetryBenchmarks
         };
         var options = new RespireOptions
         {
-            Endpoints = [new(host, port)], Connections = 1, ThreadPoolMonitoring = false,
+            Endpoints = [new(host, port)],
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             SentinelPrimaryName = Owner == "Sentinel" ? "mymaster" : null,
             UseCluster = Owner == "Cluster",
@@ -61,33 +69,55 @@ public class UnitRetryBenchmarks
         _client = await RespireClient.ConnectAsync(options).ConfigureAwait(false);
         await _client.SetAsync(_first, "value").ConfigureAwait(false);
         await _client.Keys.DeleteAsync(_second).ConfigureAwait(false);
+
         if (Owner == "Sentinel")
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var router = _client.Core.Sentinel!;
+
             while (router.SubscribedSentinelCount < 1)
+            {
                 await Task.Delay(10, timeout.Token).ConfigureAwait(false);
+            }
+
             if (router.NotificationRediscovery is { } reconciliation)
+            {
                 await reconciliation.WaitAsync(timeout.Token).ConfigureAwait(false);
+            }
         }
+
         await Verify().ConfigureAwait(false);
         ReportMemory("connected-idle");
         // Bounded sequential churn is outside the timed region.
         for (var i = 0; i < 256; i++)
+        {
             await Verify().ConfigureAwait(false);
+        }
+
         ReportMemory("after-churn");
     }
 
     private void SetPolicy(RespireOptions options)
     {
-        if (Policy == "Default") return;
+        if (Policy == "Default")
+        {
+            return;
+        }
+
         if (Policy is not ("Disabled" or "Enabled"))
+        {
             throw new InvalidOperationException("Unknown retry policy mode.");
+        }
+
         var property = typeof(RespireOptions).GetProperty("RetryPolicy")
             ?? throw new InvalidOperationException("The selected build has no command retry policy.");
         var policy = Activator.CreateInstance(property.PropertyType)!;
+
         if (Policy == "Disabled")
+        {
             property.PropertyType.GetProperty("MaxAttempts")!.SetValue(policy, 1);
+        }
+
         property.SetValue(options, policy);
     }
 
@@ -119,14 +149,21 @@ public class UnitRetryBenchmarks
             nameof(Transaction) => await Transaction().ConfigureAwait(false),
             _ => throw new InvalidOperationException("Unknown unit retry benchmark method."),
         };
+
         if (result != 1)
+        {
             throw new InvalidOperationException("Unit retry fixture returned an unexpected result.");
+        }
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync().ConfigureAwait(false);
+        if (_client is not null)
+        {
+            await _client.DisposeAsync().ConfigureAwait(false);
+        }
+
         _client = null!;
         ReportMemory("after-dispose");
     }
@@ -141,7 +178,11 @@ public class UnitRetryBenchmarks
         using var process = Process.GetCurrentProcess();
         Console.WriteLine("RECEIVE_MEMORY " + JsonSerializer.Serialize(new
         {
-            stage, owner = Owner, policy = Policy, method = _method, managedBytes = GC.GetTotalMemory(false),
+            stage,
+            owner = Owner,
+            policy = Policy,
+            method = _method,
+            managedBytes = GC.GetTotalMemory(false),
             pohBytes = info.GenerationInfo[4].SizeAfterBytes,
             pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes,
             workingSetBytes = process.WorkingSet64,

@@ -23,8 +23,11 @@ public class ReceiveBufferTests
         await using var server = new FakeRespServer(Encoding.UTF8.GetBytes($"+{text}\r\n"));
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             new RespireConnectionOptions { ReceiveBufferSize = bufferSize }, cancellationToken: deadline.Token);
+
         using (var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token))
+        {
             await Assert.That(response.AsString()).IsEqualTo(text);
+        }
 
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = _ =>
@@ -47,6 +50,7 @@ public class ReceiveBufferTests
     {
         var original = ReceiveBuffer.Rent(4096, pinned);
         var grown = original.Grow(8192);
+
         try
         {
             await Assert.That(grown.Array.Length).IsGreaterThanOrEqualTo(8192);
@@ -67,6 +71,7 @@ public class ReceiveBufferTests
     public async Task SlicedMemoryHasTheCorrectNativePinLifetime(bool pinned)
     {
         var buffer = ReceiveBuffer.Rent(4096, pinned);
+
         try
         {
             buffer.Array[39] = 42;
@@ -90,12 +95,17 @@ public class ReceiveBufferTests
         // Drain the bounded small bucket while holding every rental. A striped
         // pool can return another cached array first when the thread migrates.
         var pooled = new byte[257][];
+
         try
         {
-            for (var index = 0; index < pooled.Length; index++) pooled[index] = RespirePools.ResponsePayloads.Rent(4096);
+            for (var index = 0; index < pooled.Length; index++)
+            {
+                pooled[index] = RespirePools.ResponsePayloads.Rent(4096);
+            }
+
             await Assert.That(pooled.Any(array => ReferenceEquals(array, buffer.Array))).IsEqualTo(!pinned);
         }
-        finally { foreach (var array in pooled) if (array is not null) RespirePools.ResponsePayloads.Return(array); }
+        finally { foreach (var array in pooled) { if (array is not null) { RespirePools.ResponsePayloads.Return(array); } } }
     }
 
     private static GCHandle GetNativeHandle(MemoryHandle handle)

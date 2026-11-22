@@ -27,21 +27,35 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
         await using var real = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer(clock: null, modern);
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+
         foreach (var count in new[] { 0, 3 })
         {
             var key = "progress-" + count;
+
             foreach (var client in new IRespireClient[] { real, fake })
+            {
                 for (var i = 1; i <= count; i++)
+                {
                     await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", "value"));
+                }
+            }
+
             foreach (var start in new[] { "0", "1-0", "2-0", "3-0", "4-0", "$" })
             {
                 foreach (var client in new IRespireClient[] { real, fake })
+                {
                     await client.Streams.CreateGroupAsync(key, start, start);
+                }
+
                 await CompareProgressAsync();
+
                 for (var page = 0; page < 3; page++)
                 {
                     foreach (var client in new IRespireClient[] { real, fake })
+                    {
                         await client.Streams.ReadGroupOnceAsync(key, start, "consumer", new() { Count = 1 });
+                    }
+
                     await CompareProgressAsync();
                 }
 
@@ -73,12 +87,14 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
         var createsEmptyConsumers = await CreatesEmptyConsumersAsync(real);
         await using var server = new RespireFakeServer(clock: null, createsEmptyConsumers);
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+
         async Task<long> ReadEmptyGroupAsync(IRespireClient client)
         {
             await client.Streams.CreateGroupAsync("empty", "group", RespireStreamId.Beginning);
             await Assert.That(await client.Streams.ReadGroupOnceAsync("empty", "group", "consumer")).IsEmpty();
             return (await client.Streams.GroupInfoAsync("empty")).Single().Consumers;
         }
+
         var expected = await ReadEmptyGroupAsync(real);
         var actual = await ReadEmptyGroupAsync(fake);
         await Assert.That(actual).IsEqualTo(expected);
@@ -91,7 +107,8 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
     public async Task HostedConsumerAcknowledgesSuccessAndRetainsNackOnRedis(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         await view.Streams.AddAsync("events", ("payload", "nack"));
         await view.Streams.AddAsync("events", ("payload", "ack"));
@@ -102,13 +119,18 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
         builder.Services.AddRespireStreamWorker<Handler>("events", "workers", new() { ConsumerCount = 2 });
         using var host = builder.Build();
         await host.StartAsync();
+
         try
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             await deliveries.Reader.ReadAsync(deadline.Token);
             await deliveries.Reader.ReadAsync(deadline.Token);
+
             while ((await view.Streams.PendingSummaryAsync("events", "workers")).Count != 1)
+            {
                 await Task.Delay(10, deadline.Token);
+            }
+
             await host.StopAsync(deadline.Token);
             var pending = await view.Streams.PendingAsync("events", "workers");
             await Assert.That(pending.Single().DeliveryCount).IsEqualTo(1);
@@ -124,10 +146,15 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
     public async Task StableConsumerReplaysOnlyItsOwnPendingOnRedis(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
+
         for (var i = 1; i <= 3; i++)
+        {
             await view.Streams.AddAsync("resume", new RespireStreamAddOptions { Id = $"{i}-0" }, ("payload", "ack"));
+        }
+
         await view.Streams.CreateGroupAsync("resume", "workers", RespireStreamId.Beginning);
         await view.Streams.ReadGroupOnceAsync("resume", "workers", "stable-0", new() { Count = 1 });
         await view.Streams.ReadGroupOnceAsync("resume", "workers", "other-0", new() { Count = 1 });
@@ -137,10 +164,12 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
         builder.Services.AddSingleton(deliveries);
         builder.Services.AddRespireStreamWorker<Handler>("resume", "workers", new()
         {
-            ConsumerName = "stable", BatchSize = 1,
+            ConsumerName = "stable",
+            BatchSize = 1,
         });
         using var host = builder.Build();
         await host.StartAsync();
+
         try
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -148,8 +177,12 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
             var fresh = await deliveries.Reader.ReadAsync(deadline.Token);
             await Assert.That(replay.Id).IsEqualTo((RespireStreamId)"1-0");
             await Assert.That(fresh.Id).IsEqualTo((RespireStreamId)"3-0");
+
             while ((await view.Streams.PendingSummaryAsync("resume", "workers")).Count != 1)
+            {
                 await Task.Delay(10, deadline.Token);
+            }
+
             var pending = (await view.Streams.PendingAsync("resume", "workers")).Single();
             await Assert.That(pending.Id).IsEqualTo((RespireStreamId)"2-0");
             await Assert.That(pending.Consumer).IsEqualTo("other-0");
@@ -172,15 +205,21 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
     public async Task FakePendingAndGroupMetadataMatchRedis(int protocol, string start = "0", bool unicodeConsumers = false)
     {
         await using var real = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
         await using var server = new RespireFakeServer(clock: null, await CreatesEmptyConsumersAsync(real));
         await using var fake = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+
         async Task<(RespireStreamPendingSummary Summary, RespireStreamPendingEntry[] Pending, RespireStreamGroupInfo Group)> ReadState(IRespireClient client)
         {
             var first = unicodeConsumers ? "\U00010000" : "a";
             var second = unicodeConsumers ? "\uFFFF" : "b";
+
             for (var i = 1; i <= 3; i++)
+            {
                 await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = $"{i}-0" }, ("f", "value"));
+            }
+
             await client.Streams.CreateGroupAsync("s", "g", start);
             await client.Streams.ReadGroupOnceAsync("s", "g", first, new() { Count = 2 });
             await client.Streams.ReadGroupOnceAsync("s", "g", first, new() { Count = 1 }, RespireStreamId.Beginning);
@@ -190,6 +229,7 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
                 await client.Streams.PendingAsync(new RespireStreamPendingOptions { Start = "(0-0" }, "s", "g"),
                 (await client.Streams.GroupInfoAsync("s")).Single());
         }
+
         var expected = await ReadState(real);
         var actual = await ReadState(fake);
         await Assert.That(actual.Group).IsEqualTo(expected.Group);

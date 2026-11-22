@@ -18,13 +18,18 @@ public class TrackedReplicaRedirectTests
         var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Target.SuppressReply = command =>
         {
-            if (!command.StartsWith("EVAL ")) return false;
+            if (!command.StartsWith("EVAL "))
+            {
+                return false;
+            }
+
             submitted.TrySetResult();
             return true;
         };
         await using var client = await RespireClient.ConnectAsync(fixture.Options);
         var pools = client.Core.OwnedPools.Count;
         using var caller = new CancellationTokenSource();
+
         async Task Acquire()
         {
             if (hashLease)
@@ -38,6 +43,7 @@ public class TrackedReplicaRedirectTests
                     .TryAcquireAsync(TimeSpan.FromMinutes(1), caller.Token);
             }
         }
+
         var pending = Acquire();
         await submitted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         fixture.Target.SuppressReply = null;

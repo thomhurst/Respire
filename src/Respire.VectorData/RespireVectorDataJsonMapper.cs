@@ -20,7 +20,10 @@ public abstract class RespireVectorDataJsonMapper<TRecord> : RespireVectorDataMa
     }
 
     /// <summary>Explicit metadata used for both writes and reads.</summary>
-    public JsonTypeInfo<TRecord> JsonTypeInfo { get; }
+    public JsonTypeInfo<TRecord> JsonTypeInfo
+    {
+        get;
+    }
 
     /// <summary>Explicit CLR properties (including dotted member paths), JSON source paths and query aliases for filters.</summary>
     /// <remarks>These add separate encoded index fields under the reserved root property <c>__respire_filters</c>.
@@ -32,22 +35,41 @@ public abstract class RespireVectorDataJsonMapper<TRecord> : RespireVectorDataMa
 
     internal TRecord Read(ReadOnlySpan<byte> json, bool includeVectors, string[][] vectorPaths, bool removeFilters = false)
     {
-        if (includeVectors && !removeFilters) return Deserialize(json);
+        if (includeVectors && !removeFilters)
+        {
+            return Deserialize(json);
+        }
+
         var maxDepth = removeFilters
             ? RespireVectorDataJsonFilters.DocumentMaxDepth(JsonTypeInfo.Options.MaxDepth)
             : JsonTypeInfo.Options.MaxDepth;
         var root = JsonNode.Parse(json, documentOptions: new() { MaxDepth = maxDepth }) as JsonObject
             ?? throw new JsonException("A vector record must be a JSON object.");
-        if (removeFilters) root.Remove(RespireVectorDataJsonFilters.RootProperty);
+
+        if (removeFilters)
+        {
+            root.Remove(RespireVectorDataJsonFilters.RootProperty);
+        }
+
         foreach (var path in includeVectors ? [] : vectorPaths)
         {
             JsonObject? parent = root;
+
             for (var i = 0; i < path.Length - 1 && parent is not null; i++)
+            {
                 parent = parent[path[i]] as JsonObject;
+            }
+
             parent?.Remove(path[^1]);
         }
+
         var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer, new() { MaxDepth = JsonTypeInfo.Options.MaxDepth == 0 ? 64 : JsonTypeInfo.Options.MaxDepth })) root.WriteTo(writer);
+
+        using (var writer = new Utf8JsonWriter(buffer, new() { MaxDepth = JsonTypeInfo.Options.MaxDepth == 0 ? 64 : JsonTypeInfo.Options.MaxDepth }))
+        {
+            root.WriteTo(writer);
+        }
+
         return Deserialize(buffer.WrittenSpan);
     }
 
@@ -60,27 +82,50 @@ internal static class RespireVectorDataJsonPaths
     internal static JsonPropertyInfo ValidateMetadata(JsonTypeInfo metadata, string[] path, bool forFilter = false)
     {
         JsonPropertyInfo? property = null;
+
         for (var i = 0; i < path.Length; i++)
         {
-            if (forFilter) ValidateFilterSerialization(metadata, path);
+            if (forFilter)
+            {
+                ValidateFilterSerialization(metadata, path);
+            }
+
             property = metadata.Kind == JsonTypeInfoKind.Object
                 ? metadata.Properties.FirstOrDefault(property => property.Name == path[i] && property.Get is not null)
                 : null;
+
             if (property is null)
+            {
                 throw new ArgumentException($"JSON schema path '$.{string.Join('.', path)}' must select a serialized property in the supplied metadata.", nameof(path));
+            }
+
             if (forFilter)
             {
                 if (property.CustomConverter is not null || property.NumberHandling is not (null or JsonNumberHandling.Strict))
+                {
                     throw new ArgumentException($"JSON filter path '$.{string.Join('.', path)}' cannot use custom converters or non-strict number handling.", nameof(path));
+                }
+
                 var propertyMetadata = metadata.Options.GetTypeInfo(property.PropertyType);
                 ValidateFilterSerialization(propertyMetadata, path);
+
                 if (Nullable.GetUnderlyingType(property.PropertyType) is { } underlyingType)
+                {
                     ValidateFilterSerialization(metadata.Options.GetTypeInfo(underlyingType), path);
+                }
+
                 if (property.PropertyType == typeof(string[]) || property.PropertyType == typeof(List<string>))
+                {
                     ValidateFilterSerialization(metadata.Options.GetTypeInfo(typeof(string)), path);
+                }
             }
-            if (i < path.Length - 1) metadata = metadata.Options.GetTypeInfo(property.PropertyType);
+
+            if (i < path.Length - 1)
+            {
+                metadata = metadata.Options.GetTypeInfo(property.PropertyType);
+            }
         }
+
         return property!;
     }
 
@@ -89,27 +134,44 @@ internal static class RespireVectorDataJsonPaths
         if (metadata.Converter.GetType().Assembly != typeof(JsonSerializer).Assembly
             || metadata.NumberHandling is not (null or JsonNumberHandling.Strict)
             || metadata.Options.NumberHandling != JsonNumberHandling.Strict)
+        {
             throw new ArgumentException($"JSON filter path '$.{string.Join('.', path)}' cannot use custom converters or non-strict number handling.", nameof(path));
+        }
     }
 
     // Deliberately restrict schema paths to properties so omission and validation select exactly the indexed value.
     internal static string[] Parse(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        if (!path.StartsWith("$.", StringComparison.Ordinal)) throw new ArgumentException("JSON schema paths must start with $. and select object properties.", nameof(path));
+
+        if (!path.StartsWith("$.", StringComparison.Ordinal))
+        {
+            throw new ArgumentException("JSON schema paths must start with $. and select object properties.", nameof(path));
+        }
+
         var segments = path[2..].Split('.');
+
         if (segments.Any(segment => segment.Length == 0 || segment.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '_')))
+        {
             throw new ArgumentException("JSON path properties must contain only ASCII letters, digits and underscores.", nameof(path));
+        }
+
         return segments;
     }
 
     internal static void ValidateVectors(ReadOnlyMemory<byte> json, RespireVectorDataVectorField[] vectors, string[][] paths, int maxDepth = 0)
     {
         using var document = JsonDocument.Parse(json, new() { MaxDepth = maxDepth });
-        if (document.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException("A vector record must be a JSON object.");
+
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new JsonException("A vector record must be a JSON object.");
+        }
+
         for (var i = 0; i < vectors.Length; i++)
         {
             var value = document.RootElement;
+
             foreach (var segment in paths[i])
             {
                 if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(segment, out value))
@@ -118,12 +180,24 @@ internal static class RespireVectorDataJsonPaths
                     break;
                 }
             }
-            if (value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) continue;
+
+            if (value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+            {
+                continue;
+            }
+
             if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() != vectors[i].Dimensions)
+            {
                 throw new ArgumentException("JSON vector must be a numeric array with the mapped dimensions.", nameof(json));
+            }
+
             foreach (var element in value.EnumerateArray())
+            {
                 if (element.ValueKind != JsonValueKind.Number || !element.TryGetSingle(out var number) || !float.IsFinite(number))
+                {
                     throw new ArgumentException("JSON vector elements must be finite FLOAT32 numbers.", nameof(json));
+                }
+            }
         }
     }
 }

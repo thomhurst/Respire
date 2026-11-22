@@ -6,7 +6,10 @@ namespace Respire;
 public sealed class RespireFieldTtlAttribute(long milliseconds) : Attribute
 {
     /// <summary>The relative field expiry in milliseconds.</summary>
-    public long Milliseconds { get; } = milliseconds > 0 ? milliseconds
+    public long Milliseconds
+    {
+        get;
+    } = milliseconds > 0 ? milliseconds
         : throw new ArgumentOutOfRangeException(nameof(milliseconds));
 }
 

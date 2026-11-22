@@ -28,19 +28,36 @@ public interface IRespireHealthProbe
 public sealed record RespireHealthProbeOptions
 {
     /// <summary>Probe every known primary and replica. Otherwise select one primary, preferring an existing usable connection.</summary>
-    public bool ProbeAllNodes { get; init; }
+    public bool ProbeAllNodes
+    {
+        get; init;
+    }
+
     /// <summary>Maximum simultaneous PING operations. Defaults to eight; must be positive.</summary>
-    public int MaxConcurrentProbes { get; init; } = 8;
+    public int MaxConcurrentProbes
+    {
+        get; init;
+    } = 8;
+
     /// <summary>Whole-round deadline, including admission waits. Defaults to two seconds; must be a positive finite timer duration.</summary>
-    public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(2);
+    public TimeSpan Timeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(2);
 
     /// <summary>Validates concurrency and the positive timer duration; custom providers should call this before probing.</summary>
     /// <exception cref="ArgumentOutOfRangeException">Concurrency is not positive, or Timeout is outside the supported timer range.</exception>
     public void Validate()
     {
-        if (MaxConcurrentProbes <= 0) throw new ArgumentOutOfRangeException(nameof(MaxConcurrentProbes));
+        if (MaxConcurrentProbes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(MaxConcurrentProbes));
+        }
+
         if (Timeout <= TimeSpan.Zero || Timeout.TotalMilliseconds > uint.MaxValue - 1d)
+        {
             throw new ArgumentOutOfRangeException(nameof(Timeout));
+        }
     }
 }
 
@@ -51,10 +68,22 @@ public sealed record RespireHealthProbeResult
     public RespireHealthProbeResult(RespireEndpoint endpoint, bool isConnected, TimeSpan? latency, Exception? error = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(endpoint.Host);
-        if (endpoint.Port is < 0 or > 65535) throw new ArgumentOutOfRangeException(nameof(endpoint));
-        if (latency < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(latency));
+
+        if (endpoint.Port is < 0 or > 65535)
+        {
+            throw new ArgumentOutOfRangeException(nameof(endpoint));
+        }
+
+        if (latency < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(latency));
+        }
+
         if (error is null && (!isConnected || latency is null) || error is not null && latency is not null)
+        {
             throw new ArgumentException("Success requires a connected observation and latency; failure requires an exception and no latency.");
+        }
+
         Endpoint = endpoint;
         IsConnected = isConnected;
         Latency = latency;
@@ -62,11 +91,26 @@ public sealed record RespireHealthProbeResult
     }
 
     /// <summary>The data endpoint captured for this probe.</summary>
-    public RespireEndpoint Endpoint { get; }
+    public RespireEndpoint Endpoint
+    {
+        get;
+    }
+
     /// <summary>Whether the captured connection accepted commands before admission to the probe limit.</summary>
-    public bool IsConnected { get; }
+    public bool IsConnected
+    {
+        get;
+    }
+
     /// <summary>Successful PING round-trip time, excluding admission; null on failure.</summary>
-    public TimeSpan? Latency { get; }
+    public TimeSpan? Latency
+    {
+        get;
+    }
+
     /// <summary>The original node failure, or null on success. Treat exception details as sensitive diagnostics.</summary>
-    public Exception? Error { get; }
+    public Exception? Error
+    {
+        get;
+    }
 }

@@ -73,11 +73,17 @@ public class RespireChannelTests
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         var length = 0;
+
         for (var i = 0; i < 1000; i++)
         {
             length += channel.Bytes.Length;
-            if (allocate) GC.KeepAlive(AllocateControl());
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateControl());
+            }
         }
+
         return (GC.GetAllocatedBytesForCurrentThread() - before, length);
     }
 

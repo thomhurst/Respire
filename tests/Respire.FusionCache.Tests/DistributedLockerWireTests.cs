@@ -20,6 +20,7 @@ public class DistributedLockerWireTests
         var pending = DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.FromMilliseconds(timeoutMs)).AsTask();
         // The smallest uncapped jittered poll is 900 ms. A finite budget must end before it.
         await Assert.That(await pending.WaitAsync(TimeSpan.FromMilliseconds(500))).IsNull();
+
         if (timeoutMs == 0)
         {
             await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
@@ -59,7 +60,11 @@ public class DistributedLockerWireTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command.StartsWith("EVALSHA ", StringComparison.Ordinal)) attemptArrived.TrySetResult();
+                if (command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    attemptArrived.TrySetResult();
+                }
+
                 return null;
             },
         };
@@ -69,6 +74,7 @@ public class DistributedLockerWireTests
         using var cancellation = new CancellationTokenSource();
         var pending = DistributedLockerTests.AcquireAsync(locker, "cache", Timeout.InfiniteTimeSpan, cancellation.Token).AsTask();
         await attemptArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (disposeLocker)
         {
             await locker.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -93,7 +99,11 @@ public class DistributedLockerWireTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("DELEX ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 releaseArrived.TrySetResult();
                 return true;
             },
@@ -102,15 +112,26 @@ public class DistributedLockerWireTests
         await using var locker = new RespireFusionCacheDistributedLocker(client);
         var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero))!;
         using var cancellation = new CancellationTokenSource();
-        if (!cancelDuringCleanup) cancellation.Cancel();
+
+        if (!cancelDuringCleanup)
+        {
+            cancellation.Cancel();
+        }
+
         var release = DistributedLockerTests.ReleaseAsync(locker, "cache", owner, cancellation.Token).AsTask();
         await releaseArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         try
         {
-            if (cancelDuringCleanup) cancellation.Cancel();
+            if (cancelDuringCleanup)
+            {
+                cancellation.Cancel();
+            }
+
             await Assert.That(release.IsCompleted).IsFalse();
         }
         finally { await server.SendRawAsync(":1\r\n"u8.ToArray()); }
+
         await release.WaitAsync(TimeSpan.FromSeconds(5));
         await DistributedLockerTests.ReleaseAsync(locker, "cache", owner, cancellation.Token);
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("DELEX ", StringComparison.Ordinal)))
@@ -125,7 +146,11 @@ public class DistributedLockerWireTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("DELEX ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 releaseArrived.TrySetResult();
                 return true;
             },
@@ -141,16 +166,23 @@ public class DistributedLockerWireTests
             {
                 if (disposal is null && activity.GetTagItem("db.operation.name") is "EVALSHA"
                     && activity.GetTagItem("server.port") is int port && port == server.Port)
+                {
                     disposal = locker.DisposeAsync().AsTask();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
         var pending = DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero).AsTask();
-        try { await releaseArrived.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+        try
+        {
+            await releaseArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
         catch (TimeoutException error)
         {
             throw new InvalidOperationException(string.Join(" | ", server.ReceivedCommands), error);
         }
+
         try
         {
             await Assert.That(disposal).IsNotNull();
@@ -164,6 +196,7 @@ public class DistributedLockerWireTests
                 .Throws<ObjectDisposedException>();
             await disposal!.WaitAsync(TimeSpan.FromSeconds(5));
         }
+
         await Assert.That(await client.Strings.IncrementAsync("client-survives")).IsEqualTo(1);
     }
 
@@ -177,7 +210,11 @@ public class DistributedLockerWireTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return null;
+                if (!command.StartsWith("DELEX ", StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
                 Interlocked.Increment(ref releaseCalls);
                 return "-NOPERM release denied\r\n"u8.ToArray();
             },
@@ -186,7 +223,12 @@ public class DistributedLockerWireTests
         await using var locker = new RespireFusionCacheDistributedLocker(client);
         using var cancellation = new CancellationTokenSource();
         var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero, cancellation.Token))!;
-        if (cancelAfterHandoff) await cancellation.CancelAsync();
+
+        if (cancelAfterHandoff)
+        {
+            await cancellation.CancelAsync();
+        }
+
         var first = DistributedLockerTests.ReleaseAsync(locker, "cache", owner, cancellation.Token).AsTask();
         var second = owner.DisposeAsync().AsTask();
         var error = await Assert.That(async () => await first.WaitAsync(TimeSpan.FromSeconds(5)))
@@ -209,8 +251,16 @@ public class DistributedLockerWireTests
                 ? "$1\r\n1\r\n"u8.ToArray() : null,
             SuppressReply = command =>
             {
-                if (!command.StartsWith("DELEX ", StringComparison.Ordinal)) return false;
-                if (Interlocked.Increment(ref releaseCount) == 2) releasesArrived.TrySetResult();
+                if (!command.StartsWith("DELEX ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                if (Interlocked.Increment(ref releaseCount) == 2)
+                {
+                    releasesArrived.TrySetResult();
+                }
+
                 return true;
             },
         };
@@ -223,8 +273,13 @@ public class DistributedLockerWireTests
         var replies = server.ReceivedCommands.Where(command => command.StartsWith("DELEX ", StringComparison.Ordinal))
             .Select(command => command.Contains(blocked.LeaseKey.ToString(), StringComparison.Ordinal)
                 ? ":1\r\n" : "-NOPERM release denied\r\n").ToArray();
-        try { await Assert.That(disposal.IsCompleted).IsFalse(); }
+
+        try
+        {
+            await Assert.That(disposal.IsCompleted).IsFalse();
+        }
         finally { await server.SendRawAsync(System.Text.Encoding.UTF8.GetBytes(string.Concat(replies))); }
+
         var error = await Assert.That(async () => await disposal.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<RespireServerException>();
         var repeated = await Assert.That(async () => await locker.DisposeAsync())
@@ -255,18 +310,26 @@ public class DistributedLockerWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespireProtocol)protocol, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
+            Protocol = (RespireProtocol)protocol,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         await using var locker = new RespireFusionCacheDistributedLocker(client,
             new()
             {
-                LeaseDuration = TimeSpan.FromSeconds(1), ReleaseOnCallerCancellation = releaseOnCancellation,
+                LeaseDuration = TimeSpan.FromSeconds(1),
+                ReleaseOnCallerCancellation = releaseOnCancellation,
                 MaximumIndependentLeaseLifetime = releaseOnCancellation ? null : TimeSpan.MaxValue,
             });
         var owner = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(locker, "cache", TimeSpan.Zero))!;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!owner.OwnershipCancellationToken.IsCancellationRequested) await Task.Delay(10, timeout.Token);
+
+        while (!owner.OwnershipCancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         await owner.DisposeAsync().AsTask().WaitAsync(timeout.Token);
         await Assert.That(owner.OwnershipLost).IsTrue();
         await Assert.That(owner.RenewalFailure).IsTypeOf<RespireServerException>();
@@ -293,7 +356,9 @@ public class DistributedLockerWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespireProtocol)protocol, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
+            Protocol = (RespireProtocol)protocol,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
         await using var locker = new RespireFusionCacheDistributedLocker(client,
@@ -311,7 +376,9 @@ public class DistributedLockerWireTests
             {
                 if (activity.GetTagItem("db.operation.name") is "EVALSHA"
                     && activity.GetTagItem("server.port") is int port && port == server.Port)
+                {
                     cancellation.Cancel();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);

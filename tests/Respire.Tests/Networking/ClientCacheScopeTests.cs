@@ -86,9 +86,13 @@ public class ClientCacheScopeTests
         });
 #pragma warning restore RESP010
 
-        await Assert.That(() => client.ClientSideCache!.SubscribeInvalidations("cold:key", static _ => { }))
+        await Assert.That(() => client.ClientSideCache!.SubscribeInvalidations("cold:key", static _ =>
+            {
+            }))
             .ThrowsExactly<ArgumentException>();
-        using var covered = client.ClientSideCache!.SubscribeInvalidations("hot:key", static _ => { });
+        using var covered = client.ClientSideCache!.SubscribeInvalidations("hot:key", static _ =>
+        {
+        });
     }
 
     [Test]
@@ -97,7 +101,12 @@ public class ClientCacheScopeTests
     public async Task OptInRawMixedMgetTracksAndCachesCoveredKeysOnlyWithCoalescing(bool coalesce)
     {
         var replies = new List<byte[]> { Hello, FakeRespServer.OkReply };
-        if (coalesce) replies.Add(FakeRespServer.OkReply);
+
+        if (coalesce)
+        {
+            replies.Add(FakeRespServer.OkReply);
+        }
+
         replies.Add("*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray());
         await using var server = new FakeRespServer(replies.ToArray());
         var options = Options(server, ["hot:"]);
@@ -176,7 +185,8 @@ public class ClientCacheScopeTests
 #pragma warning disable RESP010 // Each scope scenario owns and disposes its client to isolate tracking configuration and cache state.
         await using var cached = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", 1)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var fresh = cached.WithoutClientCache();

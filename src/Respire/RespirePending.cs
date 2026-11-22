@@ -44,6 +44,7 @@ public sealed class RespirePending<T> : IDispatchObservation
     // Read only while holding this pending's gate. Copies passed to transport retain this
     // single-shot owner; exporters run after releasing the gate.
     private int ErrorAttempts => _failure is RetryObservation retry ? retry.Owner.RetryAttempts : _errorAttempts;
+
     private Exception? Failure => _failure is RetryObservation retry ? retry.Error : (Exception?)_failure;
 
     private sealed class RetryObservation(ErrorObservation.FinalOwner owner, Exception? error)
@@ -55,7 +56,11 @@ public sealed class RespirePending<T> : IDispatchObservation
     int IDispatchObservation.Attempts(long generation)
     {
         EnterObservationGate();
-        try { return ErrorAttempts; }
+
+        try
+        {
+            return ErrorAttempts;
+        }
         finally { ExitObservationGate(); }
     }
 
@@ -65,16 +70,24 @@ public sealed class RespirePending<T> : IDispatchObservation
     RespireEndpoint? IDispatchObservation.Endpoint(long generation)
     {
         EnterObservationGate();
-        try { return _errorEndpoint; }
+
+        try
+        {
+            return _errorEndpoint;
+        }
         finally { ExitObservationGate(); }
     }
 
     void IDispatchObservation.UseEndpoint(long generation, RespireEndpoint? endpoint)
     {
         EnterObservationGate();
+
         try
         {
-            if ((Volatile.Read(ref _state) & ObservationClosed) == 0) _errorEndpoint = endpoint;
+            if ((Volatile.Read(ref _state) & ObservationClosed) == 0)
+            {
+                _errorEndpoint = endpoint;
+            }
         }
         finally { ExitObservationGate(); }
     }
@@ -82,11 +95,20 @@ public sealed class RespirePending<T> : IDispatchObservation
     void IDispatchObservation.SetAttempts(long generation, int attempts)
     {
         EnterObservationGate();
+
         try
         {
-            if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
+            if ((Volatile.Read(ref _state) & ObservationClosed) != 0)
+            {
+                return;
+            }
+
             ErrorPublication.SetAttempts(ref _errorAttempts, finalPublished: false, attempts);
-            if (_failure is RetryObservation retry) retry.Owner.SetRetryAttempts(_errorAttempts);
+
+            if (_failure is RetryObservation retry)
+            {
+                retry.Owner.SetRetryAttempts(_errorAttempts);
+            }
         }
         finally { ExitObservationGate(); }
     }
@@ -94,11 +116,22 @@ public sealed class RespirePending<T> : IDispatchObservation
     void IDispatchObservation.Retry(long generation)
     {
         EnterObservationGate();
+
         try
         {
-            if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
-            if (_failure is RetryObservation retry) retry.Owner.RecordRetry();
-            else ErrorPublication.TryRecordRetry(ref _errorAttempts, finalPublished: false);
+            if ((Volatile.Read(ref _state) & ObservationClosed) != 0)
+            {
+                return;
+            }
+
+            if (_failure is RetryObservation retry)
+            {
+                retry.Owner.RecordRetry();
+            }
+            else
+            {
+                ErrorPublication.TryRecordRetry(ref _errorAttempts, finalPublished: false);
+            }
         }
         finally { ExitObservationGate(); }
     }
@@ -107,16 +140,32 @@ public sealed class RespirePending<T> : IDispatchObservation
     {
         ErrorObservation.Borrower borrower;
         EnterObservationGate();
+
         try
         {
-            if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return false;
+            if ((Volatile.Read(ref _state) & ObservationClosed) != 0)
+            {
+                return false;
+            }
+
             if (_failure is not RetryObservation)
+            {
                 _failure = new RetryObservation(ErrorObservation.StartFailure(_errorAttempts), (Exception?)_failure);
+            }
+
             borrower = ((RetryObservation)_failure).Owner.Borrow();
-            if (!overrideEndpoint) endpoint = _errorEndpoint;
+
+            if (!overrideEndpoint)
+            {
+                endpoint = _errorEndpoint;
+            }
         }
         finally { ExitObservationGate(); }
-        try { return borrower.RecordHandled(error, endpoint); }
+
+        try
+        {
+            return borrower.RecordHandled(error, endpoint);
+        }
         finally { borrower.Complete(); }
     }
 
@@ -162,7 +211,10 @@ public sealed class RespirePending<T> : IDispatchObservation
                 case RespirePendingStatus.Succeeded:
                     return _value!;
                 case RespirePendingStatus.Faulted:
-                    if ((Volatile.Read(ref _state) & ErrorInspectionAllowed) != 0) ReportError();
+                    if ((Volatile.Read(ref _state) & ErrorInspectionAllowed) != 0)
+                    {
+                        ReportError();
+                    }
                     ExceptionDispatchInfo.Capture(Failure!).Throw();
                     return default!;
                 case RespirePendingStatus.Aborted:
@@ -182,11 +234,19 @@ public sealed class RespirePending<T> : IDispatchObservation
     internal void Fail(Exception error)
     {
         EnterObservationGate();
+
         try
         {
             RespireException.PopulateEndpoint(error, _errorEndpoint);
-            if (_failure is RetryObservation retry) retry.Error = error;
-            else _failure = error;
+
+            if (_failure is RetryObservation retry)
+            {
+                retry.Error = error;
+            }
+            else
+            {
+                _failure = error;
+            }
         }
         finally { ExitObservationGate(); }
         // Execution owns terminal transitions and calls ReportError only after Fail returns.
@@ -203,6 +263,7 @@ public sealed class RespirePending<T> : IDispatchObservation
         RespireEndpoint? endpoint;
         bool faulted;
         EnterObservationGate();
+
         try
         {
             faulted = Status == RespirePendingStatus.Faulted;
@@ -216,6 +277,7 @@ public sealed class RespirePending<T> : IDispatchObservation
             error = faulted && (Interlocked.Or(ref _state, ErrorRecorded) & ErrorRecorded) == 0 ? failure : null;
         }
         finally { ExitObservationGate(); }
+
         ErrorObservation.FinishFinal(owner, error, retryAttempts: attempts, endpoint: endpoint);
         return faulted;
     }
@@ -223,7 +285,10 @@ public sealed class RespirePending<T> : IDispatchObservation
     private TException ObserveInspection<TException>(TException error, int flag) where TException : Exception
     {
         if ((Interlocked.Or(ref _state, flag) & flag) == 0)
+        {
             ErrorObservation.FinishFinal(default, error);
+        }
+
         return error;
     }
 
@@ -232,12 +297,21 @@ public sealed class RespirePending<T> : IDispatchObservation
     internal void AddErrorAttempts(int attempts)
     {
         EnterObservationGate();
+
         try
         {
-            if ((Volatile.Read(ref _state) & ObservationClosed) != 0) return;
+            if ((Volatile.Read(ref _state) & ObservationClosed) != 0)
+            {
+                return;
+            }
+
             _errorAttempts = ErrorAttempts;
             ErrorPublication.TryAddAttempts(ref _errorAttempts, finalPublished: false, attempts);
-            if (_failure is RetryObservation retry) retry.Owner.SetRetryAttempts(_errorAttempts);
+
+            if (_failure is RetryObservation retry)
+            {
+                retry.Owner.SetRetryAttempts(_errorAttempts);
+            }
         }
         finally { ExitObservationGate(); }
     }
@@ -248,12 +322,17 @@ public sealed class RespirePending<T> : IDispatchObservation
     private void EnterObservationGate()
     {
         var spinner = new SpinWait();
+
         while (true)
         {
             var state = Volatile.Read(ref _state);
+
             if ((state & ObservationGate) == 0
                 && Interlocked.CompareExchange(ref _state, state | ObservationGate, state) == state)
+            {
                 return;
+            }
+
             spinner.SpinOnce();
         }
     }
@@ -269,7 +348,11 @@ public sealed class RespirePending<T> : IDispatchObservation
     private void SetStatus(RespirePendingStatus status)
     {
         int state;
-        do { state = Volatile.Read(ref _state); }
+
+        do
+        {
+            state = Volatile.Read(ref _state);
+        }
         while (Interlocked.CompareExchange(ref _state, (state & ~StatusMask) | (int)status, state) != state);
     }
 }

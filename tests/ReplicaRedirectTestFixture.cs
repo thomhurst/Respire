@@ -4,7 +4,10 @@ namespace Respire.Tests.Networking;
 
 internal sealed class ReplicaRedirectTestFixture : IAsyncDisposable
 {
-    internal FakeRespServer Target { get; } = new(32)
+    internal FakeRespServer Target
+    {
+        get;
+    } = new(32)
     {
         ReplyOverride = (_, command) => command switch
         {
@@ -17,9 +20,20 @@ internal sealed class ReplicaRedirectTestFixture : IAsyncDisposable
         },
     };
 
-    internal FakeRespServer Source { get; }
-    private FakeRespServer? Sentinel { get; }
-    internal RespireOptions Options { get; }
+    internal FakeRespServer Source
+    {
+        get;
+    }
+
+    private FakeRespServer? Sentinel
+    {
+        get;
+    }
+
+    internal RespireOptions Options
+    {
+        get;
+    }
 
     internal ReplicaRedirectTestFixture(bool sentinel, bool cache, int? targetPort = null)
     {
@@ -35,6 +49,7 @@ internal sealed class ReplicaRedirectTestFixture : IAsyncDisposable
                 _ => FakeRespServer.OkReply,
             },
         };
+
         if (sentinel)
         {
             Sentinel = new(64)
@@ -48,9 +63,12 @@ internal sealed class ReplicaRedirectTestFixture : IAsyncDisposable
                 },
             };
         }
+
         Options = new()
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, EnableReplicaRedirects = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            EnableReplicaRedirects = true,
             Endpoints = [new("127.0.0.1", Sentinel?.Port ?? Source.Port)],
             SentinelPrimaryName = sentinel ? "mymaster" : null,
             ClientSideCache = cache ? new() : null,
@@ -59,7 +77,11 @@ internal sealed class ReplicaRedirectTestFixture : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (Sentinel is not null) await Sentinel.DisposeAsync();
+        if (Sentinel is not null)
+        {
+            await Sentinel.DisposeAsync();
+        }
+
         await Source.DisposeAsync();
         await Target.DisposeAsync();
     }

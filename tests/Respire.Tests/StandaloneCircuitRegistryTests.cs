@@ -19,9 +19,19 @@ public class StandaloneCircuitRegistryTests
             checks++;
             return live.Contains(endpoint);
         });
-        foreach (var endpoint in endpoints) registry.Acquire(endpoint, default).Dispose();
+
+        foreach (var endpoint in endpoints)
+        {
+            registry.Acquire(endpoint, default).Dispose();
+        }
+
         checks = 0;
-        for (var i = 0; i < 100; i++) registry.Acquire(endpoints[i % endpoints.Length], default).Dispose();
+
+        for (var i = 0; i < 100; i++)
+        {
+            registry.Acquire(endpoints[i % endpoints.Length], default).Dispose();
+        }
+
         await Assert.That(checks).IsEqualTo(0);
         var held = registry.Acquire(endpoints[0], default);
         live.Remove(endpoints[0]);
@@ -31,7 +41,12 @@ public class StandaloneCircuitRegistryTests
         held.Dispose();
         await Assert.That(registry.CountForTests).IsEqualTo(31);
         checks = 0;
-        for (var i = 1; i < 32; i++) registry.Acquire(endpoints[i], default).Dispose();
+
+        for (var i = 1; i < 32; i++)
+        {
+            registry.Acquire(endpoints[i], default).Dispose();
+        }
+
         await Assert.That(checks).IsEqualTo(0);
     }
 
@@ -52,13 +67,19 @@ public class StandaloneCircuitRegistryTests
     private static long Measure(StandaloneCircuitRegistry registry, RespireEndpoint endpoint, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             var admission = registry.Acquire(endpoint, default);
             admission.Success();
             admission.Dispose();
-            if (allocate) GC.KeepAlive(new byte[128]);
+
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[128]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -73,7 +94,12 @@ public class StandaloneCircuitRegistryTests
         failed.Dispose();
         var original = registry.GetForTests(endpoint);
         await Assert.That(() => registry.Acquire(current, default)).Throws<RespireCircuitOpenException>();
-        for (var i = 0; i < 64; i++) registry.Acquire(new("history", 1000 + i), default).Dispose();
+
+        for (var i = 0; i < 64; i++)
+        {
+            registry.Acquire(new("history", 1000 + i), default).Dispose();
+        }
+
         await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
         await Assert.That(ReferenceEquals(registry.GetForTests(current), original)).IsTrue();
         await Assert.That(() => registry.Acquire(current, default)).Throws<RespireCircuitOpenException>();
@@ -101,12 +127,14 @@ public class StandaloneCircuitRegistryTests
         failed.Failed(new RespireConnectionException("failed"), default);
         failed.Dispose();
         var original = registry.GetForTests(current);
+
         for (var i = 0; i < 64; i++)
         {
             var admission = registry.Acquire(new("history", 1000 + i), default);
             admission.Success();
             admission.Dispose();
         }
+
         await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
         await Assert.That(ReferenceEquals(registry.GetForTests(current), original)).IsTrue();
         await Assert.That(() => registry.Acquire(current, default)).Throws<RespireCircuitOpenException>();
@@ -126,7 +154,12 @@ public class StandaloneCircuitRegistryTests
         var original = registry.GetForTests(endpoint);
         CircuitClock(original) = new FutureClock();
         var probe = registry.Acquire(endpoint, default);
-        for (var i = 0; i < 64; i++) registry.Acquire(new("history", 1000 + i), default).Dispose();
+
+        for (var i = 0; i < 64; i++)
+        {
+            registry.Acquire(new("history", 1000 + i), default).Dispose();
+        }
+
         var returned = registry.Acquire(endpoint, default);
         await Assert.That(ReferenceEquals(registry.GetForTests(endpoint), original)).IsTrue();
         await Assert.That(original.Snapshot().ActiveProbes).IsEqualTo(2);
@@ -156,14 +189,20 @@ public class StandaloneCircuitRegistryTests
         Parallel.For(0, permits.Length, i =>
         {
             if (!ReferenceEquals(registry.GetForTests(new("active", 1000 + i)), circuits[i]))
+            {
                 throw new InvalidOperationException("An outstanding circuit was replaced.");
+            }
+
             permits[i].Success();
             permits[i].Dispose();
             permits[i].Dispose();
         });
         await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
+
         foreach (var circuit in circuits)
+        {
             await Assert.That(circuit.Snapshot().SampleCount).IsEqualTo(1);
+        }
     }
 
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_clock")]
@@ -172,6 +211,7 @@ public class StandaloneCircuitRegistryTests
     private sealed class FutureClock : TimeProvider
     {
         public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+
         public override long GetTimestamp()
             => TimeProvider.System.GetTimestamp() + TimestampFrequency * 60;
     }

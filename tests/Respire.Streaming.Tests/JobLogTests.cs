@@ -24,9 +24,11 @@ public class JobLogTests
             new() { MaximumLogLineBytes = 0 }, new() { MaximumLogLineBytes = 16385 },
             new() { LogRetention = TimeSpan.Zero }, new() { LogRetention = TimeSpan.FromDays(30) },
         })
+        {
             await Assert.That(() => new ServiceCollection().AddRespireJobQueue<Handler, string>(
                 "logs", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString, null, options))
                 .Throws<ArgumentOutOfRangeException>();
+        }
     }
 
     public sealed class Handler : IRespireStreamHandler<RespireJob<string>>

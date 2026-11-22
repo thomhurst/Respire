@@ -120,9 +120,11 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         (await client.Streams.CreateGroupAsync(key, group, RespireStreamId.Beginning)).Should().BeTrue();
 
         var delivered = new List<RespireStreamEntry>();
+
         await foreach (var entry in client.Streams.ReadGroupAsync(key, group, "alice", batchSize: 2))
         {
             delivered.Add(entry);
+
             if (delivered.Count == 2)
             {
                 break;
@@ -141,6 +143,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         autoClaimed.DeletedIds.Should().BeEmpty();
 
         var replayed = new List<RespireStreamEntry>();
+
         await foreach (var entry in client.Streams.ReadGroupAsync(
             key, group, "bob", startAt: RespireStreamId.Beginning, batchSize: 10))
         {
@@ -177,6 +180,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         (await client.Strings.GetStringAsync(copy)).Should().Be("two");
 
         var keys = new List<string>();
+
         await foreach (var key in client.Keys.ScanAsync(
             prefix + "*", countHint: 1, type: RespireKeyType.String))
         {
@@ -249,18 +253,21 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
             sortedSetKey, ("ada", 1.5), ("grace", 2.5));
 
         var hashEntries = new List<KeyValuePair<string, string>>();
+
         await foreach (var entry in client.Hashes.ScanAsync(hashKey, "profile:*", countHint: 1))
         {
             hashEntries.Add(entry);
         }
 
         var setMembers = new List<string>();
+
         await foreach (var member in client.Sets.ScanAsync(setKey, "a*", countHint: 1))
         {
             setMembers.Add(member);
         }
 
         var sortedEntries = new List<RespireSortedSetEntry>();
+
         await foreach (var entry in client.SortedSets.ScanAsync(sortedSetKey, countHint: 1))
         {
             sortedEntries.Add(entry);

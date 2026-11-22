@@ -41,12 +41,14 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         category: DiagnosticIds.Category,
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
-        description:
-            "A RespirePending<T> only carries a value once its batch has been sent or its "
+        description: "A RespirePending<T> only carries a value once its batch has been sent or its "
             + "transaction committed; reading it earlier throws RespirePendingNotReadyException. "
             + "Queue the commands, flush, then read the pendings.");
 
-    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
+    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
+    {
+        get;
+    } = ImmutableArray.Create(Rule);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -56,6 +58,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         context.RegisterCompilationStartAction(static compilationStart =>
         {
             var pendingType = compilationStart.Compilation.GetTypeByMetadataName(PendingTypeName);
+
             if (pendingType is null)
             {
                 return;
@@ -64,6 +67,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             var batchType = compilationStart.Compilation.GetTypeByMetadataName(BatchTypeName);
             var transactionType = compilationStart.Compilation.GetTypeByMetadataName(TransactionTypeName);
             var transactionBaseType = compilationStart.Compilation.GetTypeByMetadataName(TransactionBaseTypeName);
+
             if (batchType is null && transactionType is null && transactionBaseType is null)
             {
                 return;
@@ -81,6 +85,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeResultAccess(SyntaxNodeAnalysisContext context, KnownTypes known)
     {
         var member = (MemberAccessExpressionSyntax)context.Node;
+
         if (member.Name.Identifier.ValueText != ResultPropertyName)
         {
             return;
@@ -103,6 +108,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeResultBinding(SyntaxNodeAnalysisContext context, KnownTypes known)
     {
         var binding = (MemberBindingExpressionSyntax)context.Node;
+
         if (binding.Name.Identifier.ValueText != ResultPropertyName
             || ScopeWalker.IsInsideNameOf(context.SemanticModel, binding, context.CancellationToken)
             || context.SemanticModel.GetSymbolInfo(binding, context.CancellationToken).Symbol is not IPropertySymbol property
@@ -118,12 +124,14 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeRead(SyntaxNodeAnalysisContext context, ExpressionSyntax read, ExpressionSyntax pending, KnownTypes known)
     {
         var scope = ScopeWalker.GetEnclosingScope(read);
+
         if (scope is null)
         {
             return;
         }
 
         var origins = ResolveOriginatingCalls(context, scope, pending, read).ToArray();
+
         if (origins.Length == 0)
         {
             return;
@@ -141,6 +149,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
             var isTransaction = IsTypeOrDerivedFrom(batch.Type, known.Transaction)
                 || IsTypeOrDerivedFrom(batch.Type, known.TransactionBase);
+
             if (!isTransaction && !SymbolEqualityComparer.Default.Equals(batch.Type, known.Batch))
             {
                 continue;
@@ -203,7 +212,10 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     yield return origin;
                 }
 
-                if (IsDefinitelyNonNullPending(context, coalesce.Left)) yield break;
+                if (IsDefinitelyNonNullPending(context, coalesce.Left))
+                {
+                    yield break;
+                }
 
                 foreach (var origin in ResolveOriginatingCalls(context, scope, coalesce.Right, read, resolving))
                 {
@@ -275,6 +287,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     var otherWrites = writes.Where(write =>
                         !ScopeWalker.IsSame(write, definition.Write)
                         && !write.IsKind(SyntaxKind.CoalesceAssignmentExpression));
+
                     if (!ScopeWalker.CanReachWithoutCrossing(
                             context.SemanticModel,
                             scope,
@@ -350,6 +363,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         var declared = (method.ReducedFrom ?? method).OriginalDefinition;
         var nonNullWhenArguments = new List<string>();
         var returnsNotNull = false;
+
         foreach (var attribute in declared.GetReturnTypeAttributes())
         {
             if (attribute.AttributeClass?.ContainingNamespace.ToDisplayString() != "System.Diagnostics.CodeAnalysis")
@@ -428,6 +442,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private static ILocalSymbol? ResolveRootLocal(SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
         expression = ScopeWalker.Unwrap(expression);
+
         while (expression is MemberAccessExpressionSyntax member)
         {
             expression = ScopeWalker.Unwrap(member.Expression);
@@ -467,8 +482,13 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         ImmutableHashSet<ISymbol>? aliases = null,
         bool includeFlushes = false)
     {
-        if (aliases?.Contains(local) == true) yield break;
+        if (aliases?.Contains(local) == true)
+        {
+            yield break;
+        }
+
         aliases = (aliases ?? ImmutableHashSet.Create<ISymbol>(SymbolEqualityComparer.Default)).Add(local);
+
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
             if (before is not null && reference.SpanStart > before.SpanStart)
@@ -498,6 +518,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             }
 
             var operation = GetInspectedValue(context.SemanticModel.GetOperation(reference, context.CancellationToken));
+
             if (operation?.Parent is IIsPatternOperation pattern
                 && (pattern.Pattern switch
                 {
@@ -510,19 +531,30 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 foreach (var escape in FindEscapes(context, scope, alias, allowReassignment: true,
                     allowNamedFlushExtension: allowNamedFlushExtension, allowLocalAlias: allowLocalAlias,
                     before: before, origin: pattern.Syntax, aliases: aliases, includeFlushes: includeFlushes))
+                {
                     yield return escape;
+                }
+
                 continue;
             }
+
             if (includeFlushes && origin is not null
                 && reference.FirstAncestorOrSelf<InvocationExpressionSyntax>() is { } flush
                 && IsFlushInvocation(context, flush, local))
             {
                 foreach (var completion in GetCompletionExpressions(context, scope, flush, local, origin))
+                {
                     yield return completion;
+                }
+
                 continue;
             }
+
             if (IsInspection(operation))
+            {
                 continue;
+            }
+
             var use = ScopeWalker.GetOutermostTransparentExpression(reference);
 
             switch (use.Parent)
@@ -549,20 +581,17 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, use):
                     break;
 
-                case AssignmentExpressionSyntax assignment
-                    when ScopeWalker.IsSame(assignment.Left, use)
+                case AssignmentExpressionSyntax assignment when ScopeWalker.IsSame(assignment.Left, use)
                          && (allowReassignment
                              || allowedAssignment is not null && ScopeWalker.IsSame(assignment, allowedAssignment)):
                     break;
 
-                case EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator }
-                    when allowLocalAlias
+                case EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator } when allowLocalAlias
                          && context.SemanticModel.GetDeclaredSymbol(declarator, context.CancellationToken)
                              is ILocalSymbol:
                     break;
 
-                case AssignmentExpressionSyntax assignment
-                    when allowLocalAlias
+                case AssignmentExpressionSyntax assignment when allowLocalAlias
                          && ScopeWalker.IsSame(assignment.Right, use)
                          && context.SemanticModel.GetSymbolInfo(
                              ScopeWalker.Unwrap(assignment.Left), context.CancellationToken).Symbol
@@ -581,7 +610,10 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     {
         while (operation?.Parent is IConversionOperation { OperatorMethod: null }
             or IParenthesizedOperation or ITupleOperation)
+        {
             operation = operation.Parent;
+        }
+
         return operation;
     }
 
@@ -591,8 +623,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             || operation?.Parent is IMemberReferenceOperation and not IMethodReferenceOperation
             || operation?.Parent is IInvocationOperation invocation && invocation.Instance == operation
                 && invocation.TargetMethod.ReducedFrom is null
-            || operation?.Parent is IArgumentOperation { Parent: IInvocationOperation
-                { TargetMethod: { ContainingType.SpecialType: SpecialType.System_Object, Name: "ReferenceEquals" or "Equals" } } };
+            || operation?.Parent is IArgumentOperation { Parent: IInvocationOperation { TargetMethod: { ContainingType.SpecialType: SpecialType.System_Object, Name: "ReferenceEquals" or "Equals" } } };
 
     private static bool HasFlushBefore(
         SyntaxNodeAnalysisContext context,
@@ -670,13 +701,11 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     }
 
     private static ILocalSymbol? ResolveStoredFlushLocal(
-        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
-        => expression.Parent switch
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression) => expression.Parent switch
         {
             EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator } =>
                 context.SemanticModel.GetDeclaredSymbol(declarator, context.CancellationToken) as ILocalSymbol,
-            AssignmentExpressionSyntax assignment
-                when assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
+            AssignmentExpressionSyntax assignment when assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
                      && ScopeWalker.IsSame(assignment.Right, expression) =>
                 context.SemanticModel.GetSymbolInfo(
                     ScopeWalker.Unwrap(assignment.Left), context.CancellationToken).Symbol as ILocalSymbol,
@@ -717,6 +746,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                      scope, local, context.SemanticModel, context.CancellationToken))
         {
             var use = ScopeWalker.GetOutermostTransparentExpression(reference);
+
             if (use.SpanStart >= completion.SpanStart
                 || use.Parent is not MemberAccessExpressionSyntax member
                 || !ScopeWalker.IsSame(member.Expression, use)
@@ -765,6 +795,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNode origin)
     {
         var unwrappedDefinition = ScopeWalker.Unwrap(definition);
+
         foreach (var invocation in definition.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
         {
             if (!ScopeWalker.IsSame(
@@ -818,6 +849,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
         expression = GetOutermostCompletionExpression(context, expression);
+
         if (expression.Parent is AwaitExpressionSyntax awaitExpression
             && ScopeWalker.IsSame(awaitExpression.Expression, expression))
         {
@@ -935,12 +967,24 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         INamedTypeSymbol? transaction,
         INamedTypeSymbol? transactionBase)
     {
-        public INamedTypeSymbol Pending { get; } = pending;
+        public INamedTypeSymbol Pending
+        {
+            get;
+        } = pending;
 
-        public INamedTypeSymbol? Batch { get; } = batch;
+        public INamedTypeSymbol? Batch
+        {
+            get;
+        } = batch;
 
-        public INamedTypeSymbol? Transaction { get; } = transaction;
+        public INamedTypeSymbol? Transaction
+        {
+            get;
+        } = transaction;
 
-        public INamedTypeSymbol? TransactionBase { get; } = transactionBase;
+        public INamedTypeSymbol? TransactionBase
+        {
+            get;
+        } = transactionBase;
     }
 }

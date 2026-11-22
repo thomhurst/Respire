@@ -28,7 +28,8 @@ public class ClientSideCacheTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate cache state, topology, and scripted replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
@@ -42,12 +43,15 @@ public class ClientSideCacheTests
             ? client.ExecuteAsync(RespireCommands.Stream.XREADGROUP,
                 ["GROUP", "group", "consumer", "BLOCK", 0, "STREAMS", "events", ">"], cancellationToken: cancellation.Token).AsTask()
             : AwaitEntryAsync();
+
         async Task<RespireResult> AwaitEntryAsync()
         {
             _ = await entries.MoveNextAsync();
             return default;
         }
+
         await parked.WaitAsync();
+
         try
         {
             await Assert.That(await client.GetStringAsync("other")).IsEqualTo("value");
@@ -67,8 +71,12 @@ public class ClientSideCacheTests
         finally
         {
             cancellation.Cancel();
-            await Assert.That(async () => { using var reply = await pending; }).Throws<OperationCanceledException>();
+            await Assert.That(async () =>
+            {
+                using var reply = await pending;
+            }).Throws<OperationCanceledException>();
         }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
     }
 
@@ -82,7 +90,11 @@ public class ClientSideCacheTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("INCREX ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("INCREX ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -512,10 +524,12 @@ public class ClientSideCacheTests
         await using var client = await ConnectAsync(server);
 
         await client.GetStringAsync("key");
+
         using (var result = await client.ExecuteAsync(RespireCommands.Server.MEMORY, "USAGE", "key", "SAMPLES", 0))
         {
             await Assert.That(result.AsInteger()).IsEqualTo(42);
         }
+
         await Assert.That(client.ClientSideCache!.Count).IsGreaterThanOrEqualTo(1);
 
         await client.ExecuteFireAndForgetAsync(RespireCommands.Server.MEMORY, "USAGE", "key", "SAMPLES", 0);
@@ -589,6 +603,7 @@ public class ClientSideCacheTests
 
         var pending = client.ExecuteAsync(RespireCommands.Hash.HGET, ["hash", field]).AsTask();
         field[0] = (byte)'x';
+
         using (var first = await pending)
         {
             await Assert.That(first.AsString()).IsEqualTo("value");
@@ -1210,7 +1225,11 @@ public class ClientSideCacheTests
         {
             // Setup replies can arrive in separate reads. Gate only the application
             // batch so tracking setup never waits for ASKING before it can complete.
-            if (command == "ASKING") target.MinimumCommandsBeforeReply = 3;
+            if (command == "ASKING")
+            {
+                target.MinimumCommandsBeforeReply = 3;
+            }
+
             return null;
         };
         var slot = ClusterHash.GetSlot("key");
@@ -1370,7 +1389,11 @@ public class ClientSideCacheTests
         {
             SuppressReply = command =>
             {
-                if (command != "FLUSHDB" + suffix) return false;
+                if (command != "FLUSHDB" + suffix)
+                {
+                    return false;
+                }
+
                 arrived.TrySetResult();
                 return true;
             },
@@ -1511,6 +1534,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server);
         await client.GetStringAsync("key");
+
         if (deferred)
         {
             using var batch = client.CreateBatch();
@@ -1542,6 +1566,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray(), reply);
         await using var client = await ConnectAsync(server);
         await client.GetStringAsync("key");
+
         if (load)
         {
             await Assert.That(await client.Scripts.LoadAsync(script)).IsEqualTo(script.Sha1);
@@ -1550,6 +1575,7 @@ public class ClientSideCacheTests
         {
             await client.Scripts.FlushAsync(mode);
         }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(1);
@@ -1584,7 +1610,11 @@ public class ClientSideCacheTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("MSETNX ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("MSETNX ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -1618,7 +1648,11 @@ public class ClientSideCacheTests
         {
             SuppressReply = value =>
             {
-                if (!value.StartsWith(command + " ", StringComparison.Ordinal)) return false;
+                if (!value.StartsWith(command + " ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -1670,7 +1704,11 @@ public class ClientSideCacheTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith(setLastId ? "XSETID " : "XGROUP CREATECONSUMER ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith(setLastId ? "XSETID " : "XGROUP CREATECONSUMER ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -1704,7 +1742,11 @@ public class ClientSideCacheTests
         {
             SuppressReply = command =>
             {
-                if (!command.Contains(" IFEQ ", StringComparison.Ordinal)) return false;
+                if (!command.Contains(" IFEQ ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -1753,14 +1795,19 @@ public class ClientSideCacheTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate cache state, topology, and scripted replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, AllowAdmin = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            AllowAdmin = true,
+            Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         InsertCachedValue(client.Core.ClientCache!, "key", "old");
+
         if (execution == 0)
+        {
             await client.Server.FlushAllAsync(mode, default);
+        }
         else
         {
             using var batch = client.CreateBatch();
@@ -1768,9 +1815,19 @@ public class ClientSideCacheTests
             IRespireCommandQueue queue = execution == 2 ? tx : batch;
             var flush = queue.Server.FlushAll(mode);
             await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
-            if (execution == 2) await tx.CommitAsync(); else await batch.ExecuteAsync();
+
+            if (execution == 2)
+            {
+                await tx.CommitAsync();
+            }
+            else
+            {
+                await batch.ExecuteAsync();
+            }
+
             await Assert.That(flush.Result).IsTrue();
         }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
     }
 
@@ -1785,8 +1842,12 @@ public class ClientSideCacheTests
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         var page = await client.Hashes.ScanFieldsPageAsync("hash");
         await Assert.That(page.Fields).IsEquivalentTo(new[] { "field" });
+
         await foreach (var field in client.Hashes.ScanFieldsAsync("hash"))
+        {
             await Assert.That(field).IsEqualTo("field");
+        }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
@@ -1835,10 +1896,14 @@ public class ClientSideCacheTests
                     await client.Strings.SetAsync("key", "new", cancellationToken: cancellation.Token);
                     break;
                 case 1:
-                    using (await client.ExecuteAsync(RespireCommands.String.SET, ["key", "new"], cancellationToken: cancellation.Token)) { }
+                    using (await client.ExecuteAsync(RespireCommands.String.SET, ["key", "new"], cancellationToken: cancellation.Token))
+                    {
+                    }
                     break;
                 case 2:
-                    using (await client.ExecuteAsync(RespireCommands.String.MSET, ["key", "new", "other", "new"], cancellationToken: cancellation.Token)) { }
+                    using (await client.ExecuteAsync(RespireCommands.String.MSET, ["key", "new", "other", "new"], cancellationToken: cancellation.Token))
+                    {
+                    }
                     break;
                 case 3:
                     await client.Scripts.ExecuteIntegerAsync(RespireScript.Create("return 1"), ["key"], cancellationToken: cancellation.Token);
@@ -1898,13 +1963,20 @@ public class ClientSideCacheTests
             server.SuppressReply = command =>
             {
                 if (!command.StartsWith(prefix, StringComparison.Ordinal)
-                    || Interlocked.CompareExchange(ref _parked, 1, 0) != 0) return false;
+                    || Interlocked.CompareExchange(ref _parked, 1, 0) != 0)
+                {
+                    return false;
+                }
+
                 Arrived.TrySetResult();
                 return true;
             };
         }
 
-        internal TaskCompletionSource Arrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Arrived
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         internal Task WaitAsync() => Arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -1915,13 +1987,18 @@ public class ClientSideCacheTests
             var commands = _server.ReceivedCommands;
             var connections = _server.ReceivedConnectionIds;
             var index = commands.ToList().FindIndex(command => command.StartsWith(_prefix, StringComparison.Ordinal));
-            foreach (var frame in frames) await _server.SendRawAsync(frame, connections[index]);
+
+            foreach (var frame in frames)
+            {
+                await _server.SendRawAsync(frame, connections[index]);
+            }
         }
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (!condition())
         {
             await Task.Delay(10, timeout.Token);

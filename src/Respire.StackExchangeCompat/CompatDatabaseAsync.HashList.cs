@@ -9,8 +9,12 @@ internal abstract partial class CompatDatabaseAsync
         {
             var values = ((RedisResult[])result)!;
             var entries = new HashEntry[values.Length / 2];
+
             for (var index = 0; index < entries.Length; index++)
+            {
                 entries[index] = new HashEntry(Scalar(values[index * 2]), Scalar(values[index * 2 + 1]));
+            }
+
             return entries;
         });
 
@@ -23,7 +27,12 @@ internal abstract partial class CompatDatabaseAsync
     public Task<long> HashDeleteAsync(RedisKey key, RedisValue[] hashFields, CommandFlags flags)
     {
         ArgumentNullException.ThrowIfNull(hashFields);
-        if (hashFields.Length == 0) return Task.FromResult(0L);
+
+        if (hashFields.Length == 0)
+        {
+            return Task.FromResult(0L);
+        }
+
         return Send(RespireCommands.Hash.HDEL, [Key(key), .. hashFields.Select(Value)], flags, static result => (long)result);
     }
 
@@ -60,7 +69,12 @@ internal abstract partial class CompatDatabaseAsync
             When.Exists => left ? RespireCommands.List.LPUSHX : RespireCommands.List.RPUSHX,
             _ => throw Compatibility.Unsupported(left ? "ListLeftPush When.NotExists" : "ListRightPush When.NotExists"),
         };
-        if (values.Length == 0) return ListLengthAsync(key, flags);
+
+        if (values.Length == 0)
+        {
+            return ListLengthAsync(key, flags);
+        }
+
         return Send(command, [Key(key), .. values.Select(Value)], flags, static result => (long)result);
     }
 }

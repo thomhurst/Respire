@@ -43,7 +43,10 @@ public readonly struct RespireCommand
     }
 
     /// <summary>Canonical command name, including any subcommand (for example, <c>CONFIG GET</c>).</summary>
-    public string Name { get; }
+    public string Name
+    {
+        get;
+    }
 
     /// <summary>Command references in which this command was found.</summary>
     public RespireCommandSource Sources => (RespireCommandSource)(_sourceAndMutationMetadata & SourceMask);
@@ -86,8 +89,16 @@ public readonly struct RespireCommand
     /// <exception cref="InvalidOperationException">The descriptor is uninitialized.</exception>
     public RespireCommand WithRetryCategory(RespireCommandRetryCategory category)
     {
-        if (!Enum.IsDefined(category)) throw new ArgumentOutOfRangeException(nameof(category));
-        if (Name is null) throw new InvalidOperationException("An uninitialized command descriptor cannot declare a retry category.");
+        if (!Enum.IsDefined(category))
+        {
+            throw new ArgumentOutOfRangeException(nameof(category));
+        }
+
+        if (Name is null)
+        {
+            throw new InvalidOperationException("An uninitialized command descriptor cannot declare a retry category.");
+        }
+
         return new RespireCommand(this, category);
     }
 
@@ -118,7 +129,10 @@ public readonly struct RespireCommand
 
     internal bool HasOpaqueCursor => _verb.HasOpaqueCursor;
 
-    internal RespireCommandBehavior Behavior { get; }
+    internal RespireCommandBehavior Behavior
+    {
+        get;
+    }
 
     internal bool IsCallerSupplied => _verb.Bulk is null;
 
@@ -147,6 +161,7 @@ public readonly struct RespireCommand
     private static RespireCommand Create(string name, RespireCacheMutation cacheMutation, bool hasExplicitCacheMutation)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
         foreach (var character in name)
         {
             if (character is < '!' or > '~')
@@ -212,9 +227,15 @@ public readonly struct RespireCommand
             return false;
         }
 
-        var firstOptionIndex = name switch { "XREADGROUP" => 3, "TS.READ" => 2, _ => 0 };
+        var firstOptionIndex = name switch
+        {
+            "XREADGROUP" => 3,
+            "TS.READ" => 2,
+            _ => 0
+        };
         var stopsAtStreams = name is "XREAD" or "XREADGROUP";
         var index = 0;
+
         foreach (var argument in inlineArguments)
         {
             if (index++ < firstOptionIndex)
@@ -258,7 +279,10 @@ public readonly struct RespireCommand
 [AttributeUsage(AttributeTargets.Field, Inherited = false)]
 internal sealed class RespireCommandCatalogNameAttribute(string name) : Attribute
 {
-    public string Name { get; } = name;
+    public string Name
+    {
+        get;
+    } = name;
 }
 
 internal enum ReadCommandKind : byte

@@ -23,7 +23,11 @@ public class StandaloneReconnectBacklogTests
         await fixture.Handshake.Task.WaitAsync(Limit);
         fixture.Server.SuppressReply = command =>
         {
-            if (command != "GET slow") return false;
+            if (command != "GET slow")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -50,6 +54,7 @@ public class StandaloneReconnectBacklogTests
         var pending = fixture.Client.GetStringAsync("unsent", caller.Token).AsTask();
         await fixture.Handshake.Task.WaitAsync(Limit);
         await Assert.That(pending.IsCompleted).IsFalse();
+
         if (dispose)
         {
             await fixture.Client.DisposeAsync();
@@ -62,6 +67,7 @@ public class StandaloneReconnectBacklogTests
             await fixture.ReleaseAsync();
             await Assert.That(await fixture.Client.GetStringAsync("healthy")).IsEqualTo("value");
         }
+
         await Assert.That(fixture.Server.ReceivedCommands.Contains("GET unsent")).IsFalse();
     }
 
@@ -178,7 +184,11 @@ public class StandaloneReconnectBacklogTests
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (command != "SELECT 1") return false;
+            if (command != "SELECT 1")
+            {
+                return false;
+            }
+
             handshake.TrySetResult();
             return true;
         };
@@ -200,8 +210,17 @@ public class StandaloneReconnectBacklogTests
         var firstReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Server.SuppressReply = command =>
         {
-            if (command == "SELECT 1") { fixture.Handshake.TrySetResult(); return true; }
-            if (command != "GET first") return false;
+            if (command == "SELECT 1")
+            {
+                fixture.Handshake.TrySetResult();
+                return true;
+            }
+
+            if (command != "GET first")
+            {
+                return false;
+            }
+
             firstReceived.TrySetResult();
             return true;
         };
@@ -251,7 +270,10 @@ public class StandaloneReconnectBacklogTests
         Array.Fill(source, (byte)'x');
         Array.Fill(replace, (byte)'x');
         await fixture.ReleaseAsync();
-        await Assert.That(async () => { using var reply = await pending.WaitAsync(Limit); })
+        await Assert.That(async () =>
+            {
+                using var reply = await pending.WaitAsync(Limit);
+            })
             .ThrowsExactly<RespireScriptingEngineUnavailableException>();
         var expected = surface + " #!python\nreturn 42" + (operation is "EVAL" or "EVAL_RO" ? " 0" : "");
         await Assert.That(fixture.Server.ReceivedCommands.Contains(expected)).IsTrue();
@@ -265,11 +287,19 @@ public class StandaloneReconnectBacklogTests
     {
         await using var fixture = await Fixture.CreateAsync();
         var bytes = "value"u8.ToArray();
+
         async Task SendAsync()
         {
-            if (fireAndForget) await fixture.Client.ExecuteFireAndForgetAsync("SET", ["key", bytes]);
-            else { using var reply = await fixture.Client.ExecuteAsync("SET", ["key", bytes]); }
+            if (fireAndForget)
+            {
+                await fixture.Client.ExecuteFireAndForgetAsync("SET", ["key", bytes]);
+            }
+            else
+            {
+                using var reply = await fixture.Client.ExecuteAsync("SET", ["key", bytes]);
+            }
         }
+
         var pending = SendAsync();
         await fixture.Handshake.Task.WaitAsync(Limit);
         Array.Fill(bytes, (byte)'x');
@@ -330,8 +360,17 @@ public class StandaloneReconnectBacklogTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Server.SuppressReply = command =>
         {
-            if (command == "SELECT 1") { fixture.Handshake.TrySetResult(); return true; }
-            if (command != "GET cancelled") return false;
+            if (command == "SELECT 1")
+            {
+                fixture.Handshake.TrySetResult();
+                return true;
+            }
+
+            if (command != "GET cancelled")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -357,8 +396,17 @@ public class StandaloneReconnectBacklogTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Server.SuppressReply = command =>
         {
-            if (command == "SELECT 1") { fixture.Handshake.TrySetResult(); return true; }
-            if (command != "GET pending") return false;
+            if (command == "SELECT 1")
+            {
+                fixture.Handshake.TrySetResult();
+                return true;
+            }
+
+            if (command != "GET pending")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -391,9 +439,23 @@ public class StandaloneReconnectBacklogTests
         var inTransaction = false;
         fixture.Server.ReplyOverride = (_, command) =>
         {
-            if (command == "MULTI") { inTransaction = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { inTransaction = false; return "*2\r\n$5\r\nvalue\r\n+OK\r\n"u8.ToArray(); }
-            if (inTransaction) return "+QUEUED\r\n"u8.ToArray();
+            if (command == "MULTI")
+            {
+                inTransaction = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                inTransaction = false;
+                return "*2\r\n$5\r\nvalue\r\n+OK\r\n"u8.ToArray();
+            }
+
+            if (inTransaction)
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
             return command.StartsWith("GET ", StringComparison.Ordinal) ? ValueReply : FakeRespServer.OkReply;
         };
         using var batch = transaction ? null : fixture.Client.CreateBatch();
@@ -434,15 +496,28 @@ public class StandaloneReconnectBacklogTests
         var second = transaction ? commit!.Set("second", "value") : batch!.Set("second", "value");
         var execution = transaction ? CommitAsync(commit!, caller.Token) : batch!.TryExecuteAsync(caller.Token).AsTask();
         await fixture.Handshake.Task.WaitAsync(Limit);
-        if (cancelCaller) await caller.CancelAsync();
+
+        if (cancelCaller)
+        {
+            await caller.CancelAsync();
+        }
+
         if (transaction)
         {
             if (cancelCaller)
+            {
                 await Assert.That(async () => await execution.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            }
             else
+            {
                 await Assert.That(async () => await execution.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
+            }
         }
-        else await execution.WaitAsync(Limit);
+        else
+        {
+            await execution.WaitAsync(Limit);
+        }
+
         if (cancelCaller)
         {
             await Assert.That(first.Error).IsTypeOf<OperationCanceledException>();
@@ -453,6 +528,7 @@ public class StandaloneReconnectBacklogTests
             await Assert.That(first.Error).IsTypeOf<RespireTimeoutException>();
             await Assert.That(((RespireTimeoutException)first.Error!).Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
         }
+
         await Assert.That(second.Error).IsSameReferenceAs(first.Error);
         await Assert.That(fixture.Server.ReceivedCommands.Any(IsApplicationCommand)).IsFalse();
         await fixture.ReleaseAsync();
@@ -473,7 +549,8 @@ public class StandaloneReconnectBacklogTests
     {
         await using var fixture = await Fixture.CreateAsync(retryPolicy: new()
         {
-            InitialBackoff = TimeSpan.Zero, MaxAttempts = 2,
+            InitialBackoff = TimeSpan.Zero,
+            MaxAttempts = 2,
         });
         var firstAttempts = 0;
         fixture.Server.ReplyOverride = (_, command) => command switch
@@ -511,7 +588,9 @@ public class StandaloneReconnectBacklogTests
     {
         await using var fixture = await Fixture.CreateAsync(reconnectPolicy: new()
         {
-            InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1,
+            InitialDelay = TimeSpan.Zero,
+            JitterRatio = 0,
+            MaxAttempts = 1,
         });
         var first = fixture.Client.GetStringAsync("first").AsTask();
         await fixture.Handshake.Task.WaitAsync(Limit);
@@ -556,45 +635,74 @@ public class StandaloneReconnectBacklogTests
                 _ => null,
             },
         };
-        byte[] SetValue() { value = "new"; return FakeRespServer.OkReply; }
+
+        byte[] SetValue()
+        {
+            value = "new";
+            return FakeRespServer.OkReply;
+        }
         // This cache scenario requires its own tracked client and gated replacement connection.
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (command != "SELECT 1") return false;
+            if (command != "SELECT 1")
+            {
+                return false;
+            }
+
             handshake.TrySetResult();
             return true;
         };
         await client.Core.Multiplexer.GetConnection().DisposeAsync();
         using var caller = new CancellationTokenSource();
+
         async Task ExecuteAsync()
         {
             switch (surface)
             {
-                case "string": await client.GetStringAsync("key", caller.Token); break;
-                case "write": await client.SetAsync("key", "new", cancellationToken: caller.Token); break;
-                case "fire-and-forget": await client.ExecuteFireAndForgetAsync("SET", ["key", "new"], caller.Token); break;
-                default: using (var reply = await client.ExecuteAsync("SET", ["key", "new"], cancellationToken: caller.Token)) { } break;
+                case "string":
+                    await client.GetStringAsync("key", caller.Token);
+                    break;
+                case "write":
+                    await client.SetAsync("key", "new", cancellationToken: caller.Token);
+                    break;
+                case "fire-and-forget":
+                    await client.ExecuteFireAndForgetAsync("SET", ["key", "new"], caller.Token);
+                    break;
+                default:
+                    using (var reply = await client.ExecuteAsync("SET", ["key", "new"], cancellationToken: caller.Token))
+                    {
+                    }
+                    break;
             }
         }
+
         var pending = ExecuteAsync();
         await handshake.Task.WaitAsync(Limit);
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(surface == "string" ? 0 : 1);
+
         if (cancelCaller)
         {
             await caller.CancelAsync();
             await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
         }
+
         await server.SendRawAsync(FakeRespServer.OkReply, 1);
-        if (!cancelCaller) await pending.WaitAsync(Limit);
+
+        if (!cancelCaller)
+        {
+            await pending.WaitAsync(Limit);
+        }
+
         await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
         var expected = cancelCaller || surface == "string" ? "old" : "new";
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo(expected);
@@ -618,40 +726,69 @@ public class StandaloneReconnectBacklogTests
     {
         switch (surface)
         {
-            case "string": return (await client.GetStringAsync(key))!;
-            case "bytes": return Encoding.UTF8.GetString((await client.GetBytesAsync(key))!);
-            case "typed": return (await client.GetAsync<string>(key))!;
+            case "string":
+                return (await client.GetStringAsync(key))!;
+            case "bytes":
+                return Encoding.UTF8.GetString((await client.GetBytesAsync(key))!);
+            case "typed":
+                return (await client.GetAsync<string>(key))!;
             case "stream":
                 await using (var stream = await client.Strings.GetStreamAsync(key))
-                using (var reader = new StreamReader(stream!)) return await reader.ReadToEndAsync();
-            case "write": return await client.SetAsync(key, "value") ? "OK" : "failed";
-            case "fire-and-forget": await client.ExecuteFireAndForgetAsync("SET", key, "value"); return "OK";
+                using (var reader = new StreamReader(stream!))
+                {
+                    return await reader.ReadToEndAsync();
+                }
+            case "write":
+                return await client.SetAsync(key, "value") ? "OK" : "failed";
+            case "fire-and-forget":
+                await client.ExecuteFireAndForgetAsync("SET", key, "value");
+                return "OK";
             default:
                 using (var reply = surface switch
                 {
                     "catalog" => await client.ExecuteAsync(RespireCommands.String.GET, key),
                     "interpolated" => await client.ExecuteAsync($"GET {key}"),
                     _ => await client.ExecuteAsync("GET", key),
-                }) return reply.AsString()!;
+                })
+                {
+                    return reply.AsString()!;
+                }
         }
     }
 
     private static async Task CommitAsync(RespireTransaction transaction, CancellationToken token = default)
         => await transaction.CommitAsync(token);
+
     private static bool IsApplicationCommand(string command) => command != "SELECT 1";
 
     private static RespireOptions Options(int port) => new()
     {
-        Endpoints = [new("127.0.0.1", port)], Connections = 1, Protocol = RespireProtocol.Resp2, Database = 1,
-        RetryPolicy = null, ConnectTimeout = Limit, CommandTimeout = Limit,
+        Endpoints = [new("127.0.0.1", port)],
+        Connections = 1,
+        Protocol = RespireProtocol.Resp2,
+        Database = 1,
+        RetryPolicy = null,
+        ConnectTimeout = Limit,
+        CommandTimeout = Limit,
     };
 
     private sealed class Fixture(FakeRespServer server, RespireClient client, TaskCompletionSource handshake,
         TaskCompletionSource? resumeConnection) : IAsyncDisposable
     {
-        internal FakeRespServer Server { get; } = server;
-        internal RespireClient Client { get; } = client;
-        internal TaskCompletionSource Handshake { get; } = handshake;
+        internal FakeRespServer Server
+        {
+            get;
+        } = server;
+
+        internal RespireClient Client
+        {
+            get;
+        } = client;
+
+        internal TaskCompletionSource Handshake
+        {
+            get;
+        } = handshake;
 
         internal static async Task<Fixture> CreateAsync(int capacity = 1024, TimeSpan? commandTimeout = null,
             RespireBacklogPolicy policy = RespireBacklogPolicy.Queue, RespireRetryPolicy? retryPolicy = null,
@@ -661,6 +798,7 @@ public class StandaloneReconnectBacklogTests
             {
                 ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal) ? ValueReply : null,
             };
+
             try
             {
                 var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -672,9 +810,11 @@ public class StandaloneReconnectBacklogTests
                 var dials = 0;
                 var client = await RespireClient.ConnectAsync(Options(server.Port) with
                 {
-                    BacklogCapacity = capacity, BacklogPolicy = policy,
+                    BacklogCapacity = capacity,
+                    BacklogPolicy = policy,
                     CommandTimeout = disableCommandTimeout ? null : commandTimeout ?? Limit,
-                    RetryPolicy = retryPolicy, ReconnectPolicy = reconnectPolicy,
+                    RetryPolicy = retryPolicy,
+                    ReconnectPolicy = reconnectPolicy,
                     TestingStreamFactory = resume is null ? null : async (host, port, token) =>
                     {
                         if (Interlocked.Increment(ref dials) > 1)
@@ -682,7 +822,9 @@ public class StandaloneReconnectBacklogTests
                             handshake.TrySetResult();
                             await resume.Task.WaitAsync(token);
                         }
+
                         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                         try
                         {
                             await socket.ConnectAsync(host, port, token);
@@ -693,7 +835,11 @@ public class StandaloneReconnectBacklogTests
                 });
                 server.SuppressReply = resume is not null ? null : command =>
                 {
-                    if (command != "SELECT 1") return false;
+                    if (command != "SELECT 1")
+                    {
+                        return false;
+                    }
+
                     handshake.TrySetResult();
                     return true;
                 };
@@ -710,10 +856,12 @@ public class StandaloneReconnectBacklogTests
                 await Server.SendRawAsync(FakeRespServer.OkReply, 1);
                 return;
             }
+
             resumeConnection.TrySetResult();
             using var deadline = new CancellationTokenSource(Limit);
             await Client.Core.Multiplexer.GetHealthyConnectionAsync(deadline.Token);
         }
+
         public async ValueTask DisposeAsync()
         {
             await Client.DisposeAsync();

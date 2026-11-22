@@ -40,7 +40,11 @@ internal sealed partial class RespireConnection
             _effectiveTimeoutTicks = connection._commandTimeout!.Value.Ticks;
             _timer = new Timer(static state => ((StreamDeadlineCancellation)state!).Schedule(),
                 this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            if (connection._maintenanceOptions is not null) _maintenanceChanged = Recheck;
+
+            if (connection._maintenanceOptions is not null)
+            {
+                _maintenanceChanged = Recheck;
+            }
         }
 
         internal CancellationToken Token => _source.Token;
@@ -62,7 +66,11 @@ internal sealed partial class RespireConnection
         internal void Start()
         {
             // A maintenance start or completion changes the effective deadline immediately.
-            if (_maintenanceChanged is not null) _connection.MaintenanceStateChanged += _maintenanceChanged;
+            if (_maintenanceChanged is not null)
+            {
+                _connection.MaintenanceStateChanged += _maintenanceChanged;
+            }
+
             Schedule();
         }
 
@@ -82,7 +90,11 @@ internal sealed partial class RespireConnection
             lock (_scheduleGate)
             {
                 _version++;
-                try { _timer.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan); }
+
+                try
+                {
+                    _timer.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+                }
                 catch (ObjectDisposedException) { }
             }
         }
@@ -91,28 +103,46 @@ internal sealed partial class RespireConnection
         {
             while (true)
             {
-                if (Volatile.Read(ref _disposed) != 0) return;
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    return;
+                }
+
                 var version = Volatile.Read(ref _version);
                 Task? cancellationCallbacks = null;
+
                 lock (_scheduleGate)
                 {
                     // A maintenance change raced this calculation; the newest state must win.
-                    if (version != _version) continue;
+                    if (version != _version)
+                    {
+                        continue;
+                    }
+
                     lock (_connection._maintenancePublicationGate)
                     {
                         var delay = ComputeDelay(out var effectiveTimeout);
                         Interlocked.Exchange(ref _effectiveTimeoutTicks, effectiveTimeout.Ticks);
+
                         if (delay is { } next)
                         {
-                            try { _timer.Change(next, Timeout.InfiniteTimeSpan); }
+                            try
+                            {
+                                _timer.Change(next, Timeout.InfiniteTimeSpan);
+                            }
                             catch (ObjectDisposedException) { }
+
                             return;
                         }
 
                         // Commit cancellation while maintenance-state publication is excluded.
                         // CancelAsync only marks the token here; callbacks run asynchronously.
                         Interlocked.Exchange(ref _committedTimeoutTicks, effectiveTimeout.Ticks);
-                        try { cancellationCallbacks = _source.CancelAsync(); }
+
+                        try
+                        {
+                            cancellationCallbacks = _source.CancelAsync();
+                        }
                         catch (ObjectDisposedException) { }
                     }
                 }
@@ -130,18 +160,34 @@ internal sealed partial class RespireConnection
             // measured from the command's original start, and its end restores it.
             var remaining = _connection.RemainingUntilCommandDeadline(_deadline.Ticks, Environment.TickCount64,
                 out effectiveTimeout, out var window, _deadline.IsRelaxed);
-            if (remaining <= 0) return null;
+
+            if (remaining <= 0)
+            {
+                return null;
+            }
 
             var sleep = Math.Min(remaining, StreamTimeoutTimerSliceMilliseconds);
             // Recheck when the window closes so a restored, shorter deadline is enforced.
-            if (window > 0) sleep = Math.Min(sleep, window);
+            if (window > 0)
+            {
+                sleep = Math.Min(sleep, window);
+            }
+
             return TimeSpan.FromMilliseconds(sleep);
         }
 
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-            if (_maintenanceChanged is not null) _connection.MaintenanceStateChanged -= _maintenanceChanged;
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
+            if (_maintenanceChanged is not null)
+            {
+                _connection.MaintenanceStateChanged -= _maintenanceChanged;
+            }
+
             _timer.Dispose();
             _source.Dispose();
         }

@@ -36,7 +36,11 @@ public class RespireResilienceClientTests
         var options = Options(server);
         var retries = 0;
         var retryOptions = RetryOptions();
-        retryOptions.OnRetry = _ => { retries++; return default; };
+        retryOptions.OnRetry = _ =>
+        {
+            retries++;
+            return default;
+        };
         var pipeline = new ResiliencePipelineBuilder().AddRetry(retryOptions).Build();
         await using var client = new RespireResilienceClient(options, pipeline);
         var callbacks = 0;
@@ -90,7 +94,11 @@ public class RespireResilienceClientTests
         using var cancellation = new CancellationTokenSource();
         using var fault = server.InjectFault("GET", RespireFakeFault.Loading(), occurrences: null);
         var retryOptions = RetryOptions();
-        retryOptions.OnRetry = _ => { cancellation.Cancel(); return default; };
+        retryOptions.OnRetry = _ =>
+        {
+            cancellation.Cancel();
+            return default;
+        };
         var pipeline = new ResiliencePipelineBuilder().AddRetry(retryOptions).Build();
         await using var client = new RespireResilienceClient(Options(server), pipeline);
         var callbacks = 0;

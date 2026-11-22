@@ -13,30 +13,53 @@ public class GroupedClientFilterTests
 #pragma warning disable RESP010 // This grouped-filter scenario owns its client and scripted admin command replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var handle = await client.Server.GetClientConnectionAsync();
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
+
         foreach (var property in typeof(RespireClientFilterOptions).GetProperties())
         {
             if (property.Name is nameof(RespireClientFilterOptions.Include) or nameof(RespireClientFilterOptions.Exclude)
                 or nameof(RespireClientFilterOptions.SkipMe) or nameof(RespireClientFilterOptions.AllowUnfilteredKill))
+            {
                 continue;
+            }
+
             var type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
             object[] values = type == typeof(string) ? ["selected", ""] : [SelectorValue(type)];
+
             foreach (var value in values)
             {
                 var options = new RespireClientFilterOptions { Include = new(), Exclude = new() };
                 property.SetValue(options, value);
-                var error = await Assert.That(() => { _ = client.Server.ClientsAsync(options, default); }).ThrowsExactly<ArgumentException>();
+                var error = await Assert.That(() =>
+                {
+                    _ = client.Server.ClientsAsync(options, default);
+                }).ThrowsExactly<ArgumentException>();
                 await Assert.That(error!.Message).Contains("cannot be combined");
-                await Assert.That(() => { _ = client.Server.ClientsOnAllNodesAsync(options, default); }).ThrowsExactly<ArgumentException>();
-                await Assert.That(() => { _ = client.Server.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
-                await Assert.That(() => { _ = handle.ClientsAsync(options); }).ThrowsExactly<ArgumentException>();
-                await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<ArgumentException>();
+                await Assert.That(() =>
+                {
+                    _ = client.Server.ClientsOnAllNodesAsync(options, default);
+                }).ThrowsExactly<ArgumentException>();
+                await Assert.That(() =>
+                {
+                    _ = client.Server.KillClientsAsync(options);
+                }).ThrowsExactly<ArgumentException>();
+                await Assert.That(() =>
+                {
+                    _ = handle.ClientsAsync(options);
+                }).ThrowsExactly<ArgumentException>();
+                await Assert.That(() =>
+                {
+                    _ = handle.KillClientsAsync(options);
+                }).ThrowsExactly<ArgumentException>();
+
                 foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
                 {
                     await Assert.That(() => queue.Server.Clients(options)).ThrowsExactly<ArgumentException>();
@@ -44,14 +67,31 @@ public class GroupedClientFilterTests
                 }
             }
         }
+
         await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo(["CLIENT ID"]);
 
         static object SelectorValue(Type type)
         {
-            if (type == typeof(long)) return 1L;
-            if (type == typeof(int)) return 0;
-            if (type == typeof(RespireClientType)) return RespireClientType.Normal;
-            if (type == typeof(IReadOnlyList<long>)) return new long[] { 1 };
+            if (type == typeof(long))
+            {
+                return 1L;
+            }
+
+            if (type == typeof(int))
+            {
+                return 0;
+            }
+
+            if (type == typeof(RespireClientType))
+            {
+                return RespireClientType.Normal;
+            }
+
+            if (type == typeof(IReadOnlyList<long>))
+            {
+                return new long[] { 1 };
+            }
+
             throw new InvalidOperationException($"Add a selector value for {type}.");
         }
     }
@@ -65,7 +105,12 @@ public class GroupedClientFilterTests
     {
         var options = exclude ? new RespireClientFilterOptions { ExcludedIds = null! }
             : new RespireClientFilterOptions { Ids = null! };
-        if (grouped) options = options with { Include = new(), Exclude = new() };
+
+        if (grouped)
+        {
+            options = options with { Include = new(), Exclude = new() };
+        }
+
         foreach (var kill in new[] { false, true })
         {
             var error = await Assert.That(() => ClientFilterArguments.Build(options, kill)).ThrowsExactly<ArgumentNullException>();
@@ -80,7 +125,9 @@ public class GroupedClientFilterTests
 #pragma warning disable RESP010 // This grouped-filter scenario owns its client and scripted admin command replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -105,7 +152,9 @@ public class GroupedClientFilterTests
 #pragma warning disable RESP010 // This grouped-filter scenario owns its client and scripted admin command replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -127,7 +176,9 @@ public class GroupedClientFilterTests
 #pragma warning disable RESP010 // This grouped-filter scenario owns its client and scripted admin command replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -136,8 +187,15 @@ public class GroupedClientFilterTests
             new() { Include = new() }, new() { Exclude = new() },
             new() { Include = new(), Exclude = new(), SkipMe = true },
         ];
+
         foreach (var filter in empty)
-            await Assert.That(() => { _ = client.Server.KillClientsAsync(filter); }).ThrowsExactly<ArgumentException>();
+        {
+            await Assert.That(() =>
+            {
+                _ = client.Server.KillClientsAsync(filter);
+            }).ThrowsExactly<ArgumentException>();
+        }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -150,7 +208,9 @@ public class GroupedClientFilterTests
 #pragma warning disable RESP010 // This grouped-filter scenario owns its client and scripted admin command replies.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            AllowAdmin = true,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -159,16 +219,33 @@ public class GroupedClientFilterTests
         await using var tx = client.CreateTransaction();
         var options = exclude ? new RespireClientFilterOptions { Exclude = new() { Ids = null! } }
             : new RespireClientFilterOptions { Include = new() { Ids = null! } };
-        await Assert.That(() => { _ = client.Server.ClientsAsync(options, default); }).ThrowsExactly<ArgumentNullException>();
-        await Assert.That(() => { _ = client.Server.ClientsOnAllNodesAsync(options, default); }).ThrowsExactly<ArgumentNullException>();
-        await Assert.That(() => { _ = client.Server.KillClientsAsync(options); }).ThrowsExactly<ArgumentNullException>();
-        await Assert.That(() => { _ = handle.ClientsAsync(options); }).ThrowsExactly<ArgumentNullException>();
-        await Assert.That(() => { _ = handle.KillClientsAsync(options); }).ThrowsExactly<ArgumentNullException>();
+        await Assert.That(() =>
+        {
+            _ = client.Server.ClientsAsync(options, default);
+        }).ThrowsExactly<ArgumentNullException>();
+        await Assert.That(() =>
+        {
+            _ = client.Server.ClientsOnAllNodesAsync(options, default);
+        }).ThrowsExactly<ArgumentNullException>();
+        await Assert.That(() =>
+        {
+            _ = client.Server.KillClientsAsync(options);
+        }).ThrowsExactly<ArgumentNullException>();
+        await Assert.That(() =>
+        {
+            _ = handle.ClientsAsync(options);
+        }).ThrowsExactly<ArgumentNullException>();
+        await Assert.That(() =>
+        {
+            _ = handle.KillClientsAsync(options);
+        }).ThrowsExactly<ArgumentNullException>();
+
         foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
         {
             await Assert.That(() => queue.Server.Clients(options)).ThrowsExactly<ArgumentNullException>();
             await Assert.That(() => queue.Server.KillClients(options)).ThrowsExactly<ArgumentNullException>();
         }
+
         await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo(["CLIENT ID"]);
     }
 }

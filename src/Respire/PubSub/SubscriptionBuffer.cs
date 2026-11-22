@@ -28,12 +28,18 @@ internal sealed class SubscriptionBuffer(int capacity, RespireSubscriptionOverfl
     {
         lock (_gate)
         {
-            if (_completed) return null;
+            if (_completed)
+            {
+                return null;
+            }
+
             RespireSubscriptionGap? dropped = null;
+
             if (_count == _entries.Length)
             {
                 var now = DateTimeOffset.UtcNow;
                 dropped = new(RespireSubscriptionGapReason.BufferOverflow, now, now, 1);
+
                 if (overflow == RespireSubscriptionOverflow.DropNewest)
                 {
                     _tailGap = RespireSubscriptionGap.Merge(_tailGap, dropped);
@@ -45,6 +51,7 @@ internal sealed class SubscriptionBuffer(int capacity, RespireSubscriptionOverfl
                 _entries[_head] = default;
                 _head = (_head + 1) % _entries.Length;
                 _count--;
+
                 if (_count == 0)
                 {
                     _tailGap = RespireSubscriptionGap.Merge(before, _tailGap);
@@ -67,7 +74,11 @@ internal sealed class SubscriptionBuffer(int capacity, RespireSubscriptionOverfl
     {
         lock (_gate)
         {
-            if (_completed) return false;
+            if (_completed)
+            {
+                return false;
+            }
+
             _tailGap = RespireSubscriptionGap.Merge(_tailGap, gap);
             _ready.Writer.TryWrite(0);
             return true;
@@ -81,24 +92,28 @@ internal sealed class SubscriptionBuffer(int capacity, RespireSubscriptionOverfl
             if (_count > 0)
             {
                 ref var entry = ref _entries[_head];
+
                 if (entry.GapBefore is { } gap)
                 {
                     entry.GapBefore = null;
                     message = new RespireMessage(gap);
                     return true;
                 }
+
                 message = entry.Message;
                 entry = default;
                 _head = (_head + 1) % _entries.Length;
                 _count--;
                 return true;
             }
+
             if (_tailGap is { } tail)
             {
                 _tailGap = null;
                 message = new RespireMessage(tail);
                 return true;
             }
+
             message = default;
             return false;
         }
@@ -112,10 +127,20 @@ internal sealed class SubscriptionBuffer(int capacity, RespireSubscriptionOverfl
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!TryRead(out var message)) break;
+
+                if (!TryRead(out var message))
+                {
+                    break;
+                }
+
                 yield return message;
             }
-            if (!await _ready.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false)) yield break;
+
+            if (!await _ready.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                yield break;
+            }
+
             _ready.Reader.TryRead(out _);
         }
     }

@@ -29,8 +29,10 @@ public class CoordinationTrackingReadTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Endpoints = [new("127.0.0.1", server.Port)],
-            Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            ClientSideCache = new(),
         });
         var view = client.WithKeyPrefix("prefix:");
         // Empty-cache cases expose accidental publication; resident values must
@@ -39,9 +41,11 @@ public class CoordinationTrackingReadTests
         {
             _ = hash ? await view.Hashes.GetStringAsync("key", "field") : await view.GetStringAsync("key");
         }
+
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(residentValue ? 1 : 0);
         var mutation = concurrentMutation ? cache.BeginUnknownMutation() : default;
+
         try
         {
             var cached = cache.Count;
@@ -56,7 +60,10 @@ public class CoordinationTrackingReadTests
         }
         finally
         {
-            if (concurrentMutation) cache.CompleteMutation(in mutation);
+            if (concurrentMutation)
+            {
+                cache.CompleteMutation(in mutation);
+            }
         }
     }
 }

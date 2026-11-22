@@ -20,8 +20,11 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
     private int _pid;
 
     public IEnumerable<string> Ids => [nameof(SelectionLaunchDiagnoser)];
+
     public IEnumerable<IExporter> Exporters => [];
+
     public IEnumerable<IAnalyser> Analysers => [];
+
     public BenchmarkDotNet.Diagnosers.RunMode GetRunMode(BenchmarkCase benchmarkCase)
         => BenchmarkDotNet.Diagnosers.RunMode.None;
 
@@ -44,9 +47,14 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
             {
                 var startInfo = parameters.Process!.StartInfo;
                 var mask = parameters.BenchmarkCase.Job.Environment.Affinity.ToInt64();
+
                 if (mask <= 0 || (mask & (mask - 1)) != 0)
+                {
                     throw new ArgumentException("Selection affinity must contain exactly one CPU.");
+                }
+
                 var executable = QuoteArgument(startInfo.FileName);
+
                 if (startInfo.ArgumentList.Count > 0)
                 {
                     startInfo.ArgumentList.Insert(0, startInfo.FileName);
@@ -60,11 +68,17 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
                 // threads inherit the singleton mask before they can be created.
                 startInfo.FileName = "/usr/bin/taskset";
             }
+
             environment["DOTNET_JitDisasm"] = "SelectConnection GetConnection GetSingleConnection *WorkloadAction*";
             environment["DOTNET_JitDisasmWithCodeBytes"] = "1";
             environment["DOTNET_JitDisasmWithAlignmentBoundaries"] = "1";
             environment["DOTNET_JitStdOutFile"] = _prefix + ".jit.txt";
-            if (OperatingSystem.IsLinux()) environment["DOTNET_PerfMapEnabled"] = "3";
+
+            if (OperatingSystem.IsLinux())
+            {
+                environment["DOTNET_PerfMapEnabled"] = "3";
+            }
+
             return;
         }
 
@@ -73,10 +87,18 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
             _pid = parameters.Process!.Id;
             return;
         }
+
         if (signal == HostSignal.AfterProcessExit)
         {
-            if (!OperatingSystem.IsLinux() || _pid == 0) return;
-            try { File.Copy($"/tmp/perf-{_pid}.map", _prefix + ".perf.map"); }
+            if (!OperatingSystem.IsLinux() || _pid == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                File.Copy($"/tmp/perf-{_pid}.map", _prefix + ".perf.map");
+            }
             catch (IOException) { return; }
             catch (UnauthorizedAccessException) { return; }
             // Publish the map only after copying succeeds. Missing maps remain
@@ -84,22 +106,34 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
             foreach (var boundary in new[] { HostSignal.BeforeActualRun, HostSignal.AfterActualRun })
             {
                 var path = _prefix + "." + boundary + ".json";
-                if (!File.Exists(path)) continue;
+
+                if (!File.Exists(path))
+                {
+                    continue;
+                }
+
                 var record = JsonNode.Parse(File.ReadAllText(path))!;
                 record["perfMap"] = Path.GetFileName(_prefix + ".perf.map");
                 File.WriteAllText(path, record.ToJsonString());
             }
+
             return;
         }
 
-        if (signal is not (HostSignal.BeforeActualRun or HostSignal.AfterActualRun)) return;
+        if (signal is not (HostSignal.BeforeActualRun or HostSignal.AfterActualRun))
+        {
+            return;
+        }
+
         var process = parameters.Process!;
         process.Refresh();
         var files = new Dictionary<string, string?>();
+
         if (OperatingSystem.IsLinux())
         {
             Capture(files, $"/proc/{process.Id}/status");
             Capture(files, $"/proc/{process.Id}/stat");
+
             foreach (var thread in Directory.EnumerateDirectories($"/proc/{process.Id}/task"))
             {
                 Capture(files, thread + "/stat");
@@ -107,18 +141,23 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
                 Capture(files, thread + "/sched");
                 Capture(files, thread + "/status");
             }
+
             foreach (var cpu in Directory.EnumerateDirectories("/sys/devices/system/cpu", "cpu*")
                 .Where(path => int.TryParse(Path.GetFileName(path).AsSpan(3), out _)))
             {
                 Capture(files, cpu + "/cpufreq/scaling_cur_freq");
                 Capture(files, cpu + "/cpufreq/scaling_governor");
             }
+
             Capture(files, "/proc/cpuinfo");
         }
 
         File.WriteAllText(_prefix + "." + signal + ".json", JsonSerializer.Serialize(new
         {
-            schema = 1, signal = signal.ToString(), launch, pid = process.Id,
+            schema = 1,
+            signal = signal.ToString(),
+            launch,
+            pid = process.Id,
             platform = OperatingSystem.IsLinux() ? "linux" : "other",
             caseName = parameters.BenchmarkCase.DisplayInfo,
             parameters = parameters.BenchmarkCase.Parameters.DisplayInfo,
@@ -134,10 +173,12 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
             environment = process.StartInfo.Environment.Where(pair =>
                 pair.Key.StartsWith("DOTNET_", StringComparison.Ordinal) || pair.Key.StartsWith("COMPlus_", StringComparison.Ordinal))
                 .ToDictionary(pair => pair.Key, pair => pair.Value),
-            utc = DateTimeOffset.UtcNow, timestamp = Stopwatch.GetTimestamp(),
+            utc = DateTimeOffset.UtcNow,
+            timestamp = Stopwatch.GetTimestamp(),
             timestampFrequency = Stopwatch.Frequency,
             cpuSeconds = process.TotalProcessorTime.TotalSeconds,
-            jitFile = Path.GetFileName(_prefix + ".jit.txt"), files,
+            jitFile = Path.GetFileName(_prefix + ".jit.txt"),
+            files,
             perfMap = (string?)null,
         }));
     }
@@ -148,13 +189,20 @@ internal sealed class SelectionLaunchDiagnoser(string directory, int launch, boo
     private static void Capture(Dictionary<string, string?> files, string path)
     {
         // A thread can exit between enumeration and reading. Keep absence visible.
-        try { files[path] = File.ReadAllText(path); }
+        try
+        {
+            files[path] = File.ReadAllText(path);
+        }
         catch (IOException error) { files[path] = "UNAVAILABLE: " + error.Message; }
         catch (UnauthorizedAccessException error) { files[path] = "UNAVAILABLE: " + error.Message; }
     }
 
     public IEnumerable<Metric> ProcessResults(DiagnoserResults results) => [];
-    public void DisplayResults(ILogger logger) { }
+
+    public void DisplayResults(ILogger logger)
+    {
+    }
+
     public IAsyncEnumerable<ValidationError> ValidateAsync(ValidationParameters validationParameters)
         => AsyncEnumerable.Empty<ValidationError>();
 }

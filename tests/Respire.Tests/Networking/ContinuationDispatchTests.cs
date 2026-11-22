@@ -27,7 +27,11 @@ public class ContinuationDispatchTests
         {
             SuppressReply = command =>
             {
-                if (command is not ("PING" or "MULTI" or "EXEC")) return false;
+                if (command is not ("PING" or "MULTI" or "EXEC"))
+                {
+                    return false;
+                }
+
                 sent.TrySetResult();
                 return true;
             },
@@ -47,6 +51,7 @@ public class ContinuationDispatchTests
         // A late continuation may still be running after a failed assertion.
         var release = new ManualResetEventSlim();
         var command = new RawCommand(FakeRespServer.PingFrame);
+
         switch (responseKind)
         {
             case "raw":
@@ -55,11 +60,15 @@ public class ContinuationDispatchTests
                 break;
             case "string":
                 Register(native ? connection.SendNativeStringAsync(command, default, "PING") : connection.SendStringAsync(command),
-                    static _ => { });
+                    static _ =>
+                    {
+                    });
                 break;
             case "bytes":
                 Register(native ? connection.SendNativeBytesAsync(command, default, "PING") : connection.SendBytesAsync(command),
-                    static _ => { });
+                    static _ =>
+                    {
+                    });
                 break;
             case "transaction":
                 Register(connection.SendTransactionAsync(FakeRespServer.PingFrame, commandCount: 1), static value => value.Dispose());
@@ -69,9 +78,12 @@ public class ContinuationDispatchTests
                     ? connection.SendNativeConvertedAsync(command, default, "PING", 0,
                         static (int _, in Respire.Protocol.RespValue value) => value.AsString(), false)
                     : connection.SendConvertedAsync(command, 0,
-                        static (int _, in Respire.Protocol.RespValue value) => value.AsString(), false), static _ => { });
+                        static (int _, in Respire.Protocol.RespValue value) => value.AsString(), false), static _ =>
+                {
+                });
                 break;
         }
+
         try
         {
             // Register before the reply, excluding the already-completed await case.
@@ -99,13 +111,22 @@ public class ContinuationDispatchTests
                 {
                     consume(awaiter.GetResult());
                     entered.TrySetResult();
+
                     if (responseKind == "converted")
                     {
                         // Ordinary CPU work after an await must also leave delivery independent.
                         var work = System.Diagnostics.Stopwatch.StartNew();
-                        while (!release.IsSet && work.Elapsed < TimeSpan.FromSeconds(15)) Thread.SpinWait(64);
+
+                        while (!release.IsSet && work.Elapsed < TimeSpan.FromSeconds(15))
+                        {
+                            Thread.SpinWait(64);
+                        }
                     }
-                    else release.Wait(TimeSpan.FromSeconds(15));
+                    else
+                    {
+                        release.Wait(TimeSpan.FromSeconds(15));
+                    }
+
                     finished.TrySetResult();
                 }
                 catch (Exception error) { entered.TrySetException(error); finished.TrySetException(error); }
@@ -128,6 +149,7 @@ public class ContinuationDispatchTests
             var returned = 0;
             Task<bool> callback;
             PendingResponse source;
+
             switch (responseKind)
             {
                 case "raw":
@@ -138,12 +160,16 @@ public class ContinuationDispatchTests
                 case "string":
                     var text = StringPendingResponseSource.Rent("PING", runContinuationsAsynchronously: asynchronous);
                     source = text;
-                    callback = Observe(text.Task, static _ => { });
+                    callback = Observe(text.Task, static _ =>
+                    {
+                    });
                     break;
                 case "bytes":
                     var bytes = BytesPendingResponseSource.Rent("PING", runContinuationsAsynchronously: asynchronous);
                     source = bytes;
-                    callback = Observe(bytes.Task, static _ => { });
+                    callback = Observe(bytes.Task, static _ =>
+                    {
+                    });
                     break;
                 case "transaction":
                     var multi = MultiReplyPendingResponseSource.Rent(1, 0, "MULTI/EXEC", asynchronous);
@@ -155,9 +181,12 @@ public class ContinuationDispatchTests
                         static (int _, in RespValue value) => value.AsString(), false, "PING",
                         runContinuationsAsynchronously: asynchronous);
                     source = converted;
-                    callback = Observe(converted.Task, static _ => { });
+                    callback = Observe(converted.Task, static _ =>
+                    {
+                    });
                     break;
             }
+
             source.TrySetResult(RespValue.SimpleString("PONG"u8.ToArray()));
             Volatile.Write(ref returned, 1);
             source.ReleaseRef();
@@ -192,6 +221,7 @@ public class ContinuationDispatchTests
             ContinuationDispatch = RespireContinuationDispatch.ThreadPool,
             StalledDeliveryThreshold = TimeSpan.FromMilliseconds(25),
         };
+
         foreach (var connection in new[] { options.ToConnectionOptions(), options.ToControlConnectionOptions() })
         {
             await Assert.That(connection.ContinuationDispatch).IsEqualTo(RespireContinuationDispatch.ThreadPool);
@@ -242,11 +272,13 @@ public class ContinuationDispatchTests
         }
 
         policy = new CompletionScheduler.AdaptiveDispatch();
+
         for (var i = 1; i < CompletionScheduler.AdaptiveDispatch.TripScore; i++)
         {
             policy.Record(slow, now, window);
             await Assert.That(policy.ShouldDispatch(now)).IsFalse();
         }
+
         policy.Record(slow, now, window);
         await Assert.That(policy.ShouldDispatch(now)).IsTrue();
         await Assert.That(policy.ShouldDispatch(now + window - 1)).IsTrue();
@@ -278,6 +310,7 @@ public class ContinuationDispatchTests
         var offRunner = new bool[count];
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var remaining = count;
+
         for (var i = 0; i < count; i++)
         {
             var index = i;
@@ -289,28 +322,53 @@ public class ContinuationDispatchTests
                 {
                     using var value = awaiter.GetResult();
                     // The first reply always runs inline, so its thread is the runner.
-                    if (index == 0) Volatile.Write(ref runnerThread, Environment.CurrentManagedThreadId);
+                    if (index == 0)
+                    {
+                        Volatile.Write(ref runnerThread, Environment.CurrentManagedThreadId);
+                    }
+
                     offRunner[index] = Environment.CurrentManagedThreadId != Volatile.Read(ref runnerThread)
                         || Volatile.Read(ref lastDelivered) != 0;
-                    if (index == count - 1) Volatile.Write(ref lastDelivered, 1);
+
+                    if (index == count - 1)
+                    {
+                        Volatile.Write(ref lastDelivered, 1);
+                    }
                     // CPU work well above the slow threshold.
                     var work = System.Diagnostics.Stopwatch.StartNew();
-                    while (work.Elapsed < TimeSpan.FromMilliseconds(1)) Thread.SpinWait(16);
-                    if (Interlocked.Decrement(ref remaining) == 0) done.TrySetResult();
+
+                    while (work.Elapsed < TimeSpan.FromMilliseconds(1))
+                    {
+                        Thread.SpinWait(16);
+                    }
+
+                    if (Interlocked.Decrement(ref remaining) == 0)
+                    {
+                        done.TrySetResult();
+                    }
                 }
                 catch (Exception error) { done.TrySetException(error); }
             });
             scheduler.Add(source, RespValue.Integer(index));
         }
+
         scheduler.Flush();
         await done.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
         var trip = CompletionScheduler.AdaptiveDispatch.TripScore;
         // Replies before the trip are timed inline; the final reply has nothing behind it.
-        for (var i = 0; i < trip; i++) await Assert.That(offRunner[i]).IsFalse();
+        for (var i = 0; i < trip; i++)
+        {
+            await Assert.That(offRunner[i]).IsFalse();
+        }
+
         await Assert.That(offRunner[count - 1]).IsFalse();
-        for (var i = trip; i < count - 1; i++) await Assert.That(offRunner[i]).IsEqualTo(adaptive);
+
+        for (var i = trip; i < count - 1; i++)
+        {
+            await Assert.That(offRunner[i]).IsEqualTo(adaptive);
+        }
     }
 
     [Test]
@@ -321,7 +379,11 @@ public class ContinuationDispatchTests
         first.DispatchContinuationAsynchronously();
         first.TrySetResult(RespValue.Integer(1));
         first.ReleaseRef();
-        using (var value = await first.Task) { }
+
+        using (var value = await first.Task)
+        {
+        }
+
         var second = pool.Rent();
         await Assert.That(ReferenceEquals(first, second)).IsTrue();
         var completingThread = Environment.CurrentManagedThreadId;

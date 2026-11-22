@@ -440,7 +440,9 @@ internal static partial class RespireLog
     internal static void SentinelPeerDiscoveryUnavailable(this ILogger logger, in RespValue reply)
     {
         if (logger.IsEnabled(LogLevel.Debug))
+        {
             SentinelPeerDiscoveryUnavailableMessage(logger, reply.GetErrorMessage(), null);
+        }
     }
 
     [LoggerMessage(70, LogLevel.Debug, "Sentinel primary probe failed on a retired generation; rediscovering", EventName = "SentinelRetiredPrimaryProbeFailed")]
@@ -479,7 +481,9 @@ internal static partial class RespireLog
     internal static void SentinelMonitorShutdownTimedOut(this ILogger logger, TimeSpan timeout, Task[] tasks)
     {
         if (logger.IsEnabled(LogLevel.Warning))
+        {
             SentinelMonitorShutdownTimedOutMessage(logger, timeout, tasks.Count(static task => !task.IsCompleted), null);
+        }
     }
 
     [LoggerMessage(76, LogLevel.Warning, "Sentinel upload pool cleanup after MOVING failed", EventName = "SentinelMovingUploadCleanupFailed")]
@@ -570,7 +574,9 @@ internal static partial class RespireLog
     internal static void ConnectionInflightFailed(this ILogger logger, int count, string host, int port, Exception failure)
     {
         if (logger.IsEnabled(LogLevel.Debug))
+        {
             ConnectionInflightFailedMessage(logger, count, host, port, failure.Message, null);
+        }
     }
 
     [LoggerMessage(90, LogLevel.Debug, "Disconnected from {Host}:{Port}", EventName = "ConnectionDisconnected")]
@@ -609,7 +615,9 @@ internal static partial class RespireLog
     internal static void NotificationRouteRejected(this ILogger logger, RespireChannel route, string host, int port, Exception? error)
     {
         if (logger.IsEnabled(LogLevel.Warning))
+        {
             NotificationRouteRejectedMessage(logger, route.ToString(), host, port, error);
+        }
     }
 
     [LoggerMessage(96, LogLevel.Debug, "Closing a failed cluster notification replacement failed", EventName = "NotificationReplacementCloseFailed")]
@@ -771,7 +779,9 @@ internal static partial class RespireLog
     internal static void FailoverDuplicateDeployment(this ILogger logger, RespireEndpoint endpoint, string reason)
     {
         if (logger.IsEnabled(LogLevel.Warning))
+        {
             FailoverDuplicateDeploymentMessage(logger, endpoint.ToString(), reason, null);
+        }
     }
 
     [LoggerMessage(122, LogLevel.Information, "Failover group switched from {PreviousEndpoint} to {CurrentEndpoint} ({Reason})", EventName = "FailoverEndpointSwitched")]
@@ -780,7 +790,9 @@ internal static partial class RespireLog
     internal static void FailoverEndpointSwitched(this ILogger logger, RespireEndpoint? previousEndpoint, RespireEndpoint? currentEndpoint, string reason)
     {
         if (logger.IsEnabled(LogLevel.Information))
+        {
             FailoverEndpointSwitchedMessage(logger, previousEndpoint?.ToString() ?? "none", currentEndpoint?.ToString() ?? "none", reason, null);
+        }
     }
 
     [LoggerMessage(123, LogLevel.Warning, "Failover group EndpointSwitched handler threw", EventName = "FailoverSwitchObserverFailed")]

@@ -19,10 +19,16 @@ public class CountdownLatchCommandHookTests
     {
         await using var server = Server();
         var denied = new InvalidOperationException("Denied latch operation");
-        var hook = new RecordingHook { Before = context =>
+        var hook = new RecordingHook
         {
-            if (context.Command == "LATCH " + operation) throw denied;
-        } };
+            Before = context =>
+        {
+            if (context.Command == "LATCH " + operation)
+            {
+                throw denied;
+            }
+        }
+        };
         await using var client = await ConnectAsync(server, hook);
         var before = server.CommandsSeen;
 
@@ -130,11 +136,25 @@ public class CountdownLatchCommandHookTests
             if (command.StartsWith("EVALSHA_RO ", StringComparison.Ordinal))
             {
                 var read = Interlocked.Increment(ref reads);
-                if (cancel && read == 3) cancellation.Cancel();
+
+                if (cancel && read == 3)
+                {
+                    cancellation.Cancel();
+                }
+
                 return State(read == 1 || cancel ? "1" : "0");
             }
-            if (command == "SUBSCRIBE channel") return SubscriptionReply("subscribe", 1);
-            if (command == "UNSUBSCRIBE channel") return SubscriptionReply("unsubscribe", 0);
+
+            if (command == "SUBSCRIBE channel")
+            {
+                return SubscriptionReply("subscribe", 1);
+            }
+
+            if (command == "UNSUBSCRIBE channel")
+            {
+                return SubscriptionReply("unsubscribe", 0);
+            }
+
             return FakeRespServer.OkReply;
         };
         var cleanupComplete = false;
@@ -142,7 +162,10 @@ public class CountdownLatchCommandHookTests
         {
             Before = context =>
             {
-                if (context.Command != "LATCH WAIT") throw new InvalidOperationException("Internal leg was admitted");
+                if (context.Command != "LATCH WAIT")
+                {
+                    throw new InvalidOperationException("Internal leg was admitted");
+                }
             },
             After = () => cleanupComplete = server.ReceivedCommands.Contains("UNSUBSCRIBE channel"),
         };
@@ -153,8 +176,15 @@ public class CountdownLatchCommandHookTests
         };
         var error = await Failure(async () => _ = await latch.WaitAsync(cancellation.Token));
 
-        if (cancel) await Assert.That(error).IsAssignableTo<OperationCanceledException>();
-        else await Assert.That(error).IsNull();
+        if (cancel)
+        {
+            await Assert.That(error).IsAssignableTo<OperationCanceledException>();
+        }
+        else
+        {
+            await Assert.That(error).IsNull();
+        }
+
         await Assert.That(cleanupComplete).IsTrue();
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(cancel
@@ -197,9 +227,13 @@ public class CountdownLatchCommandHookTests
         await using var client = await ConnectAsync(server, hook);
 
         if (wait)
+        {
             await Assert.That(await new RespireCountdownLatch(client, "latch", "generation", "channel").WaitAsync()).IsFalse();
+        }
         else
+        {
             await Assert.That(await new RespireCoordination(client).JoinCountdownLatchAsync("latch")).IsNull();
+        }
 
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Succeeded);
@@ -214,7 +248,10 @@ public class CountdownLatchCommandHookTests
         Task<RespireResult>? nested = null;
         hook.Before = context =>
         {
-            if (context.Command == "LATCH COUNTDOWN") nested = client.ExecuteAsync("PING").AsTask();
+            if (context.Command == "LATCH COUNTDOWN")
+            {
+                nested = client.ExecuteAsync("PING").AsTask();
+            }
         };
         hook.After = () => throw new InvalidOperationException("Observer failure");
 
@@ -230,14 +267,26 @@ public class CountdownLatchCommandHookTests
     {
         var coordination = new RespireCoordination(client);
         var latch = new RespireCountdownLatch(client, "latch", "generation", "channel");
+
         switch (operation)
         {
-            case "CREATE": _ = await coordination.CreateCountdownLatchAsync("latch", 1, token); break;
-            case "RESET": _ = await coordination.ResetCountdownLatchAsync("latch", 1, token); break;
-            case "JOIN": _ = await coordination.JoinCountdownLatchAsync("latch", token); break;
-            case "COUNTDOWN": _ = await latch.CountDownAsync(token); break;
-            case "WAIT": _ = await latch.WaitAsync(token); break;
-            default: throw new ArgumentOutOfRangeException(nameof(operation));
+            case "CREATE":
+                _ = await coordination.CreateCountdownLatchAsync("latch", 1, token);
+                break;
+            case "RESET":
+                _ = await coordination.ResetCountdownLatchAsync("latch", 1, token);
+                break;
+            case "JOIN":
+                _ = await coordination.JoinCountdownLatchAsync("latch", token);
+                break;
+            case "COUNTDOWN":
+                _ = await latch.CountDownAsync(token);
+                break;
+            case "WAIT":
+                _ = await latch.WaitAsync(token);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(operation));
         }
     }
 
@@ -257,13 +306,19 @@ public class CountdownLatchCommandHookTests
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server, RecordingHook hook)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-            CommandHook = hook, ThreadPoolMonitoring = false,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            CommandHook = hook,
+            ThreadPoolMonitoring = false,
         });
 
     private static async Task<Exception?> Failure(Func<Task> action)
     {
-        try { await action().WaitAsync(TimeSpan.FromSeconds(10)); return null; }
+        try
+        {
+            await action().WaitAsync(TimeSpan.FromSeconds(10));
+            return null;
+        }
         catch (Exception error) { return error; }
     }
 
@@ -271,8 +326,18 @@ public class CountdownLatchCommandHookTests
     {
         internal Action<RespireCommandContext>? Before;
         internal Action? After;
-        internal ConcurrentQueue<(string Command, RespireCommandOutcome Outcome, Exception? Error, object? State)> Completed { get; } = new();
-        public override object? OnExecuting(RespireCommandContext context) { Before?.Invoke(context); return this; }
+
+        internal ConcurrentQueue<(string Command, RespireCommandOutcome Outcome, Exception? Error, object? State)> Completed
+        {
+            get;
+        } = new();
+
+        public override object? OnExecuting(RespireCommandContext context)
+        {
+            Before?.Invoke(context);
+            return this;
+        }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context.Command, outcome, error, state));

@@ -24,7 +24,11 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         var store = new RespireOutputCacheStore(client, options);
         var tagKey = options.InstanceName + "__RPOCT2_corrupt";
         await store.SetAsync("retained", [9], ["other"], TimeSpan.FromMinutes(1));
-        using (var added = await client.ExecuteAsync("ZADD", [tagKey, "1", "bad"])) { }
+
+        using (var added = await client.ExecuteAsync("ZADD", [tagKey, "1", "bad"]))
+        {
+        }
+
         if (mixedPage)
         {
             await store.SetAsync("evicted", [1], ["corrupt"], TimeSpan.FromMinutes(1));
@@ -33,10 +37,16 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
             using var added = await client.ExecuteAsync("ZADD", [tagKey, "1",
                 new string('x', 32) + ":retained", "1", new string('0', 32) + "/retained"]);
         }
+
         await store.EvictByTagAsync("corrupt");
+
         using (var count = await client.ExecuteAsync("ZCARD", [tagKey]))
+        {
             await Assert.That(count.AsInteger()).IsEqualTo(0);
+        }
+
         await AssertPayload(store, "retained", 9);
+
         if (mixedPage)
         {
             await Assert.That(await store.GetAsync("evicted")).IsNull();
@@ -44,6 +54,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
             await store.EvictByTagAsync("new");
             await Assert.That(await store.GetAsync("replacement")).IsNull();
         }
+
         await store.EvictByTagAsync("corrupt");
     }
 
@@ -72,8 +83,12 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         await store.SetAsync("key", [1], ["old"], TimeSpan.FromSeconds(1));
         await AssertPayload(store, "key", 1);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while (await store.GetAsync("key", timeout.Token) is not null)
+        {
             await Task.Delay(10, timeout.Token);
+        }
+
         await store.SetAsync("key", [2], ["new"], TimeSpan.FromMinutes(1));
         await store.EvictByTagAsync("old");
         await AssertPayload(store, "key", 2);
@@ -98,17 +113,26 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         var operation = pausePublication
             ? paused.SetAsync("key", [2], ["shared"], TimeSpan.FromMinutes(1)).AsTask()
             : paused.EvictByTagAsync("shared").AsTask();
+
         try
         {
             await barrier.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            if (pausePublication) await store.EvictByTagAsync("shared");
-            else await store.SetAsync("key", [2], ["shared"], TimeSpan.FromMinutes(1));
+
+            if (pausePublication)
+            {
+                await store.EvictByTagAsync("shared");
+            }
+            else
+            {
+                await store.SetAsync("key", [2], ["shared"], TimeSpan.FromMinutes(1));
+            }
         }
         finally
         {
             barrier.Release.TrySetResult();
             await operation.WaitAsync(TimeSpan.FromSeconds(10));
         }
+
         await AssertPayload(store, "key", 2);
         // A second eviction must still find the surviving generation's membership.
         await store.EvictByTagAsync("shared");
@@ -127,7 +151,11 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         var username = $"output-{Guid.NewGuid():N}";
         var password = Guid.NewGuid().ToString("N");
         var allowedIndexes = $"(+zadd ~{options.InstanceName}__RPOCT2 ~{options.InstanceName}__RPOCT2_orphan)";
-        using (var reply = await client.ExecuteAsync("ACL", ["SETUSER", username, "on", ">" + password, "~*", "+@all", "-zadd", allowedIndexes])) { }
+
+        using (var reply = await client.ExecuteAsync("ACL", ["SETUSER", username, "on", ">" + password, "~*", "+@all", "-zadd", allowedIndexes]))
+        {
+        }
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
@@ -136,8 +164,12 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
             await Assert.That(async () => await failing.SetAsync("key", [2], ["orphan", "denied"], TimeSpan.FromMinutes(1)))
                 .Throws<RespireServerException>();
             await AssertPayload(store, "key", 1);
+
             using (var count = await client.ExecuteAsync("ZCARD", [options.InstanceName + "__RPOCT2_orphan"]))
+            {
                 await Assert.That(count.AsInteger()).IsEqualTo(1);
+            }
+
             await store.SetAsync("key", [3], ["new"], TimeSpan.FromMinutes(1));
             await store.EvictByTagAsync("orphan");
             await store.EvictByTagAsync("old");
@@ -159,7 +191,11 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         await store.SetAsync("key", [1], ["old"], TimeSpan.FromMinutes(1));
         var username = $"output-{Guid.NewGuid():N}";
         var password = Guid.NewGuid().ToString("N");
-        using (var reply = await client.ExecuteAsync("ACL", ["SETUSER", username, "on", ">" + password, "~*", "+@all", "-pexpireat"])) { }
+
+        using (var reply = await client.ExecuteAsync("ACL", ["SETUSER", username, "on", ">" + password, "~*", "+@all", "-pexpireat"]))
+        {
+        }
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
@@ -201,12 +237,20 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         var store = new RespireOutputCacheStore(client, options);
         await store.SetAsync("key", [1], ["shared"], TimeSpan.FromMinutes(5));
         await store.SetAsync("key", [2], ["shared"], TimeSpan.FromHours(1));
+
         using (var count = await client.ExecuteAsync("ZCARD", [options.InstanceName + "__RPOCT2_shared"]))
+        {
             await Assert.That(count.AsInteger()).IsEqualTo(2);
+        }
+
         clock.Now += TimeSpan.FromMinutes(10);
         await store.CollectExpiredTagsAsync();
+
         using (var count = await client.ExecuteAsync("ZCARD", [options.InstanceName + "__RPOCT2_shared"]))
+        {
             await Assert.That(count.AsInteger()).IsEqualTo(1);
+        }
+
         await AssertPayload(store, "key", 2);
         await store.EvictByTagAsync("shared");
         await Assert.That(await store.GetAsync("key")).IsNull();
@@ -217,12 +261,20 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
     {
         await using var client = await ConnectAsync(3);
         var store = new RespireOutputCacheStore(client, Options());
+
         for (var index = 0; index < 251; index++)
+        {
             await store.SetAsync(index.ToString(), [1], ["old"], TimeSpan.FromMinutes(1));
+        }
+
         await store.SetAsync("250", [2], ["new"], TimeSpan.FromMinutes(1));
         await store.EvictByTagAsync("old");
+
         for (var index = 0; index < 250; index++)
+        {
             await Assert.That(await store.GetAsync(index.ToString())).IsNull();
+        }
+
         await AssertPayload(store, "250", 2);
         await store.EvictByTagAsync("new");
         await Assert.That(await store.GetAsync("250")).IsNull();
@@ -244,6 +296,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
         await AssertPayload(compatibility, "", 9);
         using var output = new MemoryStream();
         var writer = PipeWriter.Create(output, new(leaveOpen: true));
+
         try
         {
             await Assert.That(await store.TryGetAsync("missing", writer)).IsFalse();
@@ -251,6 +304,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
             await Assert.That(output.ToArray().SequenceEqual(new byte[] { 0, 255, 1, 2 })).IsTrue();
         }
         finally { await writer.CompleteAsync(); }
+
         await store.EvictByTagAsync("");
         await Assert.That(await store.GetAsync("")).IsNull();
         await AssertPayload(compatibility, "", 9);
@@ -317,8 +371,16 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
 
     public class ClientProxy : DispatchProxy
     {
-        public IRespireClient Inner { get; set; } = null!;
-        public IRespireScriptCommands Scripts { get; set; } = null!;
+        public IRespireClient Inner
+        {
+            get; set;
+        } = null!;
+
+        public IRespireScriptCommands Scripts
+        {
+            get; set;
+        } = null!;
+
         protected override object? Invoke(MethodInfo? method, object?[]? arguments) =>
             method!.Name == "get_Scripts" ? Scripts : method.Invoke(Inner, arguments);
     }
@@ -326,29 +388,62 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
     public class ScriptBarrier : DispatchProxy
     {
         private int _paused;
-        public IRespireScriptCommands Inner { get; set; } = null!;
-        public bool PausePublication { get; set; }
-        public bool LosePublicationReply { get; set; }
-        public int PublicationCount { get; private set; }
-        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IRespireScriptCommands Inner
+        {
+            get; set;
+        } = null!;
+
+        public bool PausePublication
+        {
+            get; set;
+        }
+
+        public bool LosePublicationReply
+        {
+            get; set;
+        }
+
+        public int PublicationCount
+        {
+            get; private set;
+        }
+
+        public TaskCompletionSource Reached
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
         {
             if (method!.Name == nameof(IRespireScriptCommands.ExecuteIntegerAsync) && LosePublicationReply
                 && ((RespireScript)arguments![0]!).Source.Contains("'HSET'", StringComparison.Ordinal))
+            {
                 return ExecuteThenLoseReplyAsync(method, arguments);
+            }
+
             if (method!.Name == nameof(IRespireScriptCommands.ExecuteIntegerAsync)
                 && ((RespireScript)arguments![0]!).Source.Contains(PausePublication ? "'HSET'" : "'HGET'", StringComparison.Ordinal)
                 && Interlocked.Exchange(ref _paused, 1) == 0)
+            {
                 return ExecuteAfterReleaseAsync(method, arguments);
+            }
+
             return method.Invoke(Inner, arguments);
         }
+
         private async ValueTask<long> ExecuteAfterReleaseAsync(MethodInfo method, object?[]? arguments)
         {
             Reached.TrySetResult();
             await Release.Task.WaitAsync(TimeSpan.FromSeconds(10));
             return await (ValueTask<long>)method.Invoke(Inner, arguments)!;
         }
+
         private async ValueTask<long> ExecuteThenLoseReplyAsync(MethodInfo method, object?[]? arguments)
         {
             PublicationCount++;
@@ -360,6 +455,7 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
     private sealed class Segment : ReadOnlySequenceSegment<byte>
     {
         public Segment(byte[] bytes) => Memory = bytes;
+
         public Segment Append(byte[] bytes)
         {
             var next = new Segment(bytes) { RunningIndex = RunningIndex + Memory.Length };
@@ -370,7 +466,11 @@ public class GenerationAwareOutputCacheTests(RedisTestContainer fixture)
 
     private sealed class TestClock(DateTimeOffset now) : TimeProvider
     {
-        public DateTimeOffset Now { get; set; } = now;
+        public DateTimeOffset Now
+        {
+            get; set;
+        } = now;
+
         public override DateTimeOffset GetUtcNow() => Now;
     }
 

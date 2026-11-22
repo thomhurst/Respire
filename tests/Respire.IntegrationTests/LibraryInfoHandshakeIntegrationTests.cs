@@ -25,6 +25,7 @@ public class LibraryInfoHandshakeIntegrationTests(VersionedServerFixture servers
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+')[0];
         var rows = (await client.Server.ClientsAsync()).Where(row => row.Name == name).ToArray();
         rows.Should().HaveCount(2);
+
         foreach (var row in rows)
         {
             row.Attributes["lib-name"].Should().Be("Respire");

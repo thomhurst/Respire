@@ -29,6 +29,7 @@ public sealed class RespireXmlRepository : IXmlRepository
         var values = GetClient().WithReadFrom(RespireReadFrom.Primary).WithoutClientCache()
             .Lists.RangeAsync(_key).AsTask().GetAwaiter().GetResult();
         var elements = new XElement[values.Length];
+
         for (var i = 0; i < values.Length; i++)
         {
             // A malformed entry could contain revocation data. Fail rather than return a partial ring.

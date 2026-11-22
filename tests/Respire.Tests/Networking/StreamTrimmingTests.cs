@@ -24,11 +24,13 @@ public class StreamTrimmingTests
         string[] clauses = ["MAXLEN 2", "MINID 2-0", "MINID 2", "MAXLEN ~ 2", "MINID ~ 2-0",
             "MAXLEN ~ 2 LIMIT 0", "MINID ~ 2-0 LIMIT 10"];
         byte[][] replies = options.SelectMany(_ => new[] { "$3\r\n1-0\r\n"u8.ToArray(), ":2\r\n"u8.ToArray() }).ToArray();
+
         if (surface == 2)
         {
             var executed = Encoding.ASCII.GetBytes($"*{replies.Length}\r\n").Concat(replies.SelectMany(x => x)).ToArray();
             replies = [FakeRespServer.OkReply, .. Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), replies.Length), executed];
         }
+
         await using var server = new FakeRespServer(replies);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = client.WithKeyPrefix("tenant:");
@@ -37,26 +39,47 @@ public class StreamTrimmingTests
         IRespireCommandQueue? queue = transaction ?? (IRespireCommandQueue?)batch;
         var pending = new List<(RespirePending<RespireStreamId?> Added, RespirePending<long> Trimmed)>();
         byte[] key = "events"u8.ToArray();
+
         foreach (var trim in options)
         {
-            var add = new RespireStreamAddOptions { Id = "1-0", MaxLength = trim.MaxLength, MinId = trim.MinId,
-                ApproximateTrim = trim.Approximate, Limit = trim.Limit };
+            var add = new RespireStreamAddOptions
+            {
+                Id = "1-0",
+                MaxLength = trim.MaxLength,
+                MinId = trim.MinId,
+                ApproximateTrim = trim.Approximate,
+                Limit = trim.Limit
+            };
+
             if (queue is null)
             {
                 await Assert.That(await view.Streams.AddAsync(key, add, ("field", "value")))
                     .IsEqualTo((RespireStreamId?)new RespireStreamId("1-0"));
                 await Assert.That(await view.Streams.TrimAsync(key, trim)).IsEqualTo(2);
             }
-            else pending.Add((queue.Streams.Add(key, add, ("field", "value")), queue.Streams.Trim(key, trim)));
+            else
+            {
+                pending.Add((queue.Streams.Add(key, add, ("field", "value")), queue.Streams.Trim(key, trim)));
+            }
         }
+
         Array.Fill(key, (byte)'x');
-        if (transaction is not null) await transaction.CommitAsync();
-        else if (batch is not null) await batch.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else if (batch is not null)
+        {
+            await batch.ExecuteAsync();
+        }
+
         foreach (var result in pending)
         {
             await Assert.That(result.Added.Result).IsEqualTo((RespireStreamId?)new RespireStreamId("1-0"));
             await Assert.That(result.Trimmed.Result).IsEqualTo(2);
         }
+
         var expected = clauses.SelectMany(clause => new[]
         {
             $"XADD tenant:events {clause} 1-0 field value", $"XTRIM tenant:events {clause}",
@@ -83,22 +106,30 @@ public class StreamTrimmingTests
             new() { MinId = "1-*" }, new() { MinId = "18446744073709551616-0" },
             new() { MinId = "-1" }, new() { MinId = "1-" },
         ];
+
         foreach (var trim in invalid)
         {
-            var add = new RespireStreamAddOptions { MaxLength = trim.MaxLength, MinId = trim.MinId,
-                ApproximateTrim = trim.Approximate, Limit = trim.Limit };
+            var add = new RespireStreamAddOptions
+            {
+                MaxLength = trim.MaxLength,
+                MinId = trim.MinId,
+                ApproximateTrim = trim.Approximate,
+                Limit = trim.Limit
+            };
             var trimError = await Assert.That(async () => await client.Streams.TrimAsync("events", trim))
                 .Throws<ArgumentException>();
             var addError = await Assert.That(async () => await client.Streams.AddAsync("events", add, ("field", "value")))
                 .Throws<ArgumentException>();
             await Assert.That(trimError!.ParamName).IsEqualTo("options");
             await Assert.That(addError!.ParamName).IsEqualTo("options");
+
             foreach (var stream in new[] { batch.Streams, transaction.Streams })
             {
                 await Assert.That(() => stream.Trim("events", trim)).Throws<ArgumentException>();
                 await Assert.That(() => stream.Add("events", add, ("field", "value"))).Throws<ArgumentException>();
             }
         }
+
         await Assert.That(async () => await client.Streams.TrimAsync("events", default)).Throws<ArgumentException>();
         await Assert.That(() => batch.Streams.Trim("events", default)).Throws<ArgumentException>();
         await Assert.That(() => transaction.Streams.Trim("events", default)).Throws<ArgumentException>();
@@ -115,7 +146,8 @@ public class StreamTrimmingTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();

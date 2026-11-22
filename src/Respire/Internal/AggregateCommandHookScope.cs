@@ -37,12 +37,19 @@ internal sealed class AggregateCommandHookScope : IDisposable
             ref var entry = ref _entries[i];
             entry.Context = new(i < _operations.Count ? _operations[i].Operation : _acknowledgement!, _token);
             _entered++;
-            try { entry.State = _hook.OnExecuting(entry.Context); }
+
+            try
+            {
+                entry.State = _hook.OnExecuting(entry.Context);
+            }
             catch (Exception error) { entry.Rejection = error; throw; }
         }
         // Every member is admitted before checking cancellation or sending any member.
         // With no members, let the aggregate retain its own empty-operation semantics.
-        if (_entries.Length != 0) _token.ThrowIfCancellationRequested();
+        if (_entries.Length != 0)
+        {
+            _token.ThrowIfCancellationRequested();
+        }
     }
 
     internal void FailAcknowledgement(Exception error) => _acknowledgementError = error;
@@ -58,7 +65,11 @@ internal sealed class AggregateCommandHookScope : IDisposable
             var outcome = entry.Rejection is not null ? RespireCommandOutcome.Rejected
                 : error is OperationCanceledException ? RespireCommandOutcome.Canceled
                 : error is not null ? RespireCommandOutcome.Failed : RespireCommandOutcome.Succeeded;
-            try { _hook.OnCompleted(entry.Context, entry.State, outcome, error); }
+
+            try
+            {
+                _hook.OnCompleted(entry.Context, entry.State, outcome, error);
+            }
             catch (Exception) { /* Observers cannot replace pending results or interrupt cleanup. */ }
         }
     }

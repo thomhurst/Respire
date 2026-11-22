@@ -28,6 +28,7 @@ public class ValueCodecTests
         byte[] small = [0, 1, 255];
         var random = new byte[4096];
         new Random(521).NextBytes(random);
+
         foreach (var input in new[] { Array.Empty<byte>(), small, large, random })
         {
             var frame = codec.Encode(input);
@@ -43,6 +44,7 @@ public class ValueCodecTests
             await Assert.That(decodedDestination.WrittenMemory.ToArray()).IsEquivalentTo(new byte[] { 42 }.Concat(input));
             await Assert.That(frame.Length).IsLessThanOrEqualTo(input.Length + RespireValueCodec.HeaderLength);
             await Assert.That(frame[5]).IsEqualTo(ReferenceEquals(input, large) ? codec.AlgorithmId : (byte)0);
+
             if (input.Length != 0)
             {
                 var first = restored[0];
@@ -50,6 +52,7 @@ public class ValueCodecTests
                 await Assert.That(restored[0]).IsEqualTo(first);
             }
         }
+
         var owned = codec.Encode(small);
         small[0] = 99;
         await Assert.That(codec.Decode(owned)[0]).IsEqualTo((byte)0);
@@ -76,6 +79,7 @@ public class ValueCodecTests
         {
             var writer = Create(algorithm, new() { FrameVersion = version });
             var reader = Create(algorithm, new() { FrameVersion = (byte)(3 - version) });
+
             foreach (var input in new[] { Array.Empty<byte>(), "abc"u8.ToArray(), new byte[4096] })
             {
                 var frame = writer.Encode(input);
@@ -117,22 +121,26 @@ public class ValueCodecTests
         var codec = Create(algorithm, new() { FrameVersion = version });
         var original = codec.Encode(Encoding.UTF8.GetBytes(new string('x', 4096)));
         var invalid = new List<byte[]> { "unframed legacy data"u8.ToArray(), original[..17], original[..^1] };
+
         foreach (var offset in new[] { 0, 4, 5, 10, original.Length - 1 })
         {
             var copy = original.ToArray();
             copy[offset] ^= 0x7f;
             invalid.Add(copy);
         }
+
         foreach (var length in new uint[] { 4095, 4097, uint.MaxValue })
         {
             var copy = original.ToArray();
             BinaryPrimitives.WriteUInt32LittleEndian(copy.AsSpan(6), length);
             invalid.Add(copy);
         }
+
         var corrupt = original.ToArray();
         corrupt.AsSpan(RespireValueCodec.HeaderLength).Fill(0xff);
         RefreshChecksum(corrupt); // Exercise the decompressor's validation after a structurally valid frame.
         invalid.Add(corrupt);
+
         foreach (var frame in invalid)
         {
             await Assert.That(() => codec.Decode(frame)).Throws<InvalidDataException>();
@@ -142,6 +150,7 @@ public class ValueCodecTests
             await Assert.That(destination.WrittenCount).IsEqualTo(1);
             await Assert.That(destination.WrittenMemory.ToArray()).IsEquivalentTo(new byte[] { 42 });
         }
+
         await Assert.That(() => Create(algorithm == "brotli" ? "deflate" : "brotli").Decode(original)).Throws<InvalidDataException>();
     }
 
@@ -169,17 +178,25 @@ public class ValueCodecTests
     public async Task InvalidConfigurationIsRejectedAtConstruction()
     {
         await Assert.That(new RespireValueCodecOptions().MaximumDecodedLength).IsEqualTo(8 * 1024 * 1024);
+
         for (byte algorithm = 0; algorithm < 16; algorithm++)
+        {
             await Assert.That(() => new CustomCodec(algorithm)).Throws<ArgumentOutOfRangeException>();
+        }
+
         await Assert.That(new CustomCodec(16).AlgorithmId).IsEqualTo((byte)16);
         await Assert.That(new CustomCodec(255).AlgorithmId).IsEqualTo((byte)255);
         await Assert.That(() => new RespireBrotliValueCodec(quality: -1)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new RespireBrotliValueCodec(quality: 12)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new RespireDeflateValueCodec(level: (CompressionLevel)99)).Throws<ArgumentOutOfRangeException>();
+
         foreach (var options in new RespireValueCodecOptions[]
                  { new() { MinimumLength = -1 }, new() { MaximumDecodedLength = 0 }, new() { MaximumDecodedLength = int.MaxValue },
                    new() { FrameVersion = 0 }, new() { FrameVersion = 3 } })
+        {
             await Assert.That(() => new RespireBrotliValueCodec(options)).Throws<ArgumentOutOfRangeException>();
+        }
+
         await Assert.That(() => new RespireValueCodecSerializer(null!, new RespireBrotliValueCodec())).Throws<ArgumentNullException>();
         await Assert.That(() => new RespireValueCodecSerializer(RespireSerializer.Default, null!)).Throws<ArgumentNullException>();
     }
@@ -245,8 +262,14 @@ public class ValueCodecTests
         var serializer = new RespireValueCodecSerializer(new BinarySerializer(), codec);
         await Assert.That(() =>
         {
-            if (runtimeType) serializer.Deserialize(typeof(BinaryValue), Array.Empty<byte>());
-            else serializer.Deserialize<BinaryValue>(Array.Empty<byte>());
+            if (runtimeType)
+            {
+                serializer.Deserialize(typeof(BinaryValue), Array.Empty<byte>());
+            }
+            else
+            {
+                serializer.Deserialize<BinaryValue>(Array.Empty<byte>());
+            }
         }).Throws<InvalidDataException>();
         await Assert.That(() => codec.Destination!.GetMemory(1)).Throws<ObjectDisposedException>();
     }
@@ -306,15 +329,14 @@ public class ValueCodecTests
         await Assert.That(codec.Decode(generic.WrittenSpan)).IsEquivalentTo(value.Bytes);
     }
 
-    internal static RespireValueCodec Create(string algorithm, RespireValueCodecOptions? options = null)
-        => algorithm switch
-        {
-            "brotli" => new RespireBrotliValueCodec(options),
-            "deflate" => new RespireDeflateValueCodec(options),
-            "lz4" => new RespireLz4ValueCodec(options),
-            "zstd" => new RespireZstdValueCodec(options),
-            _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
-        };
+    internal static RespireValueCodec Create(string algorithm, RespireValueCodecOptions? options = null) => algorithm switch
+    {
+        "brotli" => new RespireBrotliValueCodec(options),
+        "deflate" => new RespireDeflateValueCodec(options),
+        "lz4" => new RespireLz4ValueCodec(options),
+        "zstd" => new RespireZstdValueCodec(options),
+        _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
+    };
 
     [Test]
     public async Task SourceGeneratedSerializerStillUsesItsConfiguredTypeMetadata()
@@ -330,8 +352,15 @@ public class ValueCodecTests
     private static void RefreshChecksum(byte[] frame)
     {
         var payload = frame.AsSpan(RespireValueCodec.HeaderLength);
-        if (frame[4] == 1) SHA256.HashData(payload).AsSpan(0, 8).CopyTo(frame.AsSpan(10));
-        else BinaryPrimitives.WriteUInt64LittleEndian(frame.AsSpan(10), XxHash3.HashToUInt64(payload));
+
+        if (frame[4] == 1)
+        {
+            SHA256.HashData(payload).AsSpan(0, 8).CopyTo(frame.AsSpan(10));
+        }
+        else
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(frame.AsSpan(10), XxHash3.HashToUInt64(payload));
+        }
     }
 
     private sealed record BinaryValue(byte[] Bytes);
@@ -339,25 +368,31 @@ public class ValueCodecTests
     private sealed class CustomCodec(byte algorithm) : RespireValueCodec(algorithm)
     {
         protected override byte[] Compress(ReadOnlySpan<byte> payload) => payload.ToArray();
+
         protected override void Decompress(ReadOnlySpan<byte> payload, Span<byte> destination) => payload.CopyTo(destination);
     }
 
     private sealed class ArrayOnlyCodec : IRespireValueCodec
     {
         public byte[] Encode(ReadOnlySpan<byte> payload) => payload.ToArray();
+
         public byte[] Decode(ReadOnlySpan<byte> payload) => payload.ToArray();
     }
 
     private sealed class DestinationCodec : IRespireValueCodec
     {
         internal int Writes, Reads;
+
         public byte[] Encode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("The serializer must use the destination overload.");
+
         public byte[] Decode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("The serializer must use the destination overload.");
+
         public void Encode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
         {
             Writes++;
             destination.Write(payload);
         }
+
         public void Decode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
         {
             Reads++;
@@ -368,8 +403,11 @@ public class ValueCodecTests
     private sealed class FailingDestinationCodec : IRespireValueCodec
     {
         internal IBufferWriter<byte>? Destination;
+
         public byte[] Encode(ReadOnlySpan<byte> payload) => throw new NotSupportedException();
+
         public byte[] Decode(ReadOnlySpan<byte> payload) => throw new NotSupportedException();
+
         public void Decode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
         {
             Destination = destination;
@@ -381,13 +419,16 @@ public class ValueCodecTests
     private sealed class SpanCodec() : RespireValueCodec(16, new() { MinimumLength = 0 })
     {
         internal bool InvalidLength;
+
         protected override byte[] Compress(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("Owned compression must be bypassed.");
+
         protected override bool TryCompress(ReadOnlySpan<byte> payload, Span<byte> destination, out int bytesWritten)
         {
             destination[0] = 0;
             bytesWritten = InvalidLength ? destination.Length + 1 : 1;
             return true;
         }
+
         protected override void Decompress(ReadOnlySpan<byte> payload, Span<byte> destination) => destination.Clear();
     }
 
@@ -395,24 +436,47 @@ public class ValueCodecTests
     {
         internal int Returns;
         internal readonly List<bool> ClearRequests = [];
+
         public override byte[] Rent(int minimumLength) => new byte[minimumLength];
+
         public override void Return(byte[] array, bool clearArray = false)
         {
             Returns++;
             ClearRequests.Add(clearArray);
-            if (clearArray) Array.Clear(array);
+
+            if (clearArray)
+            {
+                Array.Clear(array);
+            }
         }
     }
+
     private sealed class BinarySerializer : IRespireSerializer
     {
         internal int GenericWrites, GenericReads, RuntimeWrites, RuntimeReads;
+
         public void Serialize<T>(IBufferWriter<byte> destination, T value)
-        { GenericWrites++; destination.Write(((BinaryValue)(object)value!).Bytes); }
+        {
+            GenericWrites++;
+            destination.Write(((BinaryValue)(object)value!).Bytes);
+        }
+
         public T? Deserialize<T>(ReadOnlySpan<byte> payload)
-        { GenericReads++; return (T)(object)new BinaryValue(payload.ToArray()); }
+        {
+            GenericReads++;
+            return (T)(object)new BinaryValue(payload.ToArray());
+        }
+
         public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
-        { RuntimeWrites++; destination.Write(((BinaryValue)value!).Bytes); }
+        {
+            RuntimeWrites++;
+            destination.Write(((BinaryValue)value!).Bytes);
+        }
+
         public object? Deserialize(Type type, ReadOnlySpan<byte> payload)
-        { RuntimeReads++; return new BinaryValue(payload.ToArray()); }
+        {
+            RuntimeReads++;
+            return new BinaryValue(payload.ToArray());
+        }
     }
 }

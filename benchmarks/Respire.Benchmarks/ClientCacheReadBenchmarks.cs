@@ -17,7 +17,10 @@ public class ClientCacheReadBenchmarks
     private string _key = "";
 
     [Params(false, true)]
-    public bool UnicodeKey { get; set; }
+    public bool UnicodeKey
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()
@@ -27,6 +30,7 @@ public class ClientCacheReadBenchmarks
             var host = Environment.GetEnvironmentVariable("REDIS_HOST");
             var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort)
                 ? configuredPort : 6379;
+
             if (string.IsNullOrEmpty(host))
             {
                 _container = new RedisBuilder("redis:8.10").Build();
@@ -34,19 +38,30 @@ public class ClientCacheReadBenchmarks
                 host = _container.Hostname;
                 port = _container.GetMappedPublicPort(6379);
             }
+
             _key = UnicodeKey ? "cache:read:tenant-é😀:product:0123456789" : "cache:read:tenant-ascii:product:0123456789";
             _client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = [new(host, port)], Connections = 1, Protocol = RespireProtocol.Resp3,
-                MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled, ClientSideCache = new(),
+                Endpoints = [new(host, port)],
+                Connections = 1,
+                Protocol = RespireProtocol.Resp3,
+                MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
+                ClientSideCache = new(),
             });
+
             if (!await _client.SetAsync(_key, _value) || await EvictAndReadMiss() != _value
                 || await _client.GetStringAsync(_key) != _value || await StringHit() != _value)
+            {
                 throw new InvalidOperationException("Failed to prime the cached GET.");
+            }
+
             var hits = _client.ClientSideCache!.GetStatistics().Hits;
+
             if (await ConcurrentStringHits() != Callers * ReadsPerCaller * _value.Length
                 || _client.ClientSideCache.GetStatistics().Hits != hits + Callers * ReadsPerCaller)
+            {
                 throw new InvalidOperationException("Concurrent reads did not all hit the local cache.");
+            }
         }
         catch
         {
@@ -65,20 +80,29 @@ public class ClientCacheReadBenchmarks
         // The loop creates the concurrent workload. It is not a replacement for
         // BenchmarkDotNet's iteration loop; every lookup is counted explicitly.
         for (var index = 0; index < _workers.Length; index++)
+        {
             _workers[index] = Task.Run(() =>
             {
                 long length = 0;
+
                 for (var read = 0; read < ReadsPerCaller; read++)
                 {
                     var operation = _client.GetStringAsync(_key);
+
                     if (!operation.IsCompletedSuccessfully)
+                    {
                         throw new InvalidOperationException("Expected a synchronous cache hit.");
+                    }
+
 #pragma warning disable RESP009 // The completion check above guarantees this measured cache-hit read cannot block.
                     length += operation.Result!.Length;
 #pragma warning restore RESP009
                 }
+
                 return length;
             });
+        }
+
         var lengths = await Task.WhenAll(_workers);
         return lengths.Sum();
     }
@@ -94,7 +118,14 @@ public class ClientCacheReadBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync();
-        if (_container is not null) await _container.DisposeAsync();
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+        }
     }
 }

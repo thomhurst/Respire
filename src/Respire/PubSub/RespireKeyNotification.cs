@@ -43,32 +43,66 @@ public readonly struct RespireKeyNotification
     }
 
     /// <summary>The notification channel layout.</summary>
-    public RespireKeyNotificationKind Kind { get; }
+    public RespireKeyNotificationKind Kind
+    {
+        get;
+    }
+
     /// <summary>The known event type, or Unknown for a future/module event.</summary>
-    public RespireKeyNotificationType Type { get; }
+    public RespireKeyNotificationType Type
+    {
+        get;
+    }
+
     /// <summary>The emitting database, independent of the client's selected database.</summary>
-    public int Database { get; }
+    public int Database
+    {
+        get;
+    }
+
     /// <summary>The physical key, or logical key after explicit prefix filtering.</summary>
     public RespireKey Key => new(_key);
+
     /// <summary>The raw key bytes, without decoding or copying.</summary>
     public ReadOnlyMemory<byte> KeyBytes => _key;
+
     /// <summary>Whether this notification contains any subkeys, including empty subkey names.</summary>
     public bool HasSubKey => _subkeys.Count != 0;
+
     /// <summary>The lossless event name, including unrecognized names.</summary>
-    public ReadOnlyMemory<byte> RawType { get; }
+    public ReadOnlyMemory<byte> RawType
+    {
+        get;
+    }
+
     /// <summary>The original physical notification channel.</summary>
-    public RespireChannel Channel { get; }
+    public RespireChannel Channel
+    {
+        get;
+    }
+
     /// <summary>The complete original message payload.</summary>
-    public ReadOnlyMemory<byte> RawValue { get; }
+    public ReadOnlyMemory<byte> RawValue
+    {
+        get;
+    }
+
     /// <summary>Enumerates the affected subkeys without allocations.</summary>
     public RespireSubKeyEnumerable GetSubKeys() => _subkeys;
+
     /// <summary>Tests the exposed key against a binary prefix.</summary>
     public bool KeyStartsWith(ReadOnlySpan<byte> prefix) => _key.Span.StartsWith(prefix);
+
     /// <summary>Copies the exposed key if the destination fits; otherwise writes nothing.</summary>
     public bool TryCopyKey(Span<byte> destination, out int written)
     {
         written = 0;
-        if (!_key.Span.TryCopyTo(destination)) return false;
+
+        if (!_key.Span.TryCopyTo(destination))
+        {
+            return false;
+        }
+
         written = _key.Length;
         return true;
     }

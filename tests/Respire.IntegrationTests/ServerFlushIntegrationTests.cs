@@ -14,25 +14,32 @@ public class ServerFlushIntegrationTests
     {
         // FLUSHALL must never share a container with other tests.
         await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [6379]);
+
         RespireOptions Options(int database) => new()
         {
-            Protocol = (RespireProtocol)protocol, Database = database, AllowAdmin = true,
+            Protocol = (RespireProtocol)protocol,
+            Database = database,
+            AllowAdmin = true,
             Endpoints = { new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379)) },
         };
+
         await using var first = await RespireClient.ConnectAsync(Options(0));
         await using var second = await RespireClient.ConnectAsync(Options(1));
+
         foreach (var mode in Enum.GetValues<RespireServerFlushMode>())
-        foreach (var execution in new[] { 0, 1, 2 })
         {
-            await first.SetAsync("key", (RespireValue)"first");
-            await second.SetAsync("key", (RespireValue)"second");
-            await FlushAsync(first, all: false, mode, execution);
-            (await first.ExistsAsync("key")).Should().BeFalse();
-            (await second.GetStringAsync("key")).Should().Be("second");
-            await first.SetAsync("key", (RespireValue)"replacement");
-            await FlushAsync(first, all: true, mode, execution);
-            (await first.ExistsAsync("key")).Should().BeFalse();
-            (await second.ExistsAsync("key")).Should().BeFalse();
+            foreach (var execution in new[] { 0, 1, 2 })
+            {
+                await first.SetAsync("key", (RespireValue)"first");
+                await second.SetAsync("key", (RespireValue)"second");
+                await FlushAsync(first, all: false, mode, execution);
+                (await first.ExistsAsync("key")).Should().BeFalse();
+                (await second.GetStringAsync("key")).Should().Be("second");
+                await first.SetAsync("key", (RespireValue)"replacement");
+                await FlushAsync(first, all: true, mode, execution);
+                (await first.ExistsAsync("key")).Should().BeFalse();
+                (await second.ExistsAsync("key")).Should().BeFalse();
+            }
         }
     }
 
@@ -40,14 +47,32 @@ public class ServerFlushIntegrationTests
     {
         if (execution == 0)
         {
-            if (all) await client.Server.FlushAllAsync(mode, default); else await client.Server.FlushDatabaseAsync(mode, default);
+            if (all)
+            {
+                await client.Server.FlushAllAsync(mode, default);
+            }
+            else
+            {
+                await client.Server.FlushDatabaseAsync(mode, default);
+            }
+
             return;
         }
+
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
         IRespireCommandQueue queue = execution == 2 ? tx : batch;
         var pending = all ? queue.Server.FlushAll(mode) : queue.Server.FlushDatabase(mode);
-        if (execution == 2) await tx.CommitAsync(); else await batch.ExecuteAsync();
+
+        if (execution == 2)
+        {
+            await tx.CommitAsync();
+        }
+        else
+        {
+            await batch.ExecuteAsync();
+        }
+
         pending.Result.Should().BeTrue();
     }
 }

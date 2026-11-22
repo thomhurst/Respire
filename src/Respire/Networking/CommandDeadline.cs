@@ -19,6 +19,7 @@ internal readonly struct CommandDeadline
     private CommandDeadline(long value) => _value = value;
 
     internal long RawValue => _value;
+
     internal static CommandDeadline FromRawValue(long value) => new(value);
 
     /// <summary>No deadline.</summary>

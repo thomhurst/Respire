@@ -36,6 +36,7 @@ public class ProtocolBenchmarks
 
         var largeArrayBuilder = new StringBuilder();
         largeArrayBuilder.Append("*100\r\n");
+
         for (var i = 0; i < 100; i++)
         {
             largeArrayBuilder.Append($":{i}\r\n");
@@ -52,6 +53,7 @@ public class ProtocolBenchmarks
 
         var fragmentedArrayBuilder = new StringBuilder();
         fragmentedArrayBuilder.Append("*1000\r\n");
+
         for (var i = 0; i < 1000; i++)
         {
             fragmentedArrayBuilder.Append($":{i}\r\n");
@@ -120,6 +122,7 @@ public class ProtocolBenchmarks
     public RespireDataType ParseFragmentedArray_Restart()
     {
         RespValue value = default;
+
         for (var end = 32; end < _fragmentedArrayData.Length; end += 32)
         {
             var pos = 0;
@@ -139,6 +142,7 @@ public class ProtocolBenchmarks
     {
         RespValue value = default;
         var pos = 0;
+
         for (var end = 32; end < _fragmentedArrayData.Length; end += 32)
         {
             _ = _parseState.TryParse(_fragmentedArrayData.AsSpan(0, end), ref pos, out value, out _);

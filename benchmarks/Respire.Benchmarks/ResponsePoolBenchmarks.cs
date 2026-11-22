@@ -24,11 +24,13 @@ public class ResponsePoolBenchmarks
     public async Task Setup()
     {
         ReportMemory("before-connect");
+
         try
         {
             var host = Environment.GetEnvironmentVariable("REDIS_HOST");
             var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configuredPort)
                 ? configuredPort : 6379;
+
             if (string.IsNullOrEmpty(host))
             {
                 _container = new RedisBuilder("redis:8.10").Build();
@@ -36,19 +38,28 @@ public class ResponsePoolBenchmarks
                 host = _container.Hostname;
                 port = _container.GetMappedPublicPort(6379);
             }
+
             _client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = { new RespireEndpoint(host, port) }, Connections = 1, Protocol = RespireProtocol.Resp2,
+                Endpoints = { new RespireEndpoint(host, port) },
+                Connections = 1,
+                Protocol = RespireProtocol.Resp2,
                 MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
             });
+
             if (!await _client.SetAsync("pool:pipeline", PipelineValue)
                 || !await _client.SetAsync("pool:small", new string('x', 1024))
                 || !await _client.SetAsync("pool:large", new string('x', LargeLength)))
+            {
                 throw new InvalidOperationException("Response-pool seed SET failed.");
+            }
+
             if (await GetPipeline() != PipelineLength * PipelineValue.Length
                 || await ConcurrentGetPipelines() != Concurrency * PipelineLength * PipelineValue.Length
                 || await GetSmallValue() != 1024 || await GetLargeValue() != LargeLength)
+            {
                 throw new InvalidOperationException("Response-pool GET validation failed.");
+            }
             // Hold roots until each burst ends: sequentially awaiting the commands
             // still forces all payload/element arrays to remain simultaneously owned.
             await RetainBurst("GET", ["pool:large"], 32, LargeLength, aggregate: false);
@@ -65,13 +76,18 @@ public class ResponsePoolBenchmarks
     private async Task RetainBurst(RespireCommand command, RespireValue[] arguments, int count, int expected, bool aggregate)
     {
         var results = new RespireResult[count];
+
         try
         {
             for (var index = 0; index < results.Length; index++)
             {
                 results[index] = await _client.ExecuteAsync(command, arguments);
                 var actual = aggregate ? results[index].Count : results[index].AsSpan().Length;
-                if (actual != expected) throw new InvalidOperationException("Unexpected retained result.");
+
+                if (actual != expected)
+                {
+                    throw new InvalidOperationException("Unexpected retained result.");
+                }
             }
         }
         finally
@@ -95,30 +111,49 @@ public class ResponsePoolBenchmarks
             var worker = index;
             _workers[index] = Task.Run(() => RunPipeline(worker).AsTask());
         }
+
         return (await Task.WhenAll(_workers)).Sum();
     }
 
     private async ValueTask<long> RunPipeline(int worker)
     {
         var pending = _pending[worker];
-        for (var index = 0; index < pending.Length; index++) pending[index] = _client.GetStringAsync("pool:pipeline");
+
+        for (var index = 0; index < pending.Length; index++)
+        {
+            pending[index] = _client.GetStringAsync("pool:pipeline");
+        }
+
         long length = 0;
+
         for (var index = 0; index < pending.Length; index++)
         {
             var value = await pending[index];
-            if (value != PipelineValue) throw new InvalidOperationException("Unexpected pipeline GET reply.");
+
+            if (value != PipelineValue)
+            {
+                throw new InvalidOperationException("Unexpected pipeline GET reply.");
+            }
+
             length += value.Length;
         }
+
         return length;
     }
 
-    [Benchmark] public async ValueTask<int> GetSmallValue() => Check(await _client.GetStringAsync("pool:small"), 1024);
-    [Benchmark] public async ValueTask<int> GetLargeValue() => Check(await _client.GetStringAsync("pool:large"), LargeLength);
+    [Benchmark]
+    public async ValueTask<int> GetSmallValue() => Check(await _client.GetStringAsync("pool:small"), 1024);
+
+    [Benchmark]
+    public async ValueTask<int> GetLargeValue() => Check(await _client.GetStringAsync("pool:large"), LargeLength);
 
     private static int Check(string? value, int expected)
     {
         if (value is null || value.Length != expected || value[0] != 'x' || value[^1] != 'x')
+        {
             throw new InvalidOperationException("Unexpected value GET reply.");
+        }
+
         return value.Length;
     }
 
@@ -133,7 +168,9 @@ public class ResponsePoolBenchmarks
         using var process = Process.GetCurrentProcess();
         Console.WriteLine("RECEIVE_MEMORY " + JsonSerializer.Serialize(new
         {
-            stage, managedBytes = GC.GetTotalMemory(false), pohBytes = info.GenerationInfo[4].SizeAfterBytes,
+            stage,
+            managedBytes = GC.GetTotalMemory(false),
+            pohBytes = info.GenerationInfo[4].SizeAfterBytes,
             pohFragmentedBytes = info.GenerationInfo[4].FragmentationAfterBytes,
             workingSetBytes = process.WorkingSet64,
         }));
@@ -142,9 +179,23 @@ public class ResponsePoolBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) { await _client.DisposeAsync(); _client = null!; }
-        if (_container is not null) { await _container.DisposeAsync(); _container = null; }
-        foreach (var pending in _pending) Array.Clear(pending);
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+            _client = null!;
+        }
+
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+            _container = null;
+        }
+
+        foreach (var pending in _pending)
+        {
+            Array.Clear(pending);
+        }
+
         Array.Clear(_workers);
         ReportMemory("after-dispose");
     }

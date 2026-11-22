@@ -9,11 +9,17 @@ namespace Respire.Internal;
 internal interface IDispatchObservation
 {
     bool IsOpen(long generation);
+
     int Attempts(long generation);
+
     RespireEndpoint? Endpoint(long generation);
+
     void UseEndpoint(long generation, RespireEndpoint? endpoint);
+
     void SetAttempts(long generation, int attempts);
+
     bool Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint);
+
     void Retry(long generation);
 }
 
@@ -32,7 +38,11 @@ internal static class DispatchResponseSource
         var current = LazyInitializer.EnsureInitialized(ref _decoratedObservation);
         var previous = current.Value;
         current.Value = observation;
-        try { return send(state); }
+
+        try
+        {
+            return send(state);
+        }
         finally { current.Value = previous; }
     }
 
@@ -82,11 +92,13 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
     internal static DispatchResponseSource<TResult> Start()
     {
         var source = Pool.Rent();
+
         lock (source._gate)
         {
             source._generation = unchecked(source._generation + 1);
             source._closed = false;
         }
+
         return source;
     }
 
@@ -118,7 +130,11 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
         var source = Start();
         var observation = source.Observation;
         ValueTask<TResult> response;
-        try { response = send(state, observation); }
+
+        try
+        {
+            response = send(state, observation);
+        }
         catch (Exception error)
         {
             source.Fail(error);
@@ -132,46 +148,86 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
     int IDispatchObservation.Attempts(long generation)
     {
         lock (_gate)
+        {
             return generation == _generation && !_closed ? _owner.RetryAttempts : 0;
+        }
     }
 
     bool IDispatchObservation.IsOpen(long generation)
     {
-        lock (_gate) return generation == _generation && !_closed;
+        lock (_gate)
+        {
+            return generation == _generation && !_closed;
+        }
     }
 
     bool IDispatchObservation.Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
     {
         ErrorObservation.Borrower borrower;
+
         lock (_gate)
         {
-            if (generation != _generation || _closed) return false;
-            if (_owner.IsEmpty) _owner = ErrorObservation.StartFailure();
+            if (generation != _generation || _closed)
+            {
+                return false;
+            }
+
+            if (_owner.IsEmpty)
+            {
+                _owner = ErrorObservation.StartFailure();
+            }
+
             borrower = _owner.Borrow();
-            if (!overrideEndpoint) endpoint = _endpoint;
+
+            if (!overrideEndpoint)
+            {
+                endpoint = _endpoint;
+            }
         }
-        try { return borrower.RecordHandled(error, endpoint); }
+
+        try
+        {
+            return borrower.RecordHandled(error, endpoint);
+        }
         finally { borrower.Complete(); }
     }
 
     RespireEndpoint? IDispatchObservation.Endpoint(long generation)
     {
-        lock (_gate) return generation == _generation && !_closed ? _endpoint : null;
+        lock (_gate)
+        {
+            return generation == _generation && !_closed ? _endpoint : null;
+        }
     }
 
     void IDispatchObservation.UseEndpoint(long generation, RespireEndpoint? endpoint)
     {
         lock (_gate)
-            if (generation == _generation && !_closed) _endpoint = endpoint;
+        {
+            if (generation == _generation && !_closed)
+            {
+                _endpoint = endpoint;
+            }
+        }
     }
 
     void IDispatchObservation.SetAttempts(long generation, int attempts)
     {
         lock (_gate)
         {
-            if (generation != _generation || _closed || (attempts <= 0 && _owner.IsEmpty)) return;
-            if (_owner.IsEmpty) _owner = ErrorObservation.StartFailure(attempts);
-            else _owner.SetRetryAttempts(attempts);
+            if (generation != _generation || _closed || (attempts <= 0 && _owner.IsEmpty))
+            {
+                return;
+            }
+
+            if (_owner.IsEmpty)
+            {
+                _owner = ErrorObservation.StartFailure(attempts);
+            }
+            else
+            {
+                _owner.SetRetryAttempts(attempts);
+            }
         }
     }
 
@@ -179,8 +235,16 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
     {
         lock (_gate)
         {
-            if (generation != _generation || _closed) return;
-            if (_owner.IsEmpty) _owner = ErrorObservation.StartFailure();
+            if (generation != _generation || _closed)
+            {
+                return;
+            }
+
+            if (_owner.IsEmpty)
+            {
+                _owner = ErrorObservation.StartFailure();
+            }
+
             _owner.RecordRetry();
         }
     }
@@ -189,6 +253,7 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
     {
         ErrorObservation.FinalOwner owner;
         RespireEndpoint? endpoint;
+
         lock (_gate)
         {
             _closed = true;
@@ -197,6 +262,7 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
             endpoint = _endpoint;
             _endpoint = null;
         }
+
         ErrorObservation.FinishFinal(owner, error, endpoint: endpoint);
     }
 
@@ -214,7 +280,11 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
     {
         ValidateToken(token);
         Exception? failure = null;
-        try { return _response.GetAwaiter().GetResult(); }
+
+        try
+        {
+            return _response.GetAwaiter().GetResult();
+        }
         catch (Exception error) { failure = error; throw; }
         finally
         {
@@ -222,15 +292,29 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
             Pool.Return(this);
         }
     }
+
     ValueTaskSourceStatus IValueTaskSource<TResult>.GetStatus(short token)
     {
         ValidateToken(token);
-        if (_response.IsCompletedSuccessfully) return ValueTaskSourceStatus.Succeeded;
+
+        if (_response.IsCompletedSuccessfully)
+        {
+            return ValueTaskSourceStatus.Succeeded;
+        }
         // Pending replies need no cancellation/fault probes. Completion can race the first check.
-        if (!_response.IsCompleted) return ValueTaskSourceStatus.Pending;
-        if (_response.IsCanceled) return ValueTaskSourceStatus.Canceled;
+        if (!_response.IsCompleted)
+        {
+            return ValueTaskSourceStatus.Pending;
+        }
+
+        if (_response.IsCanceled)
+        {
+            return ValueTaskSourceStatus.Canceled;
+        }
+
         return _response.IsFaulted ? ValueTaskSourceStatus.Faulted : ValueTaskSourceStatus.Succeeded;
     }
+
     void IValueTaskSource<TResult>.OnCompleted(Action<object?> continuation, object? state, short token,
         ValueTaskSourceOnCompletedFlags flags)
     {
@@ -239,8 +323,15 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
         _continuation = continuation;
         _continuationState = state;
         var awaiter = _response.ConfigureAwait((flags & ValueTaskSourceOnCompletedFlags.UseSchedulingContext) != 0).GetAwaiter();
-        if ((flags & ValueTaskSourceOnCompletedFlags.FlowExecutionContext) != 0) awaiter.OnCompleted(_continue);
-        else awaiter.UnsafeOnCompleted(_continue);
+
+        if ((flags & ValueTaskSourceOnCompletedFlags.FlowExecutionContext) != 0)
+        {
+            awaiter.OnCompleted(_continue);
+        }
+        else
+        {
+            awaiter.UnsafeOnCompleted(_continue);
+        }
     }
 
     private void ValidateToken(short token)
@@ -248,12 +339,15 @@ internal sealed class DispatchResponseSource<TResult> : IValueTaskSource<TResult
         // Once rented again, the 16-bit ValueTask version is the stale awaiter's
         // only guard. ValueTask's single-consumption contract still applies at wraparound.
         if (token != _version || _closed)
+        {
             throw new InvalidOperationException("The dispatch response has already been consumed.");
+        }
     }
 
     private readonly struct Policy : IPooledObjectPolicy<DispatchResponseSource<TResult>>
     {
         public DispatchResponseSource<TResult> Create() => new();
+
         public bool TryReset(DispatchResponseSource<TResult> source)
         {
             source._version = unchecked((short)(source._version + 1));

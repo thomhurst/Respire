@@ -21,7 +21,7 @@ namespace Microsoft.Extensions.Caching.StackExchangeRedis;
 [NotInParallel]
 public class TimeExpirationTests(RedisTestContainer fixture)
 {
-[Test]
+    [Test]
     public void AbsoluteExpirationInThePastThrows()
     {
         using var cache = UpstreamCache.Create(fixture);
@@ -123,6 +123,7 @@ public class TimeExpirationTests(RedisTestContainer fixture)
             Thread.Sleep(TimeSpan.FromSeconds(0.5));
             result = cache.Get(key);
         }
+
         Assert.Null(result);
     }
 

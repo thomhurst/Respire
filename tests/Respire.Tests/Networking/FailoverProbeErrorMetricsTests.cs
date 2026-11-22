@@ -56,13 +56,17 @@ public class FailoverProbeErrorMetricsTests
         await Assert.That(failedStatus.ConsecutiveFailures).IsEqualTo(1);
         await Assert.That(failedStatus.LastErrorType).IsNotNull();
         await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 1 : 0);
+
         if (enabled)
         {
             var item = capture.Items.Single();
             await Assert.That((bool)item["redis.client.errors.internal"]!).IsTrue();
             await Assert.That(item["redis.client.operation.retry_attempts"]).IsEqualTo((object)0);
+
             if (shape is "ping" or "cluster-error" or "sentinel-ping")
+            {
                 await Assert.That(item["db.response.status_code"]).IsEqualTo((object)"NOPERM");
+            }
         }
     }
 
@@ -95,7 +99,12 @@ public class FailoverProbeErrorMetricsTests
         using var capture = new Capture(throwingListener);
         var connecting = RespireFailoverGroup.ConnectAsync([new(Options(server.Port))], ProbeOptions(), cancellation.Token);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!server.ReceivedCommands.Contains("PING")) await Task.Delay(1, deadline.Token);
+
+        while (!server.ReceivedCommands.Contains("PING"))
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         cancellation.Cancel();
         await Assert.That(async () => await connecting).Throws<OperationCanceledException>();
         await Assert.That(capture.Items.Count).IsEqualTo(0);
@@ -123,34 +132,50 @@ public class FailoverProbeErrorMetricsTests
 
     private static RespireOptions Options(int port) => new()
     {
-        Protocol = RespireProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", port)],
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        Endpoints = [new("127.0.0.1", port)],
         CommandTimeout = TimeSpan.FromSeconds(2),
     };
 
     private static RespireFailoverGroupOptions ProbeOptions() => new()
     {
-        ProbeInterval = TimeSpan.FromHours(1), ProbeTimeout = TimeSpan.FromSeconds(5),
-        FailureThreshold = 1, CircuitOpenDuration = TimeSpan.FromHours(1),
+        ProbeInterval = TimeSpan.FromHours(1),
+        ProbeTimeout = TimeSpan.FromSeconds(5),
+        FailureThreshold = 1,
+        CircuitOpenDuration = TimeSpan.FromHours(1),
     };
 
     private sealed class Capture : IDisposable
     {
         private readonly MeterListener _listener = new();
-        internal ConcurrentQueue<Dictionary<string, object?>> Items { get; } = new();
+
+        internal ConcurrentQueue<Dictionary<string, object?>> Items
+        {
+            get;
+        } = new();
+
         internal Capture(bool throwing)
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
                 Items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value));
-                if (throwing) throw new InvalidOperationException("Listener failures must remain isolated.");
+
+                if (throwing)
+                {
+                    throw new InvalidOperationException("Listener failures must remain isolated.");
+                }
             });
             _listener.Start();
         }
+
         public void Dispose() => _listener.Dispose();
     }
 }

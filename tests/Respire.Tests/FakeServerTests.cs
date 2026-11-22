@@ -69,7 +69,10 @@ public class FakeServerTests
         using var set = await client.ExecuteAsync(RespireCommands.String.SET, "key", "value", "PX", 1500);
         await Assert.That(await Number(client, "PTTL", "key")).IsEqualTo(1500);
         await Assert.That(await Number(client, "TTL", "key")).IsEqualTo(2);
-        await Assert.That(async () => { using var reply = await client.ExecuteAsync("PEXPIRE", "key", 9000, "GT", "LT"); })
+        await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync("PEXPIRE", "key", 9000, "GT", "LT");
+            })
             .Throws<RespireServerException>();
         await Assert.That(await Number(client, "PTTL", "key")).IsEqualTo(1500);
         await Assert.That(await Number(client, "PEXPIRE", "key", 2000, "NX")).IsEqualTo(0);
@@ -103,10 +106,16 @@ public class FakeServerTests
         using var replaced = await client.ExecuteAsync(RespireCommands.String.SET, "key", "new", "XX", "GET", "KEEPTTL");
         await Assert.That(replaced.AsString()).IsEqualTo("old");
         await Assert.That(await Number(client, "PTTL", "key")).IsEqualTo(1000);
-        await Assert.That(async () => { using var reply = await client.ExecuteAsync(RespireCommands.String.SET, "key", "bad", "NX", "XX"); })
+        await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync(RespireCommands.String.SET, "key", "bad", "NX", "XX");
+            })
             .Throws<RespireServerException>();
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
-        await Assert.That(async () => { using var reply = await client.ExecuteAsync("SET", "key", "bad", "KEEPTTL", "EX", 10); })
+        await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync("SET", "key", "bad", "KEEPTTL", "EX", 10);
+            })
             .Throws<RespireServerException>();
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
         await Assert.That(await Number(client, "PTTL", "key")).IsEqualTo(1000);
@@ -142,7 +151,10 @@ public class FakeServerTests
 #pragma warning restore RESP010
         var unsupported = client.ExecuteAsync("NOT-A-COMMAND", "key").AsTask();
         var valid = client.SetAsync("after-error", "ok").AsTask();
-        var error = await Assert.That(async () => { using var reply = await unsupported; }).Throws<RespireServerException>();
+        var error = await Assert.That(async () =>
+        {
+            using var reply = await unsupported;
+        }).Throws<RespireServerException>();
         await Assert.That(error!.Message).Contains("NOT-A-COMMAND");
         await Assert.That(await valid).IsTrue();
         await Assert.That(await client.GetStringAsync("after-error")).IsEqualTo("ok");
@@ -156,8 +168,13 @@ public class FakeServerTests
         // command deadline must outlast the five-second promptness guard: a stalled runner
         // could otherwise let the deadline sweep report a timeout before the close fails it.
         // This test exercises prompt failure after server disposal, not queued reconnect demand.
-        var options = server.CreateOptions() with { Connections = 1, BacklogPolicy = RespireBacklogPolicy.FailFast,
-            ConnectTimeout = TimeSpan.FromSeconds(1), CommandTimeout = TimeSpan.FromSeconds(30) };
+        var options = server.CreateOptions() with
+        {
+            Connections = 1,
+            BacklogPolicy = RespireBacklogPolicy.FailFast,
+            ConnectTimeout = TimeSpan.FromSeconds(1),
+            CommandTimeout = TimeSpan.FromSeconds(30)
+        };
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var client = await RespireClient.ConnectAsync(options);
 #pragma warning restore RESP010
@@ -170,8 +187,11 @@ public class FakeServerTests
         await Task.WhenAll(server.DisposeAsync().AsTask(), server.DisposeAsync().AsTask()).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(() => server.CreateOptions()).ThrowsExactly<ObjectDisposedException>();
         var error = await Assert.That(async () => await client.GetStringAsync("key").AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<Exception>();
+
         if (error is not (ObjectDisposedException or RespireConnectionException))
+        {
             throw new InvalidOperationException($"Expected a disposal or connection failure, but got: {error}", error);
+        }
     }
 
     [Test]
@@ -222,12 +242,16 @@ public class FakeServerTests
     {
         await using var server = new RespireFakeServer();
         var options = server.CreateOptions();
+
         foreach (var unsupported in new[]
         {
             options with { Protocol = RespireProtocol.Resp3, Password = "secret" },
             options with { Database = 1 },
         })
+        {
             await Assert.That(async () => await RespireClient.ConnectAsync(unsupported)).Throws<RespireException>();
+        }
+
         await Assert.That(async () => await RespireClient.ConnectAsync(options with { Endpoints = [new("localhost", 1)] })).Throws<NotSupportedException>();
 #pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
         await using var working = await RespireClient.ConnectAsync(options with { ClientName = "test-client", Protocol = RespireProtocol.Resp3 });
@@ -239,6 +263,7 @@ public class FakeServerTests
     public async Task PlaintextFakeServerRejectsTlsThroughPublicFactory()
     {
         var server = new RespireFakeServer();
+
         try
         {
             // TLS now reaches the public transport hook. This fake accepts only RESP bytes.
@@ -265,11 +290,15 @@ public class FakeServerTests
         await using (var stream = await options.TestingStreamFactory!(options.Endpoints[0].Host, 6379, default))
         {
             foreach (var value in "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n"u8.ToArray())
+            {
                 await stream.WriteAsync(new byte[] { value });
+            }
+
             var response = new byte[5];
             await stream.ReadExactlyAsync(response).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(System.Text.Encoding.ASCII.GetString(response)).IsEqualTo("+OK\r\n");
         }
+
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
     }
 
@@ -302,6 +331,7 @@ public class FakeServerTests
         // The bulk payload itself is legal RESP, but its complete request would exceed the cap.
         var request = new byte[16 * 1024 * 1024];
         "*2\r\n$4\r\nECHO\r\n$16777216\r\n"u8.CopyTo(request);
+
         try
         {
             try
@@ -313,6 +343,7 @@ public class FakeServerTests
                 // Closing the reader may finish the in-flight flush before it returns.
                 // The server's exact retained size-limit error is asserted below.
             }
+
             await Assert.That(await stream.ReadAsync(new byte[1]).AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(0);
         }
         finally
@@ -360,6 +391,7 @@ public class FakeServerTests
         var server = new RespireFakeServer();
         var options = server.CreateOptions();
         await using var stream = await options.TestingStreamFactory!(options.Endpoints[0].Host, 6379, default);
+
         try
         {
             await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(request)).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -377,6 +409,7 @@ public class FakeServerTests
     {
         var expected = new InvalidOperationException("clock failure");
         var server = new RespireFakeServer(new ThrowingClock(expected));
+
         try
         {
             for (var index = 0; index < 3; index++)
@@ -391,11 +424,21 @@ public class FakeServerTests
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var field = typeof(RespireFakeServer).GetField("_connections", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
             var gate = (Lock)typeof(RespireFakeServer).GetField("_gate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(server)!;
+
             while (true)
             {
                 bool empty;
-                lock (gate) empty = !((System.Collections.IEnumerable)field.GetValue(server)!).Cast<object>().Any();
-                if (empty) break;
+
+                lock (gate)
+                {
+                    empty = !((System.Collections.IEnumerable)field.GetValue(server)!).Cast<object>().Any();
+                }
+
+                if (empty)
+                {
+                    break;
+                }
+
                 await Task.Delay(10, deadline.Token);
             }
         }
@@ -406,8 +449,11 @@ public class FakeServerTests
                 .ThrowsExactly<InvalidOperationException>();
             await Assert.That(error).IsSameReferenceAs(expected);
             await Assert.That(disposal.Exception!.InnerExceptions.Count).IsEqualTo(3);
+
             foreach (var failure in disposal.Exception.InnerExceptions)
+            {
                 await Assert.That(failure).IsSameReferenceAs(expected);
+            }
         }
     }
 
@@ -424,6 +470,7 @@ public class FakeServerTests
             // shutdown must cancel the pending flush as well as the idle read.
             var payload = new string('x', 128 * 1024);
             var request = System.Text.Encoding.ASCII.GetBytes($"*2\r\n$4\r\nECHO\r\n${payload.Length}\r\n{payload}\r\n");
+
             try
             {
                 await busy.WriteAsync(request).AsTask().WaitAsync(TimeSpan.FromSeconds(5));

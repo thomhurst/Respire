@@ -14,8 +14,12 @@ internal static class RespAggregateStorage
     internal static bool TryValidate(long declaredCount, bool pairCount, int depth, out int count)
     {
         count = 0;
+
         if (depth >= MaxDepth || declaredCount < 0 || declaredCount > (pairCount ? int.MaxValue / 2 : int.MaxValue))
+        {
             return false;
+        }
+
         count = (int)(pairCount ? declaredCount * 2 : declaredCount);
         return true;
     }
@@ -29,12 +33,14 @@ internal static class RespAggregateStorage
         var growthFactor = elements.Length < 256 ? 2L : 4L;
         var capacity = (int)Math.Min(count, elements.Length == 0 ? 16L : elements.Length * growthFactor);
         var replacement = RespirePools.ValueArrays.Rent(capacity);
+
         if (elements.Length != 0)
         {
             elements.CopyTo(replacement, 0);
             // Ownership moves to the replacement; do not dispose the transferred children.
             RespirePools.ValueArrays.Return(elements, clearArray: true);
         }
+
         elements = replacement;
     }
 }

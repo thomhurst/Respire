@@ -24,18 +24,27 @@ public class ServerClusterInspectionIntegrationTests
         var port = container.GetMappedPublicPort(6379);
         await Run(["CONFIG", "SET", "cluster-announce-port", port.ToString()]);
         await Run(["CLUSTER", "ADDSLOTSRANGE", "0", "16383"]);
+
         using (var ready = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
         {
             while (true)
             {
                 var info = await container.ExecAsync(["redis-cli", "CLUSTER", "INFO"], ready.Token);
-                if (info.Stdout.Contains("cluster_state:ok", StringComparison.Ordinal)) break;
+
+                if (info.Stdout.Contains("cluster_state:ok", StringComparison.Ordinal))
+                {
+                    break;
+                }
+
                 await Task.Delay(100, ready.Token);
             }
         }
+
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(container.Hostname, port)], Connections = 1, UseCluster = true,
+            Endpoints = [new(container.Hostname, port)],
+            Connections = 1,
+            UseCluster = true,
             Protocol = protocol == 3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
         });
         var view = client.WithKeyPrefix("tenant:");
@@ -79,6 +88,7 @@ public class ServerClusterInspectionIntegrationTests
             (await server.ClusterMyShardIdOnAllNodesAsync())[0].Error.Should().BeOfType<RespireServerException>();
             (await server.ClusterSlotStatsByMetricOnAllNodesAsync(RespireClusterSlotMetric.KeyCount, 1))[0].Error.Should().BeOfType<RespireServerException>();
         }
+
         var perNode = await server.ClusterInfoOnAllNodesAsync();
         perNode.Should().ContainSingle();
         perNode[0].Endpoint.Port.Should().Be(port);
@@ -97,7 +107,11 @@ public class ServerClusterInspectionIntegrationTests
         async Task Run(string[] arguments)
         {
             var result = await container.ExecAsync(["redis-cli", "-e", .. arguments]);
-            if (result.ExitCode != 0) throw new InvalidOperationException($"Cluster setup failed: {result.Stdout} {result.Stderr}");
+
+            if (result.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"Cluster setup failed: {result.Stdout} {result.Stderr}");
+            }
         }
     }
 

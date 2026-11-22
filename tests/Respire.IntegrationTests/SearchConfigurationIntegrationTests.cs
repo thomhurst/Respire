@@ -22,6 +22,7 @@ public class SearchConfigurationIntegrationTests
         var original = owned["TIMEOUT"]!;
         owned.Should().ContainKey("EXTLOAD");
         owned["EXTLOAD"].Should().BeNull();
+
         try
         {
             var updated = (long.Parse(original, CultureInfo.InvariantCulture) + 1).ToString(CultureInfo.InvariantCulture);

@@ -110,6 +110,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     public double AsDouble()
     {
         var value = Value;
+
         if (value.Type == RespireDataType.Double)
         {
             return value.AsDouble();
@@ -143,6 +144,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     public T? As<T>()
     {
         var value = Value;
+
         if (value.IsNull)
         {
             return default;
@@ -207,6 +209,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
         public bool MoveNext()
         {
             var next = _index + 1;
+
             if (next >= _result.Count)
             {
                 return false;

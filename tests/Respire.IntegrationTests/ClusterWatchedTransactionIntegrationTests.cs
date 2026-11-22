@@ -14,7 +14,8 @@ public class ClusterWatchedTransactionIntegrationTests(ClusterTransactionTestCon
     {
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true,
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            UseCluster = true,
             Protocol = (RespireProtocol)protocol,
         });
         var client = root.WithKeyPrefix($"safe-watch:{Guid.NewGuid():N}:");
@@ -25,7 +26,12 @@ public class ClusterWatchedTransactionIntegrationTests(ClusterTransactionTestCon
             var current = int.Parse((await reads.GetStringAsync("{a}:balance", token))!);
             Action crossSlot = () => transaction.Set("{b}:bad", "wrong");
             crossSlot.Should().Throw<InvalidOperationException>();
-            if (++attempts == 1) await client.SetAsync("{a}:balance", "2", cancellationToken: token);
+
+            if (++attempts == 1)
+            {
+                await client.SetAsync("{a}:balance", "2", cancellationToken: token);
+            }
+
             _ = transaction.Set("{a}:balance", current + 10);
             return current + 10;
         });
@@ -44,7 +50,9 @@ public class ClusterWatchedTransactionIntegrationTests(ClusterTransactionTestCon
     {
         var options = new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], UseCluster = true, Connections = 2,
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            UseCluster = true,
+            Connections = 2,
             Protocol = (RespireProtocol)protocol,
         };
         await using var client = await RespireClient.ConnectAsync(options);
@@ -60,8 +68,14 @@ public class ClusterWatchedTransactionIntegrationTests(ClusterTransactionTestCon
         transaction.Count.Should().Be(0);
         var balance = transaction.Increment("{a}:balance");
         var history = transaction.Set("{a}:history", "committed");
-        if (conflict) await competitor.SetAsync("{a}:balance", 99);
+
+        if (conflict)
+        {
+            await competitor.SetAsync("{a}:balance", 99);
+        }
+
         (await transaction.CommitAsync()).Should().Be(!conflict);
+
         if (conflict)
         {
             balance.Status.Should().Be(RespirePendingStatus.Aborted);

@@ -24,7 +24,10 @@ public sealed class RespireTypedSearchQuery<TFields> where TFields : class
     }
 
     /// <summary>The index or deployment alias to query.</summary>
-    public string IndexName { get; }
+    public string IndexName
+    {
+        get;
+    }
 
     /// <summary>The composed query expression.</summary>
     public RespireSearchExpression Expression => _filter ?? RespireSearchQueryBuilder.MatchAll();
@@ -42,7 +45,12 @@ public sealed class RespireTypedSearchQuery<TFields> where TFields : class
         RespireSearchSortDirection direction = RespireSearchSortDirection.Ascending)
     {
         var selected = Field(selector);
-        if (!selected.Definition.Sortable) throw new InvalidOperationException($"Field '{selected.Name}' is not SORTABLE.");
+
+        if (!selected.Definition.Sortable)
+        {
+            throw new InvalidOperationException($"Field '{selected.Name}' is not SORTABLE.");
+        }
+
         _ = RespireSearchSort.Token(direction);
         return WithOptions(_options with { SortBy = (selected.Name, direction) });
     }
@@ -71,13 +79,20 @@ public sealed class RespireTypedSearchQuery<TFields> where TFields : class
         ArgumentNullException.ThrowIfNull(selector);
         var selected = selector(_fields);
         ArgumentNullException.ThrowIfNull(selected);
-        if (selected.Length == 0) throw new ArgumentException("Select at least one field.", nameof(selector));
+
+        if (selected.Length == 0)
+        {
+            throw new ArgumentException("Select at least one field.", nameof(selector));
+        }
+
         var names = new string[selected.Length];
+
         for (var i = 0; i < selected.Length; i++)
         {
             ArgumentNullException.ThrowIfNull(selected[i]);
             names[i] = selected[i].Name;
         }
+
         return WithOptions(_options with { ReturnFields = Array.AsReadOnly(names) });
     }
 
@@ -91,11 +106,27 @@ public sealed class RespireTypedSearchQuery<TFields> where TFields : class
     {
         var stages = new List<RespireSearchAggregateStage>();
         var load = _options.ReturnFields.Select(name => "@" + name).ToList();
-        if (_options.SortBy is { } sort && !load.Contains("@" + sort.Field)) load.Add("@" + sort.Field);
-        if (load.Count > 0) stages.Add(RespireSearchAggregateStage.Load(load.ToArray()));
+
+        if (_options.SortBy is { } sort && !load.Contains("@" + sort.Field))
+        {
+            load.Add("@" + sort.Field);
+        }
+
+        if (load.Count > 0)
+        {
+            stages.Add(RespireSearchAggregateStage.Load(load.ToArray()));
+        }
+
         if (_options.SortBy is { } order)
+        {
             stages.Add(RespireSearchAggregateStage.SortBy(new RespireSearchAggregateSort("@" + order.Field, order.Direction)));
-        if (_options.Limit is { } limit) stages.Add(RespireSearchAggregateStage.Limit(limit.Offset, limit.Count));
+        }
+
+        if (_options.Limit is { } limit)
+        {
+            stages.Add(RespireSearchAggregateStage.Limit(limit.Offset, limit.Count));
+        }
+
         return new() { Stages = stages.AsReadOnly(), Dialect = _options.Dialect };
     }
 

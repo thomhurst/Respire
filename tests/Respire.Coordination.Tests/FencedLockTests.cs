@@ -21,22 +21,34 @@ public class FencedLockTests(RedisTestContainer fixture)
         await using var firstReader = await coordination.TryAcquireReadLockAsync(key, Lease);
         await using var secondReader = await coordination.TryAcquireReadLockAsync(key, Lease);
         await Assert.That(firstReader.Acquired && secondReader.Acquired).IsTrue();
+
         await using (var rejectedWriter = await coordination.TryAcquireWriteLockAsync(key, Lease))
+        {
             await Assert.That(rejectedWriter.Acquired).IsFalse();
+        }
+
         await using var thirdReader = await coordination.TryAcquireReadLockAsync(key, Lease);
         await Assert.That(thirdReader.Acquired).IsTrue();
         await Assert.That(await secondReader.Lock.VerifyStillHeldAsync()).IsTrue();
         await Assert.That(await firstReader.Lock.ReleaseAsync()).IsTrue();
+
         await using (var stillRejectedWriter = await coordination.TryAcquireWriteLockAsync(key, Lease))
+        {
             await Assert.That(stillRejectedWriter.Acquired).IsFalse();
+        }
+
         await secondReader.Lock.DisposeAsync();
         await thirdReader.Lock.DisposeAsync();
 
         await using var writer = await coordination.TryAcquireWriteLockAsync(key, Lease);
         await Assert.That(writer.Acquired).IsTrue();
         await Assert.That(writer.Lock.IsWriter).IsTrue();
+
         await using (var rejectedReader = await coordination.TryAcquireReadLockAsync(key, Lease))
+        {
             await Assert.That(rejectedReader.Acquired).IsFalse();
+        }
+
         await Assert.That(await writer.Lock.ResetExpiryAsync(Lease)).IsTrue();
         await Assert.That(await writer.Lock.VerifyStillHeldAsync()).IsTrue();
         await Assert.That(await writer.Lock.ReleaseAsync()).IsTrue();
@@ -124,8 +136,11 @@ public class FencedLockTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
-            Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            Database = fixture.IsolatedDatabase,
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
         var pair = Keys();
         var coordination = new RespireCoordination(client);
@@ -145,8 +160,11 @@ public class FencedLockTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
-            Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            Database = fixture.IsolatedDatabase,
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
         var pair = Keys();
         var coordination = new RespireCoordination(client);
@@ -169,6 +187,7 @@ public class FencedLockTests(RedisTestContainer fixture)
     public async Task ExpiryAndReconnectKeepCounterHistory()
     {
         var pair = Keys();
+
         await using (var first = await ConnectAsync(2))
         {
             var attempt = await new RespireCoordination(first).TryAcquireFencedLockAsync(pair.Key, pair.Counter, Lease);
@@ -178,10 +197,15 @@ public class FencedLockTests(RedisTestContainer fixture)
             await Assert.That(expiry.AsInteger()).IsEqualTo(1);
             // A lost client cannot release; only the bounded Redis lease expires.
         }
+
         await using var next = await ConnectAsync(3);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (await next.GetBytesAsync(pair.Key, timeout.Token) is not null)
+        {
             await Task.Delay(10, timeout.Token);
+        }
+
         await using var replacement = await new RespireCoordination(next).TryAcquireFencedLockAsync(pair.Key, pair.Counter, Lease);
         await Assert.That(replacement.Acquired).IsTrue();
         await Assert.That(replacement.Lock.FencingToken).IsEqualTo(2);
@@ -211,10 +235,12 @@ public class FencedLockTests(RedisTestContainer fixture)
         await using var client = await ConnectAsync(3);
         var pair = Keys();
         await client.SetAsync(pair.Counter, counter);
+
         if (expires)
         {
             using var expiry = await client.ExecuteAsync(RespireCommands.Key.PEXPIRE, (RespireValue)pair.Counter, 60000);
         }
+
         await Assert.That(async () => await new RespireCoordination(client).TryAcquireFencedLockAsync(pair.Key, pair.Counter, Lease))
             .Throws<RespireServerException>();
         await Assert.That(await client.GetBytesAsync(pair.Key)).IsNull();
@@ -230,7 +256,12 @@ public class FencedLockTests(RedisTestContainer fixture)
     {
         await using var client = await ConnectAsync(protocol);
         var key = Keys().Key;
-        if (existing) await client.SetAsync(key, "17");
+
+        if (existing)
+        {
+            await client.SetAsync(key, "17");
+        }
+
         var error = await Assert.That(async () =>
         {
             using var result = await client.Scripts.ExecuteAsync(RespireCoordination.AcquireFencedLock,
@@ -261,23 +292,32 @@ public class FencedLockTests(RedisTestContainer fixture)
 
     private ValueTask<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(new RespireOptions
     {
-        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
-        Connections = 1, Protocol = (RespireProtocol)protocol,
+        Endpoints = [new(fixture.Host, fixture.Port)],
+        Database = fixture.IsolatedDatabase,
+        Connections = 1,
+        Protocol = (RespireProtocol)protocol,
     });
+
     private static (RespireKey Key, RespireKey Counter) Keys()
     {
         var tag = Guid.NewGuid().ToString("N");
         return ($"{{{tag}}}:lease", $"{{{tag}}}:counter");
     }
+
     private sealed class FencedResource
     {
         private long _fence;
         internal string? Value;
+
         internal bool Write(long fence, string value)
         {
             lock (this)
             {
-                if (fence < _fence) return false;
+                if (fence < _fence)
+                {
+                    return false;
+                }
+
                 _fence = fence;
                 Value = value;
                 return true;

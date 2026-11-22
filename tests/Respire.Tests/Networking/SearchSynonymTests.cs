@@ -119,7 +119,12 @@ public class SearchSynonymTests
             () => search.GetSynonymsAsync(null!).AsTask(),
             () => search.GetTagValuesAsync("", "tags").AsTask(),
             () => search.GetTagValuesAsync("idx", " ").AsTask()];
-        foreach (var call in calls) await Assert.That(call).Throws<ArgumentException>();
+
+        foreach (var call in calls)
+        {
+            await Assert.That(call).Throws<ArgumentException>();
+        }
+
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("FT."))).IsFalse();
     }
 

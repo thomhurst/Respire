@@ -12,6 +12,7 @@ internal sealed partial class ClusterRouter
 {
     private const int SmigratedQueueCapacity = 128;
     private const long SmigratedDropWarningIntervalMilliseconds = 30_000;
+
     // SequenceScope is the physical connection that received the push. Sequence IDs restart
     // with each connection, so deduplication never spans a reconnect, and items queued by an
     // old connection cannot mark a new connection's IDs as already seen.
@@ -65,10 +66,17 @@ internal sealed partial class ClusterRouter
     {
         Interlocked.Increment(ref _smigratedNotificationsDropped);
         Interlocked.Increment(ref _pendingSmigratedDropDiagnostics);
-        if (Interlocked.CompareExchange(ref _smigratedDropDiagnosticsQueued, 1, 0) != 0) return;
+
+        if (Interlocked.CompareExchange(ref _smigratedDropDiagnosticsQueued, 1, 0) != 0)
+        {
+            return;
+        }
+
         if (!ThreadPool.UnsafeQueueUserWorkItem(
                 static router => router.ReportPendingSmigratedDropDiagnostics(), this, preferLocal: false))
+        {
             Volatile.Write(ref _smigratedDropDiagnosticsQueued, 0);
+        }
     }
 
     private void ReportPendingSmigratedDropDiagnostics()
@@ -76,6 +84,7 @@ internal sealed partial class ClusterRouter
         while (true)
         {
             var count = Interlocked.Exchange(ref _pendingSmigratedDropDiagnostics, 0);
+
             if (count > 0)
             {
                 // Lost migrations need discovery, using the same debounce and failure backoff as MOVED.
@@ -84,9 +93,12 @@ internal sealed partial class ClusterRouter
             }
 
             Volatile.Write(ref _smigratedDropDiagnosticsQueued, 0);
+
             if (Interlocked.Read(ref _pendingSmigratedDropDiagnostics) == 0
                 || Interlocked.CompareExchange(ref _smigratedDropDiagnosticsQueued, 1, 0) != 0)
+            {
                 return;
+            }
         }
     }
 
@@ -95,19 +107,34 @@ internal sealed partial class ClusterRouter
         try
         {
             if (RespireTelemetry.ClusterSlotMigrationsSkipped.Enabled)
+            {
                 RespireTelemetry.ClusterSlotMigrationsSkipped.Add(count,
                     new KeyValuePair<string, object?>("reason", "queue_full"));
+            }
         }
         catch (Exception error)
         {
-            try { _logger?.ClusterMigrationDropMetricFailed(error); }
+            try
+            {
+                _logger?.ClusterMigrationDropMetricFailed(error);
+            }
             catch { /* A failing logger must not abandon the queue diagnostics drain. */ }
         }
-        if (_logger is null) return;
+
+        if (_logger is null)
+        {
+            return;
+        }
+
         var now = Environment.TickCount64;
         var last = Volatile.Read(ref _lastSmigratedDropWarning);
+
         if ((last != long.MinValue && now - last < SmigratedDropWarningIntervalMilliseconds)
-            || Interlocked.CompareExchange(ref _lastSmigratedDropWarning, now, last) != last) return;
+            || Interlocked.CompareExchange(ref _lastSmigratedDropWarning, now, last) != last)
+        {
+            return;
+        }
+
         try
         {
             _logger.ClusterMigrationQueueFull(SmigratedNotificationsDropped);
@@ -124,7 +151,11 @@ internal sealed partial class ClusterRouter
     {
         try
         {
-            if (!RespireTelemetry.ClusterSlotMigrationsSkipped.Enabled) return;
+            if (!RespireTelemetry.ClusterSlotMigrationsSkipped.Enabled)
+            {
+                return;
+            }
+
             RespireTelemetry.ClusterSlotMigrationsSkipped.Add(count,
                 new KeyValuePair<string, object?>("reason", reason),
                 new KeyValuePair<string, object?>("server.address", sender.Host),
@@ -132,17 +163,27 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error)
         {
-            try { _logger?.ClusterMigrationMetricObserverFailed(error); }
+            try
+            {
+                _logger?.ClusterMigrationMetricObserverFailed(error);
+            }
             catch { /* A failing logger is also an isolated diagnostic listener. */ }
         }
     }
 
     private void EnsureSmigratedWorker()
     {
-        if (Volatile.Read(ref _smigratedWorker) is not null) return;
+        if (Volatile.Read(ref _smigratedWorker) is not null)
+        {
+            return;
+        }
+
         var start = new Task<Task>(ProcessSmigratedNotificationsAsync);
+
         if (Interlocked.CompareExchange(ref _smigratedWorker, start.Unwrap(), null) is null)
+        {
             start.Start(TaskScheduler.Default);
+        }
     }
 
     // Disposal only: returns the worker to join, or a completed task if none ever started.
@@ -156,7 +197,11 @@ internal sealed partial class ClusterRouter
         MaintenanceNotification notification, long slotMutationToken)
     {
         if (!notification.IsSlotMigration || Volatile.Read(ref _disposed) != 0
-            || notification.Migrations is not { Length: > 0 }) return;
+            || notification.Migrations is not { Length: > 0 })
+        {
+            return;
+        }
+
         EnsureSmigratedWorker();
         // The receive loop captured this callback while the sender was active, so a push that
         // arrived before the sender retired still lands here. Preserve that receive-time
@@ -179,6 +224,7 @@ internal sealed partial class ClusterRouter
         {
             var previousWorker = _smigratedWorkerContext;
             _smigratedWorkerContext = this;
+
             try
             {
                 ApplySmigratedNotification(item);
@@ -213,8 +259,15 @@ internal sealed partial class ClusterRouter
     // Must stay synchronous; see _smigratedWorkerContext.
     internal void ApplySmigratedNotification(QueuedSmigratedNotification item)
     {
-        if (item.Notification.Migrations is not { Length: > 0 } migrations) return;
-        if (Volatile.Read(ref _disposed) != 0) return;
+        if (item.Notification.Migrations is not { Length: > 0 } migrations)
+        {
+            return;
+        }
+
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
         // Claim the sequence before applying: a replay must not gain authority later if this
         // notification was malformed, fenced, or waiting for its source to own the slots.
         if (!_migrations.TryRecordSequence(item.SequenceScope, item.Notification.SequenceId))
@@ -223,6 +276,7 @@ internal sealed partial class ClusterRouter
             _logger?.ClusterMigrationSequenceIgnored(item.Notification.SequenceId, item.Sender.Host, item.Sender.Port);
             return;
         }
+
         var parsed = ParseMigrations(item, migrations);
 
         List<RespireConnectionMultiplexer>? retiredNodes = null;
@@ -233,14 +287,19 @@ internal sealed partial class ClusterRouter
         long topologyVersion = 0;
         RespireEndpoint[]? topologyEndpoints = null;
         bool topologyAuthoritative = false;
+
         lock (_nodesGate)
         {
-            if (Volatile.Read(ref _disposed) != 0) return;
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                return;
+            }
             // A notification may list several sources, and the server does not have to send it
             // from the source itself, so the sender is not checked against each source. Each
             // slot moves only if its advertised source owns it now.
             _migrations.Expire(skippedMetrics);
             Queue<MigrationState.AppliedMove>? applied = null;
+
             foreach (var (migration, slots) in parsed)
             {
                 if (TryApplyMigrationLocked(migration.Source, migration.Target, slots, item.SlotMutationVersion,
@@ -249,15 +308,20 @@ internal sealed partial class ClusterRouter
                     topologyChanged = true;
                     (applied ??= new()).Enqueue(move);
                 }
+
                 if (waiting is not null)
+                {
                     _migrations.Defer(new(migration.Source, migration.Target, waiting, item.SlotMutationVersion,
                         _migrations.Timestamp, item.Sender), skippedMetrics);
+                }
             }
+
             if (applied is not null && _migrations.DeferredCount != 0)
+            {
                 _migrations.RetryDependencies(applied,
                     endpoint => _identities.TryGetExisting(endpoint, out var source) ? source : null,
-                    (RespireEndpoint source, RespireEndpoint target, int[] slots, long token, out int[]? waiting)
-                        => TryApplyMigrationLocked(source, target, slots, token, ref retiredNodes, out waiting));
+                    (RespireEndpoint source, RespireEndpoint target, int[] slots, long token, out int[]? waiting) => TryApplyMigrationLocked(source, target, slots, token, ref retiredNodes, out waiting));
+            }
 
             if (topologyChanged)
             {
@@ -277,33 +341,83 @@ internal sealed partial class ClusterRouter
         // DisposeAsync awaits their completion, so a metric listener that disposes the client
         // synchronously would otherwise wait for a drain that this thread has not started yet.
         if (retirements is not null)
-            foreach (var retirement in retirements) _ = DrainGenerationAsync(retirement);
-        foreach (var (reason, sender) in skippedMetrics) RecordSmigratedSkipped(reason, sender);
-        if (Volatile.Read(ref _disposed) != 0) return;
+        {
+            foreach (var retirement in retirements)
+            {
+                _ = DrainGenerationAsync(retirement);
+            }
+        }
+
+        foreach (var (reason, sender) in skippedMetrics)
+        {
+            RecordSmigratedSkipped(reason, sender);
+        }
+
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
         if (retiredNodes is not null)
-            foreach (var node in retiredNodes) NodeRetired?.Invoke(node);
+        {
+            foreach (var node in retiredNodes)
+            {
+                NodeRetired?.Invoke(node);
+            }
+        }
+
         if (retiredReplicas is not null)
-            foreach (var node in retiredReplicas) ReplicaNodeRetired?.Invoke(node);
-        if (topologyEndpoints is not null) TopologyChanged?.Invoke(topologyVersion, topologyEndpoints, topologyAuthoritative);
+        {
+            foreach (var node in retiredReplicas)
+            {
+                ReplicaNodeRetired?.Invoke(node);
+            }
+        }
+
+        if (topologyEndpoints is not null)
+        {
+            TopologyChanged?.Invoke(topologyVersion, topologyEndpoints, topologyAuthoritative);
+        }
     }
 
     // Caller holds _nodesGate. Shared replica sets can still serve another slot range.
     private void UpdateReplicaMembershipLocked()
     {
-        if (_replicaNodes.Length == 0) return;
+        if (_replicaNodes.Length == 0)
+        {
+            return;
+        }
+
         var active = new HashSet<RespireConnectionMultiplexer>();
         var sets = new HashSet<ClusterReplicaSet>();
+
         foreach (var routes in _replicasBySlot)
-            if (routes is not null && sets.Add(routes)) active.UnionWith(routes.Nodes);
-        if (_replicaNodes.Any(node => !active.Contains(node))) _replicaNodes = active.ToArray();
+        {
+            if (routes is not null && sets.Add(routes))
+            {
+                active.UnionWith(routes.Nodes);
+            }
+        }
+
+        if (_replicaNodes.Any(node => !active.Contains(node)))
+        {
+            _replicaNodes = active.ToArray();
+        }
     }
 
     private static List<RespireConnectionMultiplexer>? RemovedReplicas(
         ClusterRoutingSnapshot previous, ClusterRoutingSnapshot current)
     {
         List<RespireConnectionMultiplexer>? retired = null;
+
         foreach (var node in previous.ReplicaNodes)
-            if (current.ReplicaNodes.IndexOf(node) < 0) (retired ??= []).Add(node);
+        {
+            if (current.ReplicaNodes.IndexOf(node) < 0)
+            {
+                (retired ??= []).Add(node);
+            }
+        }
+
         return retired;
     }
 
@@ -315,6 +429,7 @@ internal sealed partial class ClusterRouter
     {
         var parsed = new List<(MaintenanceSlotMigration Migration, int[] Slots)>(migrations.Length);
         var budget = ClusterHash.SlotCount;
+
         for (var i = 0; i < migrations.Length; i++)
         {
             if (TryParseSlots(migrations[i].Slots, ref budget, out var slots))
@@ -322,6 +437,7 @@ internal sealed partial class ClusterRouter
                 parsed.Add((migrations[i], slots));
                 continue;
             }
+
             if (budget < 0)
             {
                 RecordSmigratedSkipped("malformed", item.Sender, migrations.Length - i);
@@ -330,10 +446,12 @@ internal sealed partial class ClusterRouter
                         state.SequenceId, ClusterHash.SlotCount));
                 break;
             }
+
             RecordSmigratedSkipped("malformed", item.Sender);
             _logger.TryLog((item.Sender.Host, item.Sender.Port, item.Notification.SequenceId, migrations[i].Slots),
                 static (logger, state) => logger.ClusterMigrationSlotsRejected(state.Host, state.Port, state.SequenceId, state.Slots));
         }
+
         return parsed;
     }
 
@@ -345,7 +463,12 @@ internal sealed partial class ClusterRouter
         int[] slots, long token, ref List<RespireConnectionMultiplexer>? retiredNodes, out int[]? waiting)
     {
         waiting = null;
-        if (ClusterNodeIdentityIndex.EndpointsEqual(sourceEndpoint, targetEndpoint)) return null;
+
+        if (ClusterNodeIdentityIndex.EndpointsEqual(sourceEndpoint, targetEndpoint))
+        {
+            return null;
+        }
+
         var source = _identities.TryGetExisting(sourceEndpoint, out var existingSource)
             && _identities.IsActive(existingSource) && !existingSource.IsRetired ? existingSource : null;
         var knownTarget = _identities.TryGetExisting(targetEndpoint, out var existingTarget) ? existingTarget : null;
@@ -354,27 +477,47 @@ internal sealed partial class ClusterRouter
         // an observed, slotless target transport behind.
         List<int>? movable = null;
         List<int>? pending = null;
+
         foreach (var slot in slots)
         {
             var owner = Volatile.Read(ref _slots[slot]);
-            if (_slotFences.IsFenced(slot, owner, source, sourceEndpoint, token)) continue;
-            if (owner is not null && ReferenceEquals(owner, source)) (movable ??= []).Add(slot);
-            else if (owner is null || !ReferenceEquals(owner, knownTarget)) (pending ??= []).Add(slot);
+
+            if (_slotFences.IsFenced(slot, owner, source, sourceEndpoint, token))
+            {
+                continue;
+            }
+
+            if (owner is not null && ReferenceEquals(owner, source))
+            {
+                (movable ??= []).Add(slot);
+            }
+            else if (owner is null || !ReferenceEquals(owner, knownTarget))
+            {
+                (pending ??= []).Add(slot);
+            }
         }
+
         waiting = pending?.ToArray();
-        if (movable is null) return null;
+
+        if (movable is null)
+        {
+            return null;
+        }
 
         var target = _identities.GetOrCreate(targetEndpoint);
+
         if (ReferenceEquals(source, target) || target.IsRetired)
         {
             waiting = null;
             return null;
         }
+
         ObserveNode(target);
 
         // One discovery fence per migration: older in-flight CLUSTER SLOTS replies cannot
         // overwrite these slots.
         var migrationVersion = ++_topologyVersion;
+
         foreach (var slot in movable)
         {
             PublishSlotLocked(slot, target, migrationVersion);
@@ -382,10 +525,15 @@ internal sealed partial class ClusterRouter
             SetReplicaRoutesLocked(slot, null);
             _unknownReplicaDiscovery.Invalidate(slot);
         }
+
         _slotFences.RecordMigration(movable, source!, sourceEndpoint, target, targetEndpoint, token);
         AddSlot(target, movable.Count);
+
         if (RemoveSlot(source!, movable.Count, preserveMaintenanceHandlerForRetirement: true))
+        {
             (retiredNodes ??= []).Add(source!);
+        }
+
         return new MigrationState.AppliedMove(target, [.. movable]);
     }
 
@@ -395,9 +543,15 @@ internal sealed partial class ClusterRouter
     private static bool TryParseSlots(string value, ref int budget, out int[] slots)
     {
         slots = [];
-        if (string.IsNullOrEmpty(value)) return false;
+
+        if (string.IsNullOrEmpty(value))
+        {
+            return false;
+        }
+
         var ranges = new List<(int Start, int End)>();
         var remaining = value.AsSpan();
+
         while (!remaining.IsEmpty)
         {
             var comma = remaining.IndexOf(',');
@@ -405,44 +559,72 @@ internal sealed partial class ClusterRouter
             var dash = range.IndexOf('-');
             var first = dash < 0 ? range : range[..dash];
             var last = dash < 0 ? first : range[(dash + 1)..];
+
             if (!int.TryParse(first, NumberStyles.None, CultureInfo.InvariantCulture, out var start)
                 || !int.TryParse(last, NumberStyles.None, CultureInfo.InvariantCulture, out var end)
                 || start is < 0 or >= ClusterHash.SlotCount
                 || end < start || end >= ClusterHash.SlotCount)
+            {
                 return false;
-            if ((budget -= end - start + 1) < 0) return false;
+            }
+
+            if ((budget -= end - start + 1) < 0)
+            {
+                return false;
+            }
+
             ranges.Add((start, end));
-            if (comma < 0) break;
+
+            if (comma < 0)
+            {
+                break;
+            }
+
             remaining = remaining[(comma + 1)..];
-            if (remaining.IsEmpty) return false;
+
+            if (remaining.IsEmpty)
+            {
+                return false;
+            }
         }
 
         // Merge overlapping and adjacent ranges, then expand once into an exact-size array.
         ranges.Sort();
         var count = 0;
         var merged = 0;
+
         for (var i = 0; i < ranges.Count; i++)
         {
             var (start, end) = ranges[i];
+
             if (merged > 0 && start <= ranges[merged - 1].End + 1)
             {
                 var previous = ranges[merged - 1];
+
                 if (end > previous.End)
                 {
                     count += end - previous.End;
                     ranges[merged - 1] = (previous.Start, end);
                 }
+
                 continue;
             }
+
             ranges[merged++] = (start, end);
             count += end - start + 1;
         }
 
         slots = new int[count];
         var index = 0;
+
         for (var i = 0; i < merged; i++)
+        {
             for (var slot = ranges[i].Start; slot <= ranges[i].End; slot++)
+            {
                 slots[index++] = slot;
+            }
+        }
+
         return slots.Length > 0;
     }
 }

@@ -46,7 +46,9 @@ public class StreamIdempotentRetryTests
 #pragma warning restore RESP010
         using var fault = server.InjectFault("XADD", RespireFakeFault.Disconnect(afterExecution: true));
 
-        using (await client.ExecuteAsync(RespireCommands.Stream.XADD, new RespireValue[] { "orders", "*", "status", "paid" }).AsTask().WaitAsync(Limit)) { }
+        using (await client.ExecuteAsync(RespireCommands.Stream.XADD, new RespireValue[] { "orders", "*", "status", "paid" }).AsTask().WaitAsync(Limit))
+        {
+        }
 
         await Assert.That(fault.ExecutionCount).IsEqualTo(1);
         await Assert.That(await client.Streams.CountAsync("orders")).IsEqualTo(2);
@@ -69,6 +71,7 @@ public class StreamIdempotentRetryTests
 
         var adds = XAdds(server);
         await Assert.That(adds.Length).IsEqualTo(3);
+
         foreach (var add in adds)
         {
             var index = Array.FindIndex(add, static argument => Encoding.ASCII.GetString(argument) == "IDMP");
@@ -77,6 +80,7 @@ public class StreamIdempotentRetryTests
             await Assert.That(add[index + 2].Length).IsEqualTo(16);
             await Assert.That(Encoding.ASCII.GetString(add[index + 3])).IsEqualTo("*");
         }
+
         var messageIds = adds.Select(add => Convert.ToHexString(add[Array.FindIndex(add, a => a.AsSpan().SequenceEqual("IDMP"u8)) + 2]));
         await Assert.That(messageIds.Distinct().Count()).IsEqualTo(3);
         await Assert.That(Encoding.ASCII.GetString(adds[1][2])).IsEqualTo("MAXLEN");
@@ -134,7 +138,8 @@ public class StreamIdempotentRetryTests
         {
             RetryPolicy = new()
             {
-                InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked,
+                InitialBackoff = TimeSpan.Zero,
+                MaxCommandRetryCategory = RespireCommandRetryCategory.WriteChecked,
                 RetryableErrors = RespireRetryableErrors.TryAgain,
             },
         });
@@ -344,7 +349,10 @@ public class StreamIdempotentRetryTests
 
     private static RespireOptions Options(FakeRespServer server, RespireCommandRetryCategory maximum) => new()
     {
-        Endpoints = { new("127.0.0.1", server.Port) }, Protocol = RespireProtocol.Resp2, ThreadPoolMonitoring = false, Connections = 1,
+        Endpoints = { new("127.0.0.1", server.Port) },
+        Protocol = RespireProtocol.Resp2,
+        ThreadPoolMonitoring = false,
+        Connections = 1,
         CommandTimeout = TimeSpan.FromSeconds(3),
         RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum },
     };

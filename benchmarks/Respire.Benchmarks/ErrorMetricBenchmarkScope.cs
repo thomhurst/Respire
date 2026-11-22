@@ -16,11 +16,21 @@ internal sealed class ErrorMetricBenchmarkScope : IDisposable
         RespireMetrics.Configure(new() { Groups = _enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         _listener.InstrumentPublished = (instrument, listener) =>
         {
-            if (instrument.Meter.Name != "Respire" || instrument.Name != "redis.client.errors") return;
+            if (instrument.Meter.Name != "Respire" || instrument.Name != "redis.client.errors")
+            {
+                return;
+            }
+
             _published = true;
-            if (_enabled) listener.EnableMeasurementEvents(instrument);
+
+            if (_enabled)
+            {
+                listener.EnableMeasurementEvents(instrument);
+            }
         };
-        _listener.SetMeasurementEventCallback<long>(static (_, _, _, _) => { });
+        _listener.SetMeasurementEventCallback<long>(static (_, _, _, _) =>
+        {
+        });
         _listener.Start();
     }
 

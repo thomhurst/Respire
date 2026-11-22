@@ -7,11 +7,15 @@ internal readonly struct ConditionalSetCommand(RespireValue key, RespireValue va
     RespireValueCondition condition, RespireExpiry expiry, bool returnOld) : IRespCommand
 {
     public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => Verbs.Set.CacheMetadata;
+
     public RespireCommandRetryCategory RetryCategory => Verbs.Set.RetryCategory;
+
     public RespireCacheMutation GetCacheMutation(string operation) => Verbs.Set.CacheMetadata.Policy;
+
     public int GetWriteSizeHint() => CommandWriteSizeHint.For(Verbs.Set,
         key.GetWriteSizeHint(), value.GetWriteSizeHint(), condition.Operand.GetWriteSizeHint(),
         CommandWriteSizeHint.Bulk(condition.Token.Length), CommandWriteSizeHint.SetOptions);
+
     public ReadCommandKind ReadKind => ReadCommandKind.None;
 
     public bool TryGetPrimaryKey(out RespireValue primaryKey)
@@ -30,6 +34,7 @@ internal readonly struct ConditionalSetCommand(RespireValue key, RespireValue va
         value.WriteTo(ref writer);
         writer.WriteBulkString(condition.Token.Span);
         condition.Operand.WriteTo(ref writer);
+
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
             writer.WriteRaw(CommandOptionFrames.PX);
@@ -41,7 +46,13 @@ internal readonly struct ConditionalSetCommand(RespireValue key, RespireValue va
             writer.WriteBulkInteger(unixMilliseconds);
         }
         else if (expiry.IsKeep)
+        {
             writer.WriteRaw(CommandOptionFrames.KEEPTTL);
-        if (returnOld) writer.WriteRaw(CommandOptionFrames.GET);
+        }
+
+        if (returnOld)
+        {
+            writer.WriteRaw(CommandOptionFrames.GET);
+        }
     }
 }

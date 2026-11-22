@@ -14,6 +14,7 @@ public class ServerPubSubCommandTests
     public async Task FanOutLimitsActiveNodesAndAttributesQueuedCancellation(bool cancel)
     {
         var servers = Enumerable.Range(0, 10).Select(index => new FakeRespServer(index == 0 ? 2 : 1, Integer(index))).ToArray();
+
         try
         {
             var started = new System.Collections.Concurrent.ConcurrentQueue<(FakeRespServer Server, int Connection)>();
@@ -21,42 +22,80 @@ public class ServerPubSubCommandTests
             var allStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var topology = string.Join('\n', servers.Select((server, index) =>
                 $"n{index} 127.0.0.1:{server.Port}@2 {(index == 0 ? "myself,master" : "slave")} {(index == 0 ? "-" : "n0")} 0 0 1 connected"));
+
             foreach (var server in servers)
             {
                 server.SuppressReply = command =>
                 {
-                    if (command == "CLUSTER SLOTS") { _ = server.SendRawAsync(Slots(server.Port)); return true; }
-                    if (command == "CLUSTER NODES") { _ = server.SendRawAsync(Bulk(Encoding.ASCII.GetBytes(topology))); return true; }
-                    if (command != "PUBSUB NUMPAT") return false;
+                    if (command == "CLUSTER SLOTS")
+                    {
+                        _ = server.SendRawAsync(Slots(server.Port));
+                        return true;
+                    }
+
+                    if (command == "CLUSTER NODES")
+                    {
+                        _ = server.SendRawAsync(Bulk(Encoding.ASCII.GetBytes(topology)));
+                        return true;
+                    }
+
+                    if (command != "PUBSUB NUMPAT")
+                    {
+                        return false;
+                    }
+
                     started.Enqueue((server, server.ReceivedConnectionIds[^1]));
-                    if (started.Count == 8) firstWave.TrySetResult();
-                    if (started.Count == 10) allStarted.TrySetResult();
+
+                    if (started.Count == 8)
+                    {
+                        firstWave.TrySetResult();
+                    }
+
+                    if (started.Count == 10)
+                    {
+                        allStarted.TrySetResult();
+                    }
+
                     return true;
                 };
             }
+
 #pragma warning disable RESP010 // This fan-out test owns its cluster client and ten fake nodes to inspect the concurrency cap and queued cancellation.
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
                 Protocol = RespireProtocol.Resp2,
-                UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", servers[0].Port)],
+                UseCluster = true,
+                Connections = 1,
+                Endpoints = [new("127.0.0.1", servers[0].Port)],
             });
 #pragma warning restore RESP010
             using var cancellation = new CancellationTokenSource();
             var executing = client.Server.PubSubPatternCountOnAllNodesAsync(cancellation.Token).AsTask();
             await firstWave.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(started.Count).IsEqualTo(8);
+
             if (cancel)
             {
                 cancellation.Cancel();
             }
             else
             {
-                foreach (var item in started.ToArray()) await item.Server.SendRawAsync(Integer(1), item.Connection);
+                foreach (var item in started.ToArray())
+                {
+                    await item.Server.SendRawAsync(Integer(1), item.Connection);
+                }
+
                 await allStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                foreach (var item in started.ToArray().Skip(8)) await item.Server.SendRawAsync(Integer(1), item.Connection);
+
+                foreach (var item in started.ToArray().Skip(8))
+                {
+                    await item.Server.SendRawAsync(Integer(1), item.Connection);
+                }
             }
+
             var results = await executing.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(results.Select(result => result.Endpoint.Port)).IsEquivalentTo(servers.Select(server => server.Port));
+
             foreach (var result in results)
             {
                 if (cancel)
@@ -64,13 +103,20 @@ public class ServerPubSubCommandTests
                     await Assert.That(result.Error).IsAssignableTo<OperationCanceledException>();
                     await Assert.That(((OperationCanceledException)result.Error!).CancellationToken).IsEqualTo(cancellation.Token);
                 }
-                else await Assert.That(result.Value).IsEqualTo(1);
+                else
+                {
+                    await Assert.That(result.Value).IsEqualTo(1);
+                }
             }
+
             await Assert.That(started.Count).IsEqualTo(cancel ? 8 : 10);
         }
         finally
         {
-            foreach (var server in servers) await server.DisposeAsync();
+            foreach (var server in servers)
+            {
+                await server.DisposeAsync();
+            }
         }
     }
 
@@ -106,8 +152,17 @@ public class ServerPubSubCommandTests
         var replicaPort = firstReplica.Port;
         seed.SuppressReply = command =>
         {
-            if (command == "CLUSTER SLOTS") { _ = seed.SendRawAsync(Slots(seed.Port)); return true; }
-            if (command != "CLUSTER NODES") return false;
+            if (command == "CLUSTER SLOTS")
+            {
+                _ = seed.SendRawAsync(Slots(seed.Port));
+                return true;
+            }
+
+            if (command != "CLUSTER NODES")
+            {
+                return false;
+            }
+
             var topology = $"self 127.0.0.1:{seed.Port}@2 myself,master - 0 0 1 connected 0-16383\n" +
                 $"replica{replicaPort} 127.0.0.1:{replicaPort}@2 slave self 0 0 1 connected\n";
             _ = seed.SendRawAsync(Bulk(Encoding.ASCII.GetBytes(topology)));
@@ -117,7 +172,10 @@ public class ServerPubSubCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)], LoggerFactory = logger,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            LoggerFactory = logger,
         });
 #pragma warning restore RESP010
         var first = await client.Server.PubSubPatternCountOnAllNodesAsync();
@@ -147,7 +205,12 @@ public class ServerPubSubCommandTests
                     received.TrySetResult();
                     return true;
                 }
-                if (duringHandshake || command != "PUBSUB NUMPAT") return false;
+
+                if (duringHandshake || command != "PUBSUB NUMPAT")
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -156,7 +219,9 @@ public class ServerPubSubCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Connections = 1, Database = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Database = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var execution = client.Server.PubSubPatternCountOnAllNodesAsync().AsTask();
@@ -166,8 +231,16 @@ public class ServerPubSubCommandTests
         await Assert.That(results.Length).IsEqualTo(1);
         await Assert.That(results[0].Endpoint.Port).IsEqualTo(server.Port);
         await Assert.That(results[0].IsSuccess).IsFalse();
-        if (duringHandshake) await Assert.That(results[0].Error).IsAssignableTo<OperationCanceledException>();
-        else await Assert.That(results[0].Error).IsTypeOf<RespireConnectionException>();
+
+        if (duringHandshake)
+        {
+            await Assert.That(results[0].Error).IsAssignableTo<OperationCanceledException>();
+        }
+        else
+        {
+            await Assert.That(results[0].Error).IsTypeOf<RespireConnectionException>();
+        }
+
         await Assert.That(selects).IsEqualTo(2);
     }
 
@@ -227,9 +300,18 @@ public class ServerPubSubCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await Assert.That(async () =>
         {
-            if (operation == "channels") await client.Server.PubSubChannelsAsync();
-            else if (operation == "counts") await client.Server.PubSubSubscriberCountsAsync(["x"]);
-            else await client.Server.PubSubPatternCountAsync();
+            if (operation == "channels")
+            {
+                await client.Server.PubSubChannelsAsync();
+            }
+            else if (operation == "counts")
+            {
+                await client.Server.PubSubSubscriberCountsAsync(["x"]);
+            }
+            else
+            {
+                await client.Server.PubSubPatternCountAsync();
+            }
         }).Throws<RespireProtocolException>();
     }
 
@@ -245,15 +327,28 @@ public class ServerPubSubCommandTests
         var step = 0;
         seed.SuppressReply = command =>
         {
-            if (command == "CLUSTER SLOTS") { _ = seed.SendRawAsync(Slots(seed.Port)); return true; }
-            if (command == "CLUSTER NODES") { Interlocked.Increment(ref step); _ = seed.SendRawAsync(Bulk(Encoding.ASCII.GetBytes(topology))); return true; }
+            if (command == "CLUSTER SLOTS")
+            {
+                _ = seed.SendRawAsync(Slots(seed.Port));
+                return true;
+            }
+
+            if (command == "CLUSTER NODES")
+            {
+                Interlocked.Increment(ref step);
+                _ = seed.SendRawAsync(Bulk(Encoding.ASCII.GetBytes(topology)));
+                return true;
+            }
+
             return false;
         };
 #pragma warning disable RESP010 // This fan-out test owns its cluster client and distinct seed, replica and failing-node outcomes.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var results = await client.Server.PubSubPatternCountOnAllNodesAsync();
@@ -280,7 +375,11 @@ public class ServerPubSubCommandTests
         {
             SuppressReply = command =>
             {
-                if (command != "PUBSUB NUMPAT") return false;
+                if (command != "PUBSUB NUMPAT")
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -329,21 +428,36 @@ public class ServerPubSubCommandTests
     private sealed class DisconnectLogger : ILoggerFactory, ILogger
     {
         internal int DisconnectCount;
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
             Exception? exception, Func<TState, Exception?, string> formatter)
         {
             if (logLevel == LogLevel.Debug && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+            {
                 Interlocked.Increment(ref DisconnectCount);
+            }
         }
     }
 
     private static byte[] Integer(long value) => Encoding.ASCII.GetBytes($":{value}\r\n");
+
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, .. "\r\n"u8];
+
     private static byte[] Array(params byte[][] values) => [.. Encoding.ASCII.GetBytes($"*{values.Length}\r\n"), .. values.SelectMany(x => x)];
+
     private static byte[] Slots(int port) => Array(Array(Integer(0), Integer(16383), Array(Bulk("127.0.0.1"u8.ToArray()), Integer(port))));
 }

@@ -17,9 +17,18 @@ internal sealed class ReadAttempt
         var failures = _failures ??= new(RespireEndpointComparer.Instance);
         // Every retry must exclude a new identity. The caller decides how to terminate
         // when this attempt has already recorded the failed endpoint.
-        if (!failures.TryAdd(endpoint, error)) return false;
+        if (!failures.TryAdd(endpoint, error))
+        {
+            return false;
+        }
+
         _firstFailure ??= error;
-        if (alias is { } ownerEndpoint) failures.TryAdd(ownerEndpoint, error);
+
+        if (alias is { } ownerEndpoint)
+        {
+            failures.TryAdd(ownerEndpoint, error);
+        }
+
         return true;
     }
 
@@ -33,7 +42,9 @@ internal sealed class ReadAttempt
     internal void ThrowIfFailed(RespireEndpoint endpoint)
     {
         if (_failures?.TryGetValue(endpoint, out var error) == true)
+        {
             throw new RespireConnectionException($"Read acquisition already failed at {endpoint}.", error);
+        }
     }
 
     // Retirement can publish a healthy replacement at the same address, so it does not exclude

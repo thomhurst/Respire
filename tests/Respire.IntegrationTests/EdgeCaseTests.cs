@@ -1,8 +1,8 @@
 using FluentAssertions;
 using StackExchange.Redis;
 using StackExchange.Redis.KeyspaceIsolation;
-using TUnit.Core;
 using TUnit.Assertions;
+using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 

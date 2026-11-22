@@ -49,12 +49,18 @@ public sealed class CircuitTelemetryTests
                 ("closed", "open"), ("open", "half_open"), ("half_open", "open"),
             }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
         await Assert.That(measurements.Events.Count(e => e.Name == Rejections)).IsEqualTo(4);
+
         foreach (var measurement in measurements.Events)
         {
             await Assert.That(measurement.Value).IsEqualTo(1L);
             await Assert.That(measurement.Tags["server.address"]).IsEqualTo(endpoint.Host);
             await Assert.That(measurement.Tags.ContainsKey("server.port")).IsEqualTo(port != 6379);
-            if (port != 6379) await Assert.That(measurement.Tags["server.port"]).IsEqualTo(port);
+
+            if (port != 6379)
+            {
+                await Assert.That(measurement.Tags["server.port"]).IsEqualTo(port);
+            }
+
             await Assert.That(measurement.Tags["db.system.name"]).IsEqualTo("redis");
             var expected = measurement.Name == Transitions ? 5 : 3;
             await Assert.That(measurement.Tags.Count).IsEqualTo(expected + (port != 6379 ? 1 : 0));
@@ -72,7 +78,9 @@ public sealed class CircuitTelemetryTests
         var endpoint = new RespireEndpoint("expiry.test");
         var registry = new StandaloneCircuitRegistry(Options() with
         {
-            MinimumFailureCount = 2, FailureRateThreshold = 0.75, SamplingWindow = TimeSpan.FromSeconds(10),
+            MinimumFailureCount = 2,
+            FailureRateThreshold = 0.75,
+            SamplingWindow = TimeSpan.FromSeconds(10),
         });
         var clock = new Clock();
         var admission = registry.Acquire(endpoint, default);
@@ -87,6 +95,7 @@ public sealed class CircuitTelemetryTests
         // Simulate suspension after the opening timestamp is captured. Admission may
         // open and enter recovery in one call; neither transition can be lost.
         clock.AdvanceAfterNextTimestamp = suspended;
+
         if (suspended)
         {
             var probe = registry.Acquire(endpoint, default);
@@ -94,7 +103,11 @@ public sealed class CircuitTelemetryTests
             probe.Success();
             probe.Dispose();
         }
-        else Reject(registry, endpoint);
+        else
+        {
+            Reject(registry, endpoint);
+        }
+
         await Assert.That(measurements.Events.Count(e => e.Name == Transitions)).IsEqualTo(suspended ? 3 : 1);
         await Assert.That(measurements.Events.Count(e => e.Name == Rejections)).IsEqualTo(suspended ? 0 : 1);
     }
@@ -154,7 +167,12 @@ public sealed class CircuitTelemetryTests
         var endpoint = new RespireEndpoint("evicted.test");
         Finish(registry, endpoint, true);
         var old = registry.GetForTests(endpoint);
-        for (var i = 0; i < 32; i++) Finish(registry, new("history.test", 9000 + i), false);
+
+        for (var i = 0; i < 32; i++)
+        {
+            Finish(registry, new("history.test", 9000 + i), false);
+        }
+
         await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
         Finish(registry, endpoint, false);
         await Assert.That(registry.GetForTests(endpoint)).IsNotSameReferenceAs(old);
@@ -190,13 +208,19 @@ public sealed class CircuitTelemetryTests
     private static long MeasureHealthy(StandaloneCircuitRegistry registry, RespireEndpoint endpoint, bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1000; i++)
         {
             var admission = registry.Acquire(endpoint, default);
             admission.Success();
             admission.Dispose();
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -216,7 +240,10 @@ public sealed class CircuitTelemetryTests
         var admissions = new CircuitAdmission[128];
         Parallel.For(0, admissions.Length, i =>
         {
-            try { admissions[i] = registry.Acquire(endpoint, default); }
+            try
+            {
+                admissions[i] = registry.Acquire(endpoint, default);
+            }
             catch (RespireCircuitOpenException) { }
         });
         await Assert.That(measurements.Events.Count(e => e.Name == Rejections)).IsEqualTo(124);
@@ -259,9 +286,13 @@ public sealed class CircuitTelemetryTests
         clock.Advance();
         measurements.OnMeasurement = () =>
         {
-            for (var i = 0; i < 32; i++) Finish(registry, new("listener.test", 9000 + i), false);
+            for (var i = 0; i < 32; i++)
+            {
+                Finish(registry, new("listener.test", 9000 + i), false);
+            }
         };
         var probe = registry.Acquire(endpoint, default);
+
         try
         {
             await Assert.That(registry.GetForTests(endpoint)).IsSameReferenceAs(original);
@@ -286,7 +317,11 @@ public sealed class CircuitTelemetryTests
         CircuitClock(original) = clock;
         first.Failed(new RespireConnectionException("failed"), default);
         first.Dispose();
-        if (!rejected) clock.Advance();
+
+        if (!rejected)
+        {
+            clock.Advance();
+        }
 
         Task? worker = null;
         var completedDuringCallback = false;
@@ -296,20 +331,32 @@ public sealed class CircuitTelemetryTests
             worker = Task.Factory.StartNew(() =>
             {
                 Reject(registry, endpoint);
-                for (var i = 0; i < 32; i++) Finish(registry, new("worker.test", 9000 + i), false);
+
+                for (var i = 0; i < 32; i++)
+                {
+                    Finish(registry, new("worker.test", 9000 + i), false);
+                }
             }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
             completedDuringCallback = worker.Wait(TimeSpan.FromSeconds(5));
         };
 
         var probe = default(CircuitAdmission);
+
         try
         {
             if (rejected)
+            {
                 await Assert.That(() => registry.Acquire(endpoint, default)).ThrowsExactly<RespireCircuitOpenException>();
-            else probe = registry.Acquire(endpoint, default);
+            }
+            else
+            {
+                probe = registry.Acquire(endpoint, default);
+            }
+
             await worker!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
             await Assert.That(completedDuringCallback).IsTrue();
             await Assert.That(registry.CountForTests).IsEqualTo(StandaloneCircuitRegistry.RetainedEndpointLimit);
+
             if (!rejected)
             {
                 await Assert.That(registry.GetForTests(endpoint)).IsSameReferenceAs(original);
@@ -321,21 +368,35 @@ public sealed class CircuitTelemetryTests
 
     private static RespireCircuitBreakerOptions Options() => new()
     {
-        MinimumFailureCount = 1, OpenDuration = TimeSpan.FromSeconds(5), HalfOpenProbeCount = 1,
+        MinimumFailureCount = 1,
+        OpenDuration = TimeSpan.FromSeconds(5),
+        HalfOpenProbeCount = 1,
     };
 
     private static void Finish(StandaloneCircuitRegistry registry, RespireEndpoint endpoint, bool fail)
     {
         var admission = registry.Acquire(endpoint, default);
-        if (fail) admission.Failed(new RespireConnectionException("failed"), default);
-        else admission.Success();
+
+        if (fail)
+        {
+            admission.Failed(new RespireConnectionException("failed"), default);
+        }
+        else
+        {
+            admission.Success();
+        }
+
         admission.Dispose();
     }
 
     private static void Reject(StandaloneCircuitRegistry registry, RespireEndpoint endpoint)
     {
-        try { registry.Acquire(endpoint, default).Dispose(); }
+        try
+        {
+            registry.Acquire(endpoint, default).Dispose();
+        }
         catch (RespireCircuitOpenException) { return; }
+
         throw new InvalidOperationException("Expected circuit rejection.");
     }
 
@@ -345,38 +406,65 @@ public sealed class CircuitTelemetryTests
     private sealed class Clock : TimeProvider
     {
         private long _ticks;
-        internal bool AdvanceAfterNextTimestamp { get; set; }
+
+        internal bool AdvanceAfterNextTimestamp
+        {
+            get; set;
+        }
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
         public override long GetTimestamp()
         {
             var timestamp = _ticks;
+
             if (AdvanceAfterNextTimestamp)
             {
                 Advance();
                 AdvanceAfterNextTimestamp = false;
             }
+
             return timestamp;
         }
+
         internal void Advance() => _ticks += TimeSpan.FromSeconds(5).Ticks;
     }
 
     internal sealed class Measurements : IDisposable
     {
         private readonly MeterListener _listener = new();
-        internal List<(string Name, long Value, Dictionary<string, object?> Tags)> Events { get; } = [];
-        internal Action? OnMeasurement { get; set; }
+
+        internal List<(string Name, long Value, Dictionary<string, object?> Tags)> Events
+        {
+            get;
+        } = [];
+
+        internal Action? OnMeasurement
+        {
+            get; set;
+        }
 
         internal Measurements(bool subscribed = true, bool throwOnMeasurement = false)
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (subscribed && instrument.Meter.Name == "Respire" && instrument.Name is Transitions or Rejections)
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
             {
-                if (throwOnMeasurement) throw new InvalidOperationException("Listener failure.");
-                lock (Events) Events.Add((instrument.Name, value, tags.ToArray().ToDictionary(t => t.Key, t => t.Value)));
+                if (throwOnMeasurement)
+                {
+                    throw new InvalidOperationException("Listener failure.");
+                }
+
+                lock (Events)
+                {
+                    Events.Add((instrument.Name, value, tags.ToArray().ToDictionary(t => t.Key, t => t.Value)));
+                }
+
                 OnMeasurement?.Invoke();
             });
             _listener.Start();

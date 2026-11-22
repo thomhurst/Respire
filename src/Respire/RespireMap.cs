@@ -53,8 +53,12 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
         ArgumentNullException.ThrowIfNull(formatKey);
         ArgumentNullException.ThrowIfNull(encode);
         ArgumentNullException.ThrowIfNull(decode);
+
         if (client.ClientSideCache is null)
+        {
             throw new ArgumentException("A near-cache map requires ClientSideCache to be enabled.", nameof(client));
+        }
+
         _options = options ?? new();
         _options.Validate();
         _client = client.WithReadFrom(RespireReadFrom.Primary);
@@ -76,6 +80,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     public async ValueTask<RespireGetResult<TValue>> GetAsync(TKey key, CancellationToken cancellationToken = default)
     {
         await EnterAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             return await GetCoreAsync(key, cancellationToken).ConfigureAwait(false);
@@ -88,14 +93,29 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     {
         var field = Format(key);
         var bytes = await _client.Hashes.GetBytesAsync(_key, field, cancellationToken).ConfigureAwait(false);
-        if (bytes is not null) return new(true, _decode(bytes));
-        if (_options.Loader is null) return default;
+
+        if (bytes is not null)
+        {
+            return new(true, _decode(bytes));
+        }
+
+        if (_options.Loader is null)
+        {
+            return default;
+        }
         // A pending delete or an expired pending write must reach the store before a loader
         // can read it. Admission is held, so no newer mutation can be enqueued during the drain.
         if (_pending.Count != 0)
+        {
             await FlushCoreAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         var loaded = await _options.Loader(key, cancellationToken).ConfigureAwait(false);
-        if (!loaded.Found) return default;
+
+        if (!loaded.Found)
+        {
+            return default;
+        }
         // Never replace a concurrent writer's value, and never echo a loader fill to its writer.
         await StoreAsync(field, Encode(loaded.Value!), RespireSetWhen.NotExists,
             _options.EntryExpiration, cancellationToken).ConfigureAwait(false);
@@ -115,6 +135,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
         expiration ??= _options.EntryExpiration;
         RespireMapOptions<TKey, TValue>.ValidateExpiration(expiration);
         await EnterAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             var field = Format(key);
@@ -138,6 +159,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     public async ValueTask<bool> RemoveAsync(TKey key, CancellationToken cancellationToken = default)
     {
         await EnterAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             var field = Format(key);
@@ -155,11 +177,19 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     {
         ArgumentNullException.ThrowIfNull(keys);
         await EnterAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             var found = 0;
+
             foreach (var key in keys)
-                if ((await GetCoreAsync(key, cancellationToken).ConfigureAwait(false)).Found) found++;
+            {
+                if ((await GetCoreAsync(key, cancellationToken).ConfigureAwait(false)).Found)
+                {
+                    found++;
+                }
+            }
+
             return found;
         }
         finally { _gate.Release(); }
@@ -173,10 +203,13 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     public async ValueTask PreloadAsync(CancellationToken cancellationToken = default)
     {
         await EnterAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             await foreach (var field in _client.Hashes.ScanFieldsAsync(_key, cancellationToken: cancellationToken).ConfigureAwait(false))
+            {
                 await _client.Hashes.GetBytesAsync(_key, field, cancellationToken).ConfigureAwait(false);
+            }
         }
         finally { _gate.Release(); }
     }
@@ -188,6 +221,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     public async ValueTask ClearLocalCachesAsync(CancellationToken cancellationToken = default)
     {
         await EnterAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             using var result = await _client.Scripts.ExecuteAsync(ClearScript, [_key],
@@ -200,6 +234,7 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     public async ValueTask FlushAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -216,13 +251,19 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     public async ValueTask DisposeAsync()
     {
         await _disposeGate.WaitAsync().ConfigureAwait(false);
+
         try
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             Interlocked.Exchange(ref _stopping, 1);
             await _stop.CancelAsync().ConfigureAwait(false);
             await _worker.ConfigureAwait(false);
             await _gate.WaitAsync().ConfigureAwait(false);
+
             try
             {
                 await FlushCoreAsync(CancellationToken.None).ConfigureAwait(false);
@@ -238,7 +279,12 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _stopping) != 0, this);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        if (Volatile.Read(ref _stopping) == 0) return;
+
+        if (Volatile.Read(ref _stopping) == 0)
+        {
+            return;
+        }
+
         _gate.Release();
         ObjectDisposedException.ThrowIf(true, this);
     }
@@ -256,37 +302,57 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
         TimeSpan? expiration, CancellationToken cancellationToken)
     {
         if (expiration is { } lifetime)
+        {
             await _client.Hashes.SetExpireAsync(_key, lifetime, when, [(field, (RespireValue)value)], cancellationToken).ConfigureAwait(false);
+        }
         else
+        {
             await _client.Hashes.SetAsync(_key, field, (RespireValue)value, when, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async ValueTask MakeRoomAsync(CancellationToken cancellationToken)
     {
         if (_options.WriteBehind && _pending.Count >= _options.MaxPendingWrites)
+        {
             await FlushBatchAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async ValueTask PersistAsync(RespireMapChange<TKey, TValue> change, CancellationToken cancellationToken)
     {
-        if (_options.Writer is null) return;
+        if (_options.Writer is null)
+        {
+            return;
+        }
+
         if (_options.WriteBehind)
+        {
             _pending.Enqueue(change); // No cancellation point after a successful Redis write.
+        }
         else
+        {
             await CallWriterAsync([change], cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async ValueTask FlushCoreAsync(CancellationToken cancellationToken)
     {
         while (_pending.Count != 0)
+        {
             await FlushBatchAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async ValueTask FlushBatchAsync(CancellationToken cancellationToken)
     {
         var batch = _pending.Take(_options.BatchSize).ToArray();
         await CallWriterAsync(Array.AsReadOnly(batch), cancellationToken).ConfigureAwait(false);
-        for (var i = 0; i < batch.Length; i++) _pending.Dequeue();
+
+        for (var i = 0; i < batch.Length; i++)
+        {
+            _pending.Dequeue();
+        }
     }
 
     private async ValueTask CallWriterAsync(IReadOnlyList<RespireMapChange<TKey, TValue>> batch, CancellationToken cancellationToken)
@@ -306,11 +372,13 @@ public sealed class RespireMap<TKey, TValue> : IAsyncDisposable where TKey : not
     private async Task RunWriterAsync()
     {
         using var timer = new PeriodicTimer(_options.FlushInterval);
+
         try
         {
             while (await timer.WaitForNextTickAsync(_stop.Token).ConfigureAwait(false))
             {
                 await _gate.WaitAsync(_stop.Token).ConfigureAwait(false);
+
                 try
                 {
                     // Shutdown does not cancel a writer batch already in progress.

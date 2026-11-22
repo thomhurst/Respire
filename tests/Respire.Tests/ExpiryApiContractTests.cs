@@ -31,6 +31,7 @@ public class ExpiryApiContractTests
             .ToArray();
 
         await Assert.That(methods).IsNotEmpty();
+
         foreach (var method in methods)
         {
             var duration = method.GetParameters().First(parameter => parameter.ParameterType == typeof(TimeSpan));

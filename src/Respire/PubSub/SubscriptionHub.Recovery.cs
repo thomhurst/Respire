@@ -15,7 +15,12 @@ internal sealed partial class SubscriptionHub
     private ConfiguredRecoveryPhase _configuredRecoveryPhase;
     private bool _configuredEpisodeCaptured;
 
-    private enum ConfiguredRecoveryPhase { Idle, Recovering, Exhausted }
+    private enum ConfiguredRecoveryPhase
+    {
+        Idle,
+        Recovering,
+        Exhausted
+    }
 
     // Test access for delivering a close after resubscription but before recovery promotion.
     // Keep the synchronization in the test; ordinary recovery pays no callback or allocation cost.
@@ -24,6 +29,7 @@ internal sealed partial class SubscriptionHub
     internal readonly struct RecoveryTestAccess(SubscriptionHub owner)
     {
         internal Lock StateGate => owner._reconnectStateGate;
+
         internal bool IsControlIdle => owner._controlGate.CurrentCount == 1;
 
         internal Task CloseCurrentConnection()
@@ -42,18 +48,31 @@ internal sealed partial class SubscriptionHub
             // failures and unsuccessful replacement sockets have no recovery ownership.
             if (!_disposed && _configuredRecoveryPhase == ConfiguredRecoveryPhase.Idle
                 && ReferenceEquals(_configuredConnection, connection))
+            {
                 CaptureConfiguredEpisodeLocked();
+            }
         }
     }
 
     private void CaptureConfiguredEpisodeLocked()
     {
-        if (_configuredEpisodeCaptured) return;
+        if (_configuredEpisodeCaptured)
+        {
+            return;
+        }
+
         _configuredEpisodeCaptured = true;
-        try { core.Options.ReconnectEpisodeStarted?.Invoke(); }
+
+        try
+        {
+            core.Options.ReconnectEpisodeStarted?.Invoke();
+        }
         catch (Exception error)
         {
-            try { core.Logger?.SubscriptionRecoveryEpisodeObserverFailed(error); }
+            try
+            {
+                core.Logger?.SubscriptionRecoveryEpisodeObserverFailed(error);
+            }
             catch { /* Diagnostics must not prevent recovery ownership from advancing. */ }
         }
     }
@@ -61,15 +80,31 @@ internal sealed partial class SubscriptionHub
     private RespireConnection? GetConnectionForCaller(bool watch)
     {
         if (!watch || core.Options.ReconnectPolicy is null)
+        {
             return _connection is { IsAcceptingCommands: true } existing ? existing : null;
+        }
+
         lock (_reconnectStateGate)
         {
-            if (_recoveryExhaustion is { } exhausted) throw exhausted;
+            if (_recoveryExhaustion is { } exhausted)
+            {
+                throw exhausted;
+            }
+
             if (_configuredRecoveryPhase == ConfiguredRecoveryPhase.Recovering)
+            {
                 throw new RespireConnectionException("Pub/sub recovery is in progress. Subscribe again after recovery completes.");
-            if (_configuredConnection is not { } connection) return null;
+            }
+
+            if (_configuredConnection is not { } connection)
+            {
+                return null;
+            }
+
             if (!ReferenceEquals(_connection, connection) || !connection.IsAcceptingCommands)
+            {
                 throw new RespireConnectionException("Pub/sub connection closed. Automatic recovery must complete before subscribing.");
+            }
             // Return the same connection whose recovery ownership was checked. If it closes
             // immediately afterward, the caller fails on that socket; only its watcher may
             // replace it and restore existing routes with the configured delay and budget.
@@ -80,14 +115,23 @@ internal sealed partial class SubscriptionHub
     private void StartConfiguredRecovery(RespireConnection connection, RespireReconnectPolicy policy)
     {
         TaskCompletionSource drained;
+
         lock (_reconnectStateGate)
         {
             if (_disposed || _configuredRecoveryPhase != ConfiguredRecoveryPhase.Idle
-                || !ReferenceEquals(_configuredConnection, connection)) return;
+                || !ReferenceEquals(_configuredConnection, connection))
+            {
+                return;
+            }
             // A replacement may close after its final connectivity check but before it is
             // promoted. Its watcher supplies the capture that the earlier close could not.
             CaptureConfiguredEpisodeLocked();
-            if (_disposed) return;
+
+            if (_disposed)
+            {
+                return;
+            }
+
             _configuredConnection = null;
             _configuredRecoveryPhase = ConfiguredRecoveryPhase.Recovering;
             _configuredRecoveryDrained = drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -104,37 +148,47 @@ internal sealed partial class SubscriptionHub
         var attempt = 0;
         RespireConnection? restored = null;
         var cancellationToken = _lifetimeCancellation.Token;
+
         try
         {
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (attempt < int.MaxValue) attempt++;
+
+                if (attempt < int.MaxValue)
+                {
+                    attempt++;
+                }
+
                 var delay = policy.GetDelay(attempt);
                 QueueConfiguredState(endpoint, RespireConnectionState.Reconnecting, failure, attempt, delay);
                 await Task.Delay(delay, _recoveryClock, cancellationToken).ConfigureAwait(false);
 
                 await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
                 try
                 {
                     var result = await TryRestoreOnceAsync(endpoint, cancellationToken).ConfigureAwait(false);
                     endpoint = result.Endpoint;
+
                     if (result.Connection is { } replacement)
                     {
                         restored = replacement;
                         return;
                     }
+
                     failure = result.Error!;
                     // Disposal can win while cleanup is awaited. It owns terminal subscription
                     // completion in that case, even if this was the last configured attempt.
                     cancellationToken.ThrowIfCancellationRequested();
+
                     if (policy.IsExhausted(attempt))
                     {
                         ExhaustConfiguredRecovery(endpoint, failure, attempt);
                         return;
                     }
-                    TryLog((attempt, failure), static (logger, state)
-                        => logger.SubscriptionRecoveryAttemptFailed(state.attempt, state.failure));
+
+                    TryLog((attempt, failure), static (logger, state) => logger.SubscriptionRecoveryAttemptFailed(state.attempt, state.failure));
                 }
                 finally
                 {
@@ -150,15 +204,25 @@ internal sealed partial class SubscriptionHub
             {
                 _configuredConnection = restored;
                 _configuredEpisodeCaptured = false;
+
                 if (_configuredRecoveryPhase == ConfiguredRecoveryPhase.Recovering)
+                {
                     _configuredRecoveryPhase = ConfiguredRecoveryPhase.Idle;
+                }
+
                 if (restored is not null)
+                {
                     QueueConfiguredState(endpoint, RespireConnectionState.Connected, null, attempt);
+                }
+
                 drained.TrySetResult();
             }
             // Closed is a completion task: if the socket dies before this call, the watcher
             // observes that completed task immediately and starts the next ordered episode.
-            if (restored is not null) _ = WatchConnectionAsync(restored);
+            if (restored is not null)
+            {
+                _ = WatchConnectionAsync(restored);
+            }
         }
     }
 
@@ -167,6 +231,7 @@ internal sealed partial class SubscriptionHub
     {
         // The caller holds _controlGate through cleanup and the retry/exhaustion decision.
         RespireConnection? replacement = null;
+
         try
         {
             // No watcher is installed until every current route is acknowledged.
@@ -179,12 +244,16 @@ internal sealed partial class SubscriptionHub
         {
             if (replacement is not null && DetachConnection(replacement) is { } cleanup)
             {
-                try { await cleanup.ConfigureAwait(false); }
+                try
+                {
+                    await cleanup.ConfigureAwait(false);
+                }
                 catch (Exception cleanupError)
                 {
                     TryLog(cleanupError, static (logger, error) => logger.SubscriptionReplacementCleanupFailed(error));
                 }
             }
+
             return (null, endpoint, error);
         }
     }
@@ -192,21 +261,38 @@ internal sealed partial class SubscriptionHub
     private async Task ResubscribeRoutesAsync(RespireConnection replacement, CancellationToken cancellationToken)
     {
         (RespireSubscriptionKind Kind, RespireChannel Name)[] routes;
+
         lock (_gate)
         {
             var snapshot = new List<(RespireSubscriptionKind, RespireChannel)>();
+
             for (var i = 0; i < _routes.Length; i++)
             {
-                if (IsClusterSharded((RespireSubscriptionKind)i)) continue;
-                foreach (var name in _routes[i].Names) snapshot.Add(((RespireSubscriptionKind)i, name));
+                if (IsClusterSharded((RespireSubscriptionKind)i))
+                {
+                    continue;
+                }
+
+                foreach (var name in _routes[i].Names)
+                {
+                    snapshot.Add(((RespireSubscriptionKind)i, name));
+                }
             }
+
             routes = [.. snapshot];
         }
+
         foreach (var (kind, name) in routes)
+        {
             await SendRecoveryControlAsync(replacement, kind, name, cancellationToken).ConfigureAwait(false);
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
+
         if (!replacement.IsConnected)
+        {
             throw replacement.CloseError ?? new RespireConnectionException("Pub/sub replacement closed during resubscription.");
+        }
     }
 
     private void ExhaustConfiguredRecovery(RespireEndpoint endpoint, Exception failure, int attempt)
@@ -215,24 +301,45 @@ internal sealed partial class SubscriptionHub
         {
             // Serialize exhaustion with disposal's _disposed publication, including the
             // completion reason. Cancellation can happen even after the caller's token check.
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             _recoveryExhaustion = new RespireReconnectLimitException(
                 $"Pub/sub recovery exhausted {attempt} replacement attempts. Recreate the client to subscribe again.");
             _configuredRecoveryPhase = ConfiguredRecoveryPhase.Exhausted;
             HashSet<RespireSubscription> subscriptions = [];
+
             lock (_gate)
             {
                 for (var i = 0; i < _routes.Length; i++)
                 {
-                    if (IsClusterSharded((RespireSubscriptionKind)i)) continue;
-                    foreach (var list in _routes[i].Values) subscriptions.UnionWith(list);
+                    if (IsClusterSharded((RespireSubscriptionKind)i))
+                    {
+                        continue;
+                    }
+
+                    foreach (var list in _routes[i].Values)
+                    {
+                        subscriptions.UnionWith(list);
+                    }
+
                     _routes[i].Clear();
                 }
-                foreach (var subscription in subscriptions) _interrupted.Remove(subscription);
+
+                foreach (var subscription in subscriptions)
+                {
+                    _interrupted.Remove(subscription);
+                }
             }
             // Completion only closes an internal buffer and signals asynchronous continuations.
             // No user callback runs here; keep the terminal reason serialized with disposal.
-            foreach (var subscription in subscriptions) subscription.CompleteFromReconnectExhaustion();
+            foreach (var subscription in subscriptions)
+            {
+                subscription.CompleteFromReconnectExhaustion();
+            }
+
             QueueConfiguredState(endpoint, RespireConnectionState.Disconnected, failure, attempt, exhausted: true);
         }
     }
@@ -242,10 +349,16 @@ internal sealed partial class SubscriptionHub
     {
         lock (_reconnectStateGate)
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             if (QueueReconnectStateLocked(new RespireConnectionStateChange(endpoint, state, error)
-                { ReconnectAttempt = attempt, NextReconnectDelay = delay, ReconnectExhausted = exhausted }, clusterSharded))
+            { ReconnectAttempt = attempt, NextReconnectDelay = delay, ReconnectExhausted = exhausted }, clusterSharded))
+            {
                 ThreadPool.UnsafeQueueUserWorkItem(static hub => hub.PublishReconnectStates(), this, preferLocal: false);
+            }
         }
     }
 }

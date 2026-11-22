@@ -47,6 +47,7 @@ public class FakeRespServerTests
             : [IPAddress.Loopback];
         await using var server = new FakeRespServer(addresses.Length, () => TcpListener.Create(0), FakeRespServer.PongReply);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         foreach (var address in addresses)
         {
             await using var connection = await RespireConnection.ConnectAsync(address.ToString(), server.Port,
@@ -54,6 +55,7 @@ public class FakeRespServerTests
             using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
         }
+
         await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(addresses.Length);
     }
 
@@ -66,6 +68,7 @@ public class FakeRespServerTests
             var retiredPort = await RetirePortAsync();
             var created = new List<TcpListener>();
             TcpListener listener;
+
             try
             {
                 listener = FakeRespServer.StartListener(() =>
@@ -90,7 +93,10 @@ public class FakeRespServerTests
 
                 // Successful allocation must release every rejected listener as well.
                 foreach (var rejected in created.Where(item => !ReferenceEquals(item, listener)))
+                {
                     await Assert.That(IsListening(rejected)).IsFalse();
+                }
+
                 await Assert.That(IsListening(listener)).IsTrue();
 
                 // The replacement still accepts a connection on its fresh endpoint.
@@ -119,11 +125,16 @@ public class FakeRespServerTests
             var retiredPort = await RetirePortAsync();
             var created = new List<TcpListener>();
             var failure = new IOException("Controlled listener allocation failure.");
+
             try
             {
                 FakeRespServer.StartListener(() =>
                 {
-                    if (created.Count != 0) throw failure;
+                    if (created.Count != 0)
+                    {
+                        throw failure;
+                    }
+
                     var rejected = new TcpListener(IPAddress.Loopback, retiredPort);
                     created.Add(rejected);
                     return rejected;
@@ -169,6 +180,9 @@ public class FakeRespServerTests
 
     private static void DisposeAll(List<TcpListener> listeners)
     {
-        foreach (var listener in listeners) listener.Dispose();
+        foreach (var listener in listeners)
+        {
+            listener.Dispose();
+        }
     }
 }

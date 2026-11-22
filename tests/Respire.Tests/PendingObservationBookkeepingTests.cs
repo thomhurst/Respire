@@ -17,11 +17,16 @@ public class PendingObservationBookkeepingTests
         [Matrix(false, true)] bool enabled, [Matrix(false, true)] bool handled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         using var capture = new Capture();
         var pending = new RespirePending<int>();
         var observation = pending.Observation;
-        if (handled) observation.Handled(new IOException("recovered"));
+
+        if (handled)
+        {
+            observation.Handled(new IOException("recovered"));
+        }
+
         observation.SetAttempts(int.MaxValue - 2);
         pending.AddErrorAttempts(3);
         await Assert.That(observation.Attempts).IsEqualTo(int.MaxValue);
@@ -44,7 +49,12 @@ public class PendingObservationBookkeepingTests
     {
         var pending = new RespirePending<int>();
         var observation = pending.Observation;
-        if (handled) observation.Handled(new IOException());
+
+        if (handled)
+        {
+            observation.Handled(new IOException());
+        }
+
         observation.SetAttempts(7);
         pending.AddErrorAttempts(-3);
         pending.AddErrorAttempts(int.MinValue);
@@ -60,7 +70,7 @@ public class PendingObservationBookkeepingTests
         [Matrix(false, true)] bool enabled, [Matrix(false, true)] bool cancelled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         using var capture = new Capture();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
@@ -85,15 +95,22 @@ public class PendingObservationBookkeepingTests
         await Assert.That(nested.TryHandled(error)).IsFalse();
         first.ReportError();
         second.ReportError();
+
         for (var index = 0; index < 2; index++)
         {
             await Assert.That(ReadError(() => first.Result)).IsSameReferenceAs(error);
             await Assert.That(ReadError(() => second.Result)).IsSameReferenceAs(error);
         }
+
         await Assert.That(outer.Attempts).IsEqualTo(6);
         await Assert.That(second.Observation.Attempts).IsEqualTo(0);
         await Assert.That(first.Error).IsSameReferenceAs(error);
-        if (cancelled) await Assert.That(((OperationCanceledException)first.Error!).CancellationToken).IsEqualTo(cancellation.Token);
+
+        if (cancelled)
+        {
+            await Assert.That(((OperationCanceledException)first.Error!).CancellationToken).IsEqualTo(cancellation.Token);
+        }
+
         await Assert.That(capture.Items.ToArray()).IsEquivalentTo(enabled
             ? new[] { (true, 1), (false, 6), (false, 0) }
             : Array.Empty<(bool, int)>());
@@ -105,6 +122,7 @@ public class PendingObservationBookkeepingTests
         var pending = new RespirePending<int>();
         var rentals = 0;
         ErrorObservation.RentalObserverForTests = () => rentals++;
+
         try
         {
             pending.Observation.SetAttempts(2);
@@ -129,8 +147,12 @@ public class PendingObservationBookkeepingTests
 
     private static Exception ReadError(Func<int> read)
     {
-        try { _ = read(); }
+        try
+        {
+            _ = read();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected the original pending failure.");
     }
 
@@ -140,11 +162,20 @@ public class PendingObservationBookkeepingTests
     private static long MeasureInspection(RespirePending<int> pending, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
-            if (pending.Result != 42 || pending.ReportError()) throw new InvalidOperationException();
-            if (allocate) Volatile.Write(ref _allocationAnchor, new byte[37]);
+            if (pending.Result != 42 || pending.ReportError())
+            {
+                throw new InvalidOperationException();
+            }
+
+            if (allocate)
+            {
+                Volatile.Write(ref _allocationAnchor, new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -158,17 +189,28 @@ public class PendingObservationBookkeepingTests
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (ReferenceEquals(instrument.Meter, RespireTelemetry.Meter) && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
                 var internallyHandled = false;
                 var attempts = 0;
+
                 foreach (var tag in tags)
                 {
-                    if (tag.Key == "redis.client.errors.internal") internallyHandled = (bool)tag.Value!;
-                    if (tag.Key == "redis.client.operation.retry_attempts") attempts = (int)tag.Value!;
+                    if (tag.Key == "redis.client.errors.internal")
+                    {
+                        internallyHandled = (bool)tag.Value!;
+                    }
+
+                    if (tag.Key == "redis.client.operation.retry_attempts")
+                    {
+                        attempts = (int)tag.Value!;
+                    }
                 }
+
                 Items.Enqueue((internallyHandled, attempts));
             });
             _listener.Start();

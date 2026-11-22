@@ -28,8 +28,16 @@ public class BatchDurabilityTests
             },
             SuppressReply = command =>
             {
-                if (command == "SET key new") value = "new";
-                if (!command.StartsWith("WAIT", StringComparison.Ordinal)) return false;
+                if (command == "SET key new")
+                {
+                    value = "new";
+                }
+
+                if (!command.StartsWith("WAIT", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 waiting.TrySetResult();
                 return true;
             },
@@ -37,7 +45,9 @@ public class BatchDurabilityTests
 #pragma warning disable RESP010 // This durability scenario owns its client, dedicated leases, and acknowledgement state until test teardown.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(), Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -48,7 +58,12 @@ public class BatchDurabilityTests
         var write = batch.Set("key", "new");
         var executing = Execute(batch, aof, 1, TimeSpan.Zero, cancellation.Token);
         await Task.WhenAny(waiting.Task, executing).WaitAsync(TimeSpan.FromSeconds(5));
-        if (executing.IsCompleted) await executing;
+
+        if (executing.IsCompleted)
+        {
+            await executing;
+        }
+
         await waiting.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(1);
@@ -66,12 +81,24 @@ public class BatchDurabilityTests
             var acknowledgementIndex = Array.FindIndex(server.ReceivedCommands.ToArray(),
                 command => command.StartsWith("WAIT", StringComparison.Ordinal));
             var reply = aof ? "*2\r\n:1\r\n:0\r\n"u8.ToArray() : ":0\r\n"u8.ToArray();
-            if (outcome == "error") reply = "-ERR acknowledgement failed\r\n"u8.ToArray();
-            await server.SendRawAsync(reply, server.ReceivedConnectionIds[acknowledgementIndex]);
+
             if (outcome == "error")
+            {
+                reply = "-ERR acknowledgement failed\r\n"u8.ToArray();
+            }
+
+            await server.SendRawAsync(reply, server.ReceivedConnectionIds[acknowledgementIndex]);
+
+            if (outcome == "error")
+            {
                 await Assert.That(async () => await executing.WaitAsync(TimeSpan.FromSeconds(5))).ThrowsExactly<RespireServerException>();
-            else await Assert.That(await executing.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(new RespireAofAcknowledgementResult(aof ? 1 : 0, 0));
+            }
+            else
+            {
+                await Assert.That(await executing.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(new RespireAofAcknowledgementResult(aof ? 1 : 0, 0));
+            }
         }
+
         await Assert.That(cache.InspectForTests().ActiveMutationCount).IsEqualTo(0);
         await Assert.That(write.Result).IsTrue();
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
@@ -93,11 +120,14 @@ public class BatchDurabilityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            LoggerFactory = logger,
         });
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();
         var write = batch.Set("key", "value");
+
         if (acknowledgementFails)
         {
             var error = await Assert.That(async () => await Execute(batch, aof, 1, TimeSpan.Zero))
@@ -111,6 +141,7 @@ public class BatchDurabilityTests
                 .ThrowsExactly<InvalidOperationException>();
             await Assert.That(error).IsSameReferenceAs(logger.Failure);
         }
+
         await Assert.That(write.Result).IsTrue();
         await logger.ReportedFailure.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
@@ -126,12 +157,17 @@ public class BatchDurabilityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var pool = client.Core.DedicatedPool;
         var prior = await pool.RentAsync(CancellationToken.None);
-        using (var reply = await prior.SendAsync(new Cmd2(Verbs.Set, "earlier", "value"))) { }
+
+        using (var reply = await prior.SendAsync(new Cmd2(Verbs.Set, "earlier", "value")))
+        {
+        }
+
         pool.Return(prior);
 
         using var first = client.CreateBatch();
@@ -162,7 +198,11 @@ public class BatchDurabilityTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("WAIT", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("WAIT", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 waiting.TrySetResult();
                 return true;
             },
@@ -171,8 +211,10 @@ public class BatchDurabilityTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 2,
-            CommandTimeout = ordinaryTimeout, ConnectionIdleReadTimeout = ordinaryTimeout,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 2,
+            CommandTimeout = ordinaryTimeout,
+            ConnectionIdleReadTimeout = ordinaryTimeout,
         });
 #pragma warning restore RESP010
         using var batch = client.WithKeyPrefix("tenant:").CreateBatch();
@@ -182,7 +224,12 @@ public class BatchDurabilityTests
         // Surface an early write/acquisition failure instead of hiding it behind the
         // server-observation timeout, which otherwise loses the actual failure stage.
         await Task.WhenAny(waiting.Task, executing).WaitAsync(TimeSpan.FromSeconds(5));
-        if (executing.IsCompleted) await executing;
+
+        if (executing.IsCompleted)
+        {
+            await executing;
+        }
+
         await waiting.Task.WaitAsync(TimeSpan.FromSeconds(5));
         // A blocking acknowledgement must not inherit ordinary command/response deadlines or occupy a multiplexed socket.
         await Task.Delay(ordinaryTimeout + TimeSpan.FromSeconds(1));
@@ -215,7 +262,11 @@ public class BatchDurabilityTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("WAIT", StringComparison.Ordinal) || Interlocked.Increment(ref acknowledgements) != 1) return false;
+                if (!command.StartsWith("WAIT", StringComparison.Ordinal) || Interlocked.Increment(ref acknowledgements) != 1)
+                {
+                    return false;
+                }
+
                 waiting.TrySetResult();
                 return true;
             },
@@ -280,7 +331,8 @@ public class BatchDurabilityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();
@@ -304,7 +356,9 @@ public class BatchDurabilityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, UseCluster = true,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            UseCluster = true,
         });
 #pragma warning restore RESP010
         using var empty = client.CreateBatch();
@@ -340,15 +394,23 @@ public class BatchDurabilityTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         using var batch = client.WithKeyPrefix("tenant:").CreateBatch();
         _ = batch.Set("{durability}:key", "value");
+
         if (redirect)
+        {
             await Assert.That(async () => await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1))).Throws<RespireServerException>();
+        }
         else
+        {
             await Assert.That(await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1))).IsEqualTo(1);
+        }
+
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         string[] expected = redirect ? ["SET tenant:{durability}:key value"] : ["SET tenant:{durability}:key value", "WAIT 1 1000"];
         await Assert.That(owner.ReceivedCommands).IsEquivalentTo(expected);
@@ -363,7 +425,11 @@ public class BatchDurabilityTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var batch = client.CreateBatch();
@@ -401,7 +467,11 @@ public class BatchDurabilityTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("WAIT", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("WAIT", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -426,7 +496,8 @@ public class BatchDurabilityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", unavailable.Port)], ConnectTimeout = TimeSpan.FromSeconds(1),
+            Endpoints = [new("127.0.0.1", unavailable.Port)],
+            ConnectTimeout = TimeSpan.FromSeconds(1),
         });
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();
@@ -456,18 +527,34 @@ public class BatchDurabilityTests
     {
         internal readonly InvalidOperationException Failure = new("Test disconnect failure.");
         internal readonly TaskCompletionSource ReportedFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
             Exception? exception, Func<TState, Exception?, string> formatter)
         {
             // Inject failure after the connection has released its sockets and buffers.
             if (logLevel == LogLevel.Debug && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+            {
                 throw Failure;
-            if (logLevel == LogLevel.Warning && ReferenceEquals(exception, Failure)) ReportedFailure.TrySetResult();
+            }
+
+            if (logLevel == LogLevel.Warning && ReferenceEquals(exception, Failure))
+            {
+                ReportedFailure.TrySetResult();
+            }
         }
     }
 

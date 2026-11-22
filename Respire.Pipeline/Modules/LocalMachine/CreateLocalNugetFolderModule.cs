@@ -8,10 +8,10 @@ public class CreateLocalNugetFolderModule : Module<DirectoryInfo>
     protected override async Task<DirectoryInfo> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Creating local NuGet folder for development...");
-        
+
         var localNugetPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "local-packages");
         var localNugetDirectory = new DirectoryInfo(localNugetPath);
-        
+
         if (!localNugetDirectory.Exists)
         {
             localNugetDirectory.Create();
@@ -21,7 +21,7 @@ public class CreateLocalNugetFolderModule : Module<DirectoryInfo>
         {
             context.Logger.LogInformation("Local NuGet folder already exists: {Path}", localNugetDirectory.FullName);
         }
-        
+
         return localNugetDirectory;
     }
 }

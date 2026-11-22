@@ -46,8 +46,12 @@ public class ReplicaCursorDeadlineTests
         {
             Endpoints = [new("127.0.0.1", primary.Port)],
             ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, ConnectTimeout = Limit,
-            CommandTimeout = timeout, RetryPolicy = null, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ConnectTimeout = Limit,
+            CommandTimeout = timeout,
+            RetryPolicy = null,
+            ThreadPoolMonitoring = false,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(10),
             BacklogPolicy = failFast ? RespireBacklogPolicy.FailFast : RespireBacklogPolicy.Queue,
         };
@@ -60,6 +64,7 @@ public class ReplicaCursorDeadlineTests
         await using var view = client.WithReadFrom(RespireReadFrom.Replica);
         using var caller = new CancellationTokenSource();
         await using var scan = view.Keys.ScanAsync(cancellationToken: caller.Token).GetAsyncEnumerator();
+
         if (surface == "typed")
         {
             await Assert.That(await scan.MoveNextAsync()).IsTrue();
@@ -69,19 +74,29 @@ public class ReplicaCursorDeadlineTests
         {
             using var first = await view.ExecuteAsync(RespireCommands.Key.SCAN, ["0"]);
         }
+
         await Assert.That(router.CanQueue(RespireReadFrom.Replica)).IsEqualTo(!failFast);
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         if (surface != "fire-and-forget" && !cancel)
+        {
             replica.SuppressReply = command =>
             {
-                if (!command.StartsWith("SCAN 7", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("SCAN 7", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             };
+        }
+
         var gate = EntryGate(selection.Replica!);
         await gate.WaitAsync();
         Task pending;
         long releasedAt = 0;
+
         try
         {
             // Require revalidation, making the pinned acquisition wait on this gate.
@@ -89,6 +104,7 @@ public class ReplicaCursorDeadlineTests
             pending = ContinueAsync();
             await Assert.That(pending.IsCompleted).IsFalse();
             await Assert.That(router.IsBacklogDraining).IsFalse();
+
             if (cancel)
             {
                 await caller.CancelAsync();
@@ -99,6 +115,7 @@ public class ReplicaCursorDeadlineTests
                 await Task.Delay(timeout + TimeSpan.FromMilliseconds(200));
                 await Assert.That(pending.IsCompleted).IsFalse();
             }
+
             await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("SCAN 7", StringComparison.Ordinal))).IsFalse();
         }
         finally
@@ -106,10 +123,16 @@ public class ReplicaCursorDeadlineTests
             releasedAt = Environment.TickCount64;
             gate.Release();
         }
-        if (cancel) return;
+
+        if (cancel)
+        {
+            return;
+        }
+
         if (surface != "fire-and-forget")
         {
             await received.Task.WaitAsync(Limit);
+
             try
             {
                 await Assert.That(selection.Connection.InspectForTests().Inflight.TryPeek(out var reply)).IsTrue();
@@ -119,6 +142,7 @@ public class ReplicaCursorDeadlineTests
             }
             finally { await replica.SendRawAsync("*2\r\n$1\r\n0\r\n*1\r\n$4\r\nlast\r\n"u8.ToArray()); }
         }
+
         await pending.WaitAsync(Limit);
         // A round trip also drains the fire-and-forget reply before checking receipt.
         await view.GetStringAsync("barrier");
@@ -133,7 +157,9 @@ public class ReplicaCursorDeadlineTests
                 await Assert.That(scan.Current).IsEqualTo("last");
             }
             else if (surface == "fire-and-forget")
+            {
                 await view.ExecuteFireAndForgetAsync(RespireCommands.Key.SCAN, caller.Token, ["7"]);
+            }
             else
             {
                 using var next = await view.ExecuteAsync(RespireCommands.Key.SCAN, caller.Token, ["7"]);

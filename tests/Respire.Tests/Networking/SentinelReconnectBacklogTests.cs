@@ -50,19 +50,36 @@ public partial class SentinelRoutingTests
         CancellationToken responseToken) : IRespCommand
     {
         public ReadCommandKind ReadKind => ReadCommandKind.None;
+
         public void Write(ref RespWriter writer)
         {
             writer.WriteArrayHeader(2);
             writer.WriteBulkString("GET"u8);
             writer.WriteBulkString(key);
         }
-        public bool TryGetPrimaryKey(out RespireValue value) { value = key; return true; }
+
+        public bool TryGetPrimaryKey(out RespireValue value)
+        {
+            value = key;
+            return true;
+        }
+
         public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey value)
-        { value = new(operation, (RespireValue)key); return true; }
+        {
+            value = new(operation, (RespireValue)key);
+            return true;
+        }
+
         public bool TryGetArgument(int index, out RespireValue value)
-        { value = index == 0 ? key : default; return index == 0; }
+        {
+            value = index == 0 ? key : default;
+            return index == 0;
+        }
+
         public void ValidateAdmission() => callbacks.Validated++;
+
         public void OnAccepted() => callbacks.Accepted++;
+
         public CancellationToken GetResponseCancellationToken(CancellationToken token) => responseToken;
     }
 
@@ -98,7 +115,11 @@ public partial class SentinelRoutingTests
         var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Replacement.SuppressReply = command =>
         {
-            if (command != "GET first") return false;
+            if (command != "GET first")
+            {
+                return false;
+            }
+
             accepted.TrySetResult();
             return true;
         };
@@ -184,7 +205,10 @@ public partial class SentinelRoutingTests
     {
         await using var fixture = await SentinelBacklogFixture.CreateAsync(reconnectPolicy: new()
         {
-            MaxAttempts = 1, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0,
+            MaxAttempts = 1,
+            InitialDelay = TimeSpan.Zero,
+            MaxDelay = TimeSpan.Zero,
+            JitterRatio = 0,
         });
         fixture.FailReplacement = true;
         var first = fixture.Client.GetStringAsync("first").AsTask();
@@ -208,7 +232,10 @@ public partial class SentinelRoutingTests
     {
         await using var fixture = await SentinelBacklogFixture.CreateAsync(noCommandTimeout: true, reconnectPolicy: new()
         {
-            MaxAttempts = 1, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0,
+            MaxAttempts = 1,
+            InitialDelay = TimeSpan.Zero,
+            MaxDelay = TimeSpan.Zero,
+            JitterRatio = 0,
         });
         fixture.FailReplacement = true;
         var router = fixture.Client.Core.ReadRouter;
@@ -233,7 +260,11 @@ public partial class SentinelRoutingTests
         var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Replacement.SuppressReply = command =>
         {
-            if (command != "SET accepted value") return false;
+            if (command != "SET accepted value")
+            {
+                return false;
+            }
+
             accepted.TrySetResult();
             return true;
         };
@@ -254,14 +285,22 @@ public partial class SentinelRoutingTests
     {
         await using var fixture = await SentinelBacklogFixture.CreateAsync(circuitBreaker: new()
         {
-            MinimumFailureCount = 1, FailureRateThreshold = 1, OpenDuration = TimeSpan.FromMinutes(1),
+            MinimumFailureCount = 1,
+            FailureRateThreshold = 1,
+            OpenDuration = TimeSpan.FromMinutes(1),
         });
         OpenBacklogCircuit(fixture.Client, fixture.Original.Port);
         var pending = fixture.Client.GetStringAsync("queued").AsTask();
         await fixture.Selecting.Task.WaitAsync(Limit);
         await Assert.That(pending.IsCompleted).IsFalse();
-        if (replacementOpen) OpenBacklogCircuit(fixture.Client, fixture.Replacement.Port);
+
+        if (replacementOpen)
+        {
+            OpenBacklogCircuit(fixture.Client, fixture.Replacement.Port);
+        }
+
         fixture.Resume.TrySetResult();
+
         if (replacementOpen)
         {
             var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireCircuitOpenException>();
@@ -273,6 +312,7 @@ public partial class SentinelRoutingTests
             await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo("value");
             await Assert.That(fixture.Replacement.ReceivedCommands.Count(command => command == "GET queued")).IsEqualTo(1);
         }
+
         await Assert.That(fixture.Original.ReceivedCommands.Any(IsSentinelBacklogApplicationCommand)).IsFalse();
     }
 
@@ -283,11 +323,19 @@ public partial class SentinelRoutingTests
     {
         await using var fixture = await SentinelBacklogFixture.CreateAsync();
         var bytes = "value"u8.ToArray();
+
         async Task SendAsync()
         {
-            if (fireAndForget) await fixture.Client.ExecuteFireAndForgetAsync("SET", ["key", bytes]);
-            else { using var reply = await fixture.Client.ExecuteAsync("SET", ["key", bytes]); }
+            if (fireAndForget)
+            {
+                await fixture.Client.ExecuteFireAndForgetAsync("SET", ["key", bytes]);
+            }
+            else
+            {
+                using var reply = await fixture.Client.ExecuteAsync("SET", ["key", bytes]);
+            }
         }
+
         var pending = SendAsync();
         await fixture.Selecting.Task.WaitAsync(Limit);
         Array.Fill(bytes, (byte)'x');
@@ -303,7 +351,9 @@ public partial class SentinelRoutingTests
     {
         await using var fixture = await SentinelBacklogFixture.CreateAsync(retryPolicy: new()
         {
-            MaxAttempts = 2, InitialBackoff = TimeSpan.Zero, MaxBackoff = TimeSpan.Zero,
+            MaxAttempts = 2,
+            InitialBackoff = TimeSpan.Zero,
+            MaxBackoff = TimeSpan.Zero,
         }, reconnectPolicy: new() { InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, JitterRatio = 0 });
         fixture.ReplacementFailuresRemaining = 1;
         var sends = 0;
@@ -342,7 +392,11 @@ public partial class SentinelRoutingTests
     private static void OpenBacklogCircuit(RespireClient client, int port)
     {
         var admission = client.Core.Circuits!.Acquire(new("127.0.0.1", port), default);
-        try { admission.Failed(new RespireConnectionException("Controlled endpoint failure."), default); }
+
+        try
+        {
+            admission.Failed(new RespireConnectionException("Controlled endpoint failure."), default);
+        }
         finally { admission.Dispose(); }
     }
 
@@ -380,10 +434,28 @@ public partial class SentinelRoutingTests
         var inTransaction = false;
         fixture.Replacement.ReplyOverride = (_, command) =>
         {
-            if (command == "ROLE") return PrimaryRole;
-            if (command == "MULTI") { inTransaction = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { inTransaction = false; return "*2\r\n$5\r\nvalue\r\n+OK\r\n"u8.ToArray(); }
-            if (inTransaction) return "+QUEUED\r\n"u8.ToArray();
+            if (command == "ROLE")
+            {
+                return PrimaryRole;
+            }
+
+            if (command == "MULTI")
+            {
+                inTransaction = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                inTransaction = false;
+                return "*2\r\n$5\r\nvalue\r\n+OK\r\n"u8.ToArray();
+            }
+
+            if (inTransaction)
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
             return command.StartsWith("GET ", StringComparison.Ordinal) ? BacklogValueReply : FakeRespServer.OkReply;
         };
         using var batch = transaction ? null : fixture.Client.CreateBatch();
@@ -418,28 +490,59 @@ public partial class SentinelRoutingTests
     {
         switch (surface)
         {
-            case "string": return (await client.GetStringAsync(key))!;
-            case "bytes": return Encoding.UTF8.GetString((await client.GetBytesAsync(key))!);
-            case "typed": return (await client.GetAsync<string>(key))!;
+            case "string":
+                return (await client.GetStringAsync(key))!;
+            case "bytes":
+                return Encoding.UTF8.GetString((await client.GetBytesAsync(key))!);
+            case "typed":
+                return (await client.GetAsync<string>(key))!;
             case "stream":
                 await using (var stream = await client.Strings.GetStreamAsync(key))
-                using (var reader = new StreamReader(stream!)) return await reader.ReadToEndAsync();
-            case "write": return await client.SetAsync(key, "value") ? "OK" : "failed";
-            case "fire-and-forget": await client.ExecuteFireAndForgetAsync("SET", key, "value"); return "OK";
+                using (var reader = new StreamReader(stream!))
+                {
+                    return await reader.ReadToEndAsync();
+                }
+            case "write":
+                return await client.SetAsync(key, "value") ? "OK" : "failed";
+            case "fire-and-forget":
+                await client.ExecuteFireAndForgetAsync("SET", key, "value");
+                return "OK";
             default:
                 using (var reply = surface == "catalog" ? await client.ExecuteAsync(RespireCommands.String.GET, key)
-                    : await client.ExecuteAsync("GET", key)) return reply.AsString()!;
+                    : await client.ExecuteAsync("GET", key))
+                {
+                    return reply.AsString()!;
+                }
         }
     }
 
     private sealed class SentinelBacklogFixture : IAsyncDisposable
     {
-        internal FakeRespServer Original { get; private set; } = null!;
-        internal FakeRespServer Replacement { get; private set; } = null!;
+        internal FakeRespServer Original
+        {
+            get; private set;
+        } = null!;
+
+        internal FakeRespServer Replacement
+        {
+            get; private set;
+        } = null!;
         private FakeRespServer _sentinel = null!;
-        internal RespireClient Client { get; private set; } = null!;
-        internal TaskCompletionSource Selecting { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal RespireClient Client
+        {
+            get; private set;
+        } = null!;
+
+        internal TaskCompletionSource Selecting
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Resume
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool FailReplacement;
         internal int ReplacementAttempts;
         internal int ReplacementFailuresRemaining;
@@ -450,11 +553,13 @@ public partial class SentinelRoutingTests
             RespireRetryPolicy? retryPolicy = null, RespireCircuitBreakerOptions? circuitBreaker = null, bool clientCache = false)
         {
             var fixture = new SentinelBacklogFixture();
+
             try
             {
                 static byte[]? Reply(int _, string command) => command == "HELLO 3"
                     ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray()
                     : command.StartsWith("GET ", StringComparison.Ordinal) ? BacklogValueReply : null;
+
                 fixture.Original = Primary(Reply);
                 fixture.Replacement = Primary(Reply);
                 var port = fixture.Original.Port;
@@ -476,12 +581,21 @@ public partial class SentinelRoutingTests
                             Interlocked.Increment(ref fixture.ReplacementAttempts);
                             fixture.Selecting.TrySetResult();
                             await fixture.Resume.Task.WaitAsync(token);
-                            if (fixture.FailReplacement) throw new IOException("Controlled replacement connection failure.");
+
+                            if (fixture.FailReplacement)
+                            {
+                                throw new IOException("Controlled replacement connection failure.");
+                            }
+
                             if (Volatile.Read(ref fixture.ReplacementFailuresRemaining) > 0
                                 && Interlocked.Decrement(ref fixture.ReplacementFailuresRemaining) >= 0)
+                            {
                                 throw new IOException("Controlled transient replacement connection failure.");
+                            }
                         }
+
                         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                         try
                         {
                             await socket.ConnectAsync(host, targetPort, token);
@@ -503,10 +617,25 @@ public partial class SentinelRoutingTests
 
         public async ValueTask DisposeAsync()
         {
-            if (Client is not null) await Client.DisposeAsync();
-            if (_sentinel is not null) await _sentinel.DisposeAsync();
-            if (Replacement is not null) await Replacement.DisposeAsync();
-            if (Original is not null) await Original.DisposeAsync();
+            if (Client is not null)
+            {
+                await Client.DisposeAsync();
+            }
+
+            if (_sentinel is not null)
+            {
+                await _sentinel.DisposeAsync();
+            }
+
+            if (Replacement is not null)
+            {
+                await Replacement.DisposeAsync();
+            }
+
+            if (Original is not null)
+            {
+                await Original.DisposeAsync();
+            }
         }
     }
 }

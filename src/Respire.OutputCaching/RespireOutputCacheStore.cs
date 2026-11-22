@@ -41,9 +41,17 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
         ArgumentNullException.ThrowIfNull(client);
         options ??= new();
         ArgumentNullException.ThrowIfNull(options.TimeProvider);
-        if (!options.HasValidTaggingMode) throw new ArgumentOutOfRangeException(nameof(options), "TaggingMode must be a defined value.");
+
+        if (!options.HasValidTaggingMode)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "TaggingMode must be a defined value.");
+        }
+
         if (!options.HasValidGenerationNamespace)
+        {
             throw new ArgumentException("GenerationAware tagging requires a nonempty Redis hash tag in InstanceName.", nameof(options));
+        }
+
         _client = client;
         _generationAware = options.TaggingMode == RespireOutputCacheTaggingMode.GenerationAware;
         _valuePrefix = options.InstanceName + (_generationAware ? "__RPOCV2_" : "__MSOCV_");
@@ -70,20 +78,37 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(destination);
         cancellationToken.ThrowIfCancellationRequested();
+
         if (_generationAware)
         {
             var bytes = await _client.Hashes.GetBytesAsync(_valuePrefix + key, PayloadField, cancellationToken).ConfigureAwait(false);
-            if (bytes is null) return false;
+
+            if (bytes is null)
+            {
+                return false;
+            }
+
             destination.Write(bytes);
         }
         else
         {
             using var lease = await _client.Strings.GetLeaseAsync(_valuePrefix + key, cancellationToken).ConfigureAwait(false);
-            if (lease.IsNull) return false;
+
+            if (lease.IsNull)
+            {
+                return false;
+            }
+
             destination.Write(lease.Span);
         }
+
         var flush = await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
-        if (flush.IsCanceled) throw new OperationCanceledException(cancellationToken);
+
+        if (flush.IsCanceled)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+
         return true;
     }
 
@@ -100,24 +125,35 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
         TimeSpan validFor, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
+
         if (validFor < TimeSpan.FromMilliseconds(1))
+        {
             throw new ArgumentOutOfRangeException(nameof(validFor), "The lifetime must be at least one millisecond.");
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
-        foreach (var tag in tags.Span) ArgumentNullException.ThrowIfNull(tag);
+
+        foreach (var tag in tags.Span)
+        {
+            ArgumentNullException.ThrowIfNull(tag);
+        }
         // Register every tag before publishing the value. A failed registration must not publish
         // a response that its tags cannot invalidate. One absolute deadline keeps a delayed SET
         // from outliving its tag references; it also validates timestamp overflow before any I/O.
         var expiresAt = _clock.GetUtcNow() + validFor;
         var expires = expiresAt.ToUnixTimeMilliseconds();
+
         if (_generationAware)
         {
             await SetGenerationAsync(key, value, tags, expires, cancellationToken).ConfigureAwait(false);
             return;
         }
+
         for (var start = 0; start < tags.Length;)
         {
             using var batch = _client.CreateBatch();
             var end = start + Math.Min(125, tags.Length - start);
+
             for (var index = start; index < end; index++)
             {
                 var tag = tags.Span[index];
@@ -129,12 +165,18 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
             await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
             start = end;
         }
+
         cancellationToken.ThrowIfCancellationRequested();
         var expiry = tags.IsEmpty ? RespireExpiry.In(validFor) : RespireExpiry.At(expiresAt);
+
         if (value.IsSingleSegment)
+        {
             await _client.SetAsync(_valuePrefix + key, (RespireValue)value.First, expiry, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
         else
+        {
             await _client.Strings.SetAsync(_valuePrefix + key, value, expiry, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc />
@@ -144,16 +186,22 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
         cancellationToken.ThrowIfCancellationRequested();
         var tagKey = (RespireKey)(_tagPrefix + tag);
         List<string> members = new(250);
+
         await foreach (var entry in _client.SortedSets.ScanAsync(tagKey, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
             members.Add(entry.Member);
+
             if (members.Count == 250)
             {
                 await EvictMembersAsync(tagKey, members, cancellationToken).ConfigureAwait(false);
                 members.Clear();
             }
         }
-        if (members.Count != 0) await EvictMembersAsync(tagKey, members, cancellationToken).ConfigureAwait(false);
+
+        if (members.Count != 0)
+        {
+            await EvictMembersAsync(tagKey, members, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private async ValueTask EvictMembersAsync(RespireKey tagKey, List<string> members, CancellationToken cancellationToken)
@@ -163,6 +211,7 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
             await EvictGenerationsAsync(tagKey, members, cancellationToken).ConfigureAwait(false);
             return;
         }
+
         if (members.Count == 1)
         {
             await _client.DeleteAsync([_valuePrefix + members[0]], cancellationToken).ConfigureAwait(false);
@@ -173,11 +222,13 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
         // tag memberships after every delete succeeds, leaving failed deletes retryable.
         using var batch = _client.CreateBatch();
         var values = new RespireValue[members.Count];
+
         for (var index = 0; index < members.Count; index++)
         {
             _ = batch.Keys.Delete(_valuePrefix + members[index]);
             values[index] = members[index];
         }
+
         await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
         await _client.SortedSets.RemoveAsync(tagKey, values, cancellationToken).ConfigureAwait(false);
     }
@@ -191,16 +242,24 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
         cancellationToken.ThrowIfCancellationRequested();
         var lockLifetime = TimeSpan.FromMinutes(5);
         await using var attempt = await _client.Locks.AcquireAsync(_cleanupLock, lockLifetime, cancellationToken).ConfigureAwait(false);
-        if (!attempt.Acquired) return;
+
+        if (!attempt.Acquired)
+        {
+            return;
+        }
+
         var cutoff = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         List<RespireValue> tags = new(250);
+
         await foreach (var tag in _client.SortedSets.ScanAsync(_tagMaster, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
             tags.Add(tag.Member);
+
             if (tags.Count == 250)
             {
                 await RemoveExpiredMembersAsync(tags, cutoff, cancellationToken).ConfigureAwait(false);
                 tags.Clear();
+
                 if (!await attempt.Lock.ResetExpiryAsync(lockLifetime, cancellationToken).ConfigureAwait(false))
                 {
                     _logger.OutputCacheCleanupLockLost();
@@ -208,7 +267,11 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
                 }
             }
         }
-        if (tags.Count != 0) await RemoveExpiredMembersAsync(tags, cutoff, cancellationToken).ConfigureAwait(false);
+
+        if (tags.Count != 0)
+        {
+            await RemoveExpiredMembersAsync(tags, cutoff, cancellationToken).ConfigureAwait(false);
+        }
         // Both passes use the same cutoff. Concurrent writes with later deadlines survive the
         // per-tag removal and increase the master score, so the final purge preserves that tag.
         await _client.SortedSets.RemoveRangeByScoreAsync(_tagMaster, 0, cutoff, cancellationToken).ConfigureAwait(false);
@@ -217,8 +280,12 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
     private async ValueTask RemoveExpiredMembersAsync(List<RespireValue> tags, long cutoff, CancellationToken cancellationToken)
     {
         using var batch = _client.CreateBatch();
+
         foreach (var tag in tags)
+        {
             _ = batch.SortedSets.RemoveRangeByScore(_tagPrefix + tag, 0, cutoff);
+        }
+
         await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
     }
 }

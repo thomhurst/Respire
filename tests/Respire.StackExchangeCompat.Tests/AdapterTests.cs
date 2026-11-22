@@ -68,15 +68,30 @@ public class AdapterTests(RedisTestContainer fixture)
         value[0] = 0;
         Assert.False(set.IsCompleted);
         Assert.False(expire.IsCompleted);
-        using (var before = await client.ExecuteAsync("EXISTS", "batch")) Assert.Equal(0, before.AsInteger());
+
+        using (var before = await client.ExecuteAsync("EXISTS", "batch"))
+        {
+            Assert.Equal(0, before.AsInteger());
+        }
+
         batch.Execute();
         await Task.WhenAll(set, expire);
         Assert.True(await expire);
         Assert.Equal(new byte[] { 0xff, 0, 0x81 }, (byte[]?)await database.HashGetAsync("batch", "field"));
-        using (var ttl = await client.ExecuteAsync("PTTL", "batch")) Assert.InRange(ttl.AsInteger(), 1, 30000);
+
+        using (var ttl = await client.ExecuteAsync("PTTL", "batch"))
+        {
+            Assert.InRange(ttl.AsInteger(), 1, 30000);
+        }
+
         batch.Execute(); // An empty second execution must not replay writes.
         Assert.True(await database.KeyExpireAsync("batch", (TimeSpan?)null));
-        using (var ttl = await client.ExecuteAsync("PTTL", "batch")) Assert.Equal(-1, ttl.AsInteger());
+
+        using (var ttl = await client.ExecuteAsync("PTTL", "batch"))
+        {
+            Assert.Equal(-1, ttl.AsInteger());
+        }
+
         Assert.True(await database.KeyExpireAsync("batch", TimeSpan.Zero));
         Assert.True(database.HashGet("batch", "field").IsNull);
     }
@@ -146,7 +161,10 @@ public class AdapterTests(RedisTestContainer fixture)
         Assert.Throws<NotSupportedException>(() => connection.GetDatabase(asyncState: new object()));
         Assert.Contains("native Respire APIs", Assert.Throws<NotSupportedException>(() => database.StringGetLease("key")).Message);
         Assert.Throws<NotSupportedException>(() => database.HashGet("key", "field", (CommandFlags)1));
-        Assert.Throws<NotSupportedException>(() => { _ = database.CreateBatch().StringGetLeaseAsync("key"); });
+        Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = database.CreateBatch().StringGetLeaseAsync("key");
+        });
         await connection.CloseAsync(false);
         Assert.False(client.IsConnected);
     }

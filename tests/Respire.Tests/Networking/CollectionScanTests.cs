@@ -109,6 +109,7 @@ public class CollectionScanTests
     private static async Task<T[]> CollectAsync<T>(IAsyncEnumerable<T> source)
     {
         var items = new List<T>();
+
         await foreach (var item in source)
         {
             items.Add(item);

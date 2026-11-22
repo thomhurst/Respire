@@ -6,6 +6,7 @@ public partial interface IRespireBatchStringCommands
 {
     /// <summary>Queues INCREX BYINT with optional bounds and expiry, returning the value and applied delta. Redis 8.8+.</summary>
     RespirePending<RespireIncrementResult<long>> IncrementExtended(RespireKey key, long by = 1, RespireIntegerIncrementOptions options = default);
+
     /// <summary>Queues INCREX BYFLOAT with optional bounds and expiry. Redis 8.8+. Replies use .NET double precision.</summary>
     RespirePending<RespireIncrementResult<double>> IncrementExtended(RespireKey key, double by, RespireFloatIncrementOptions options = default);
 }

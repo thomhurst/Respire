@@ -53,7 +53,9 @@ public class CacheServiceExtensionsTests(RedisTestContainer fixture)
     public void AddStackExchangeRedisCache_allows_chaining()
     {
         var services = new ServiceCollection();
-        Assert.Same(services, services.AddStackExchangeRedisCache(_ => { }));
+        Assert.Same(services, services.AddStackExchangeRedisCache(_ =>
+        {
+        }));
     }
 
     [Test]

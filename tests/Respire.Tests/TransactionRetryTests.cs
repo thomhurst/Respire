@@ -35,7 +35,12 @@ public class TransactionRetryTests
         var result = await client.RunTransactionAsync(["balance"], async (_, token) =>
         {
             var balance = await client.GetStringAsync("balance", token);
-            if (++attempts == 1) await client.SetAsync("balance", "2", cancellationToken: token);
+
+            if (++attempts == 1)
+            {
+                await client.SetAsync("balance", "2", cancellationToken: token);
+            }
+
             return balance;
         });
 
@@ -62,11 +67,17 @@ public class TransactionRetryTests
             {
                 attempts[index]++;
                 var balance = long.Parse(await client.GetStringAsync("balance", token) ?? "0", CultureInfo.InvariantCulture);
+
                 if (attempts[index] == 1)
                 {
-                    if (Interlocked.Increment(ref arrived) == writers) ready.TrySetResult();
+                    if (Interlocked.Increment(ref arrived) == writers)
+                    {
+                        ready.TrySetResult();
+                    }
+
                     await ready.Task.WaitAsync(token);
                 }
+
                 transaction.Set("balance", balance + 1);
                 return balance + 1;
             }, new RespireTransactionRetryOptions { MaxAttempts = writers * 2 }, cancellation.Token).AsTask()).ToArray();
@@ -87,6 +98,7 @@ public class TransactionRetryTests
         var attempts = 0;
         var pending = new List<RespirePending<long>>();
         RespireTransactionConflictException? failure = null;
+
         try
         {
             await client.RunTransactionAsync(["watched"], async (transaction, token) =>
@@ -115,6 +127,7 @@ public class TransactionRetryTests
         var attempts = 0;
         var expected = new InvalidOperationException("callback failed");
         Exception? observed = null;
+
         try
         {
             await client.RunTransactionAsync(["watched"], (transaction, _) =>
@@ -174,7 +187,12 @@ public class TransactionRetryTests
             transaction.Increment("result");
         }, new RespireTransactionRetryOptions
         {
-            Backoff = attempt => { delays.Add(attempt); cancellation.Cancel(); return TimeSpan.FromHours(1); },
+            Backoff = attempt =>
+            {
+                delays.Add(attempt);
+                cancellation.Cancel();
+                return TimeSpan.FromHours(1);
+            },
         }, cancellation.Token)).Throws<OperationCanceledException>();
 
         await Assert.That(attempts).IsEqualTo(1);
@@ -200,6 +218,7 @@ public class TransactionRetryTests
                 keys[0] = "other";
                 await client.IncrementAsync("original", cancellationToken: token);
             }
+
             transaction.Increment("result");
         });
 
@@ -218,13 +237,23 @@ public class TransactionRetryTests
         listener.InstrumentPublished = (instrument, owner) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name.StartsWith("respire.transaction.watch.", StringComparison.Ordinal))
+            {
                 owner.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, _, _) =>
         {
-            if (!IsInTrace(trace)) return;
+            if (!IsInTrace(trace))
+            {
+                return;
+            }
+
             measurements.AddOrUpdate(instrument.Name, value, (_, previous) => previous + value);
-            if (throwingListener) throw new InvalidOperationException("listener failed");
+
+            if (throwingListener)
+            {
+                throw new InvalidOperationException("listener failed");
+            }
         });
         listener.Start();
         await using var server = new RespireFakeServer();
@@ -234,7 +263,11 @@ public class TransactionRetryTests
         var attempts = 0;
         await client.RunTransactionAsync(["watched"], async (transaction, token) =>
         {
-            if (++attempts == 1) await client.IncrementAsync("watched", cancellationToken: token);
+            if (++attempts == 1)
+            {
+                await client.IncrementAsync("watched", cancellationToken: token);
+            }
+
             transaction.Increment("result");
         });
 
@@ -259,8 +292,14 @@ public class TransactionRetryTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create("127.0.0.1:1");
 #pragma warning restore RESP010
-        Assert.Throws<ArgumentNullException>(() => { _ = client.RunTransactionAsync([], null!); });
-        Assert.Throws<ArgumentNullException>(() => { _ = client.RunTransactionAsync(null!, (_, _) => ValueTask.CompletedTask); });
+        Assert.Throws<ArgumentNullException>(() =>
+        {
+            _ = client.RunTransactionAsync([], null!);
+        });
+        Assert.Throws<ArgumentNullException>(() =>
+        {
+            _ = client.RunTransactionAsync(null!, (_, _) => ValueTask.CompletedTask);
+        });
         Assert.Throws<ArgumentOutOfRangeException>(() =>
         {
             _ = client.RunTransactionAsync([], (_, _) => ValueTask.CompletedTask,
@@ -286,11 +325,16 @@ public class TransactionRetryTests
         listener.InstrumentPublished = (instrument, owner) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.transaction.watch.retries")
+            {
                 owner.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, _, _) =>
         {
-            if (IsInTrace(trace)) Interlocked.Add(ref retries, value);
+            if (IsInTrace(trace))
+            {
+                Interlocked.Add(ref retries, value);
+            }
         });
         listener.Start();
         await using var server = new RespireFakeServer();
@@ -301,6 +345,7 @@ public class TransactionRetryTests
         IDisposable? fault = null;
         var callbacks = 0;
         Exception? failure = null;
+
         try
         {
             await client.RunTransactionAsync(["watched"], async (transaction, token) =>
@@ -312,8 +357,15 @@ public class TransactionRetryTests
             {
                 Backoff = _ =>
                 {
-                    if (cancel) cancellation.Cancel();
-                    else fault = server.InjectFault("WATCH", RespireFakeFault.Loading());
+                    if (cancel)
+                    {
+                        cancellation.Cancel();
+                    }
+                    else
+                    {
+                        fault = server.InjectFault("WATCH", RespireFakeFault.Loading());
+                    }
+
                     return TimeSpan.Zero;
                 },
             }, cancellation.Token);
@@ -330,6 +382,7 @@ public class TransactionRetryTests
     public async Task ExponentialBackoffBoundsDelayAndValidatesInputs()
     {
         var backoff = RespireTransactionRetryOptions.ExponentialBackoff(TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(25));
+
         foreach (var (attempt, ceiling) in new[] { (1, 10), (2, 20), (3, 25), (int.MaxValue, 25) })
         {
             for (var sample = 0; sample < 32; sample++)
@@ -338,6 +391,7 @@ public class TransactionRetryTests
                 await Assert.That(delay >= TimeSpan.Zero && delay <= TimeSpan.FromMilliseconds(ceiling)).IsTrue();
             }
         }
+
         await Assert.That(RespireTransactionRetryOptions.ExponentialBackoff(TimeSpan.Zero, TimeSpan.Zero)(int.MaxValue)).IsEqualTo(TimeSpan.Zero);
         Assert.Throws<ArgumentOutOfRangeException>(() => backoff(0));
         Assert.Throws<ArgumentOutOfRangeException>(() => RespireTransactionRetryOptions.ExponentialBackoff(TimeSpan.FromTicks(-1), TimeSpan.Zero));
@@ -351,7 +405,8 @@ public class TransactionRetryTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], UseCluster = true,
+            Endpoints = [new("127.0.0.1", 1)],
+            UseCluster = true,
         });
 #pragma warning restore RESP010
         var callbacks = 0;

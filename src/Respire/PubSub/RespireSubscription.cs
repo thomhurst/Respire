@@ -40,12 +40,18 @@ public readonly record struct RespireSubscriptionOptions(
 {
     /// <summary>Maximum retained payload bytes per message; null leaves payload size unrestricted.</summary>
     /// <remarks>Oversized messages are discarded before copying into the subscription buffer and produce a delivery gap.</remarks>
-    public int? MaxPayloadBytes { get; init; }
+    public int? MaxPayloadBytes
+    {
+        get; init;
+    }
 
     internal (int BufferSize, RespireSubscriptionOverflow Overflow) Resolve(RespireOptions defaults)
     {
         if (MaxPayloadBytes is < 1)
+        {
             throw new ArgumentOutOfRangeException(nameof(MaxPayloadBytes), MaxPayloadBytes, "Must be at least one.");
+        }
+
         if (BufferSize is < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(BufferSize), BufferSize, "Must be at least one.");
@@ -104,11 +110,17 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     }
 
     /// <summary>The Redis pub/sub command family used by this subscription.</summary>
-    public RespireSubscriptionKind Kind { get; }
+    public RespireSubscriptionKind Kind
+    {
+        get;
+    }
 
     /// <summary>The channels or patterns covered by this subscription. The collection is immutable.</summary>
     /// <remarks>Contains physical targets, including explicit pub/sub prefixes; notification descriptors retain their routing metadata.</remarks>
-    public IReadOnlyList<RespireChannel> Targets { get; }
+    public IReadOnlyList<RespireChannel> Targets
+    {
+        get;
+    }
 
     /// <summary>Whether this subscription ended through disposal or exhausted reconnect attempts.</summary>
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
@@ -122,10 +134,20 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     /// </summary>
     public Task<RespireSubscriptionEndReason> Completion => _completion.Task;
 
-    internal RespireChannel[] Names { get; }
-    internal int? MaxPayloadBytes { get; }
+    internal RespireChannel[] Names
+    {
+        get;
+    }
 
-    internal SubscriptionBuffer Buffer { get; }
+    internal int? MaxPayloadBytes
+    {
+        get;
+    }
+
+    internal SubscriptionBuffer Buffer
+    {
+        get;
+    }
 
     /// <summary>Reports each detected gap, independently of enumeration.</summary>
     /// <remarks>Runs synchronously on the receive path. Handlers must not block or wait for Redis operations.
@@ -141,13 +163,25 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
 
     internal void NotifyGap(RespireSubscriptionGap gap)
     {
-        try { RespireTelemetry.RecordSubscriptionGap(Kind, gap.Reason); }
+        try
+        {
+            RespireTelemetry.RecordSubscriptionGap(Kind, gap.Reason);
+        }
         catch (Exception ex) { _hub.LogGapObserverFailure(ex); }
+
         var handlers = DeliveryGap;
-        if (handlers is null) return;
+
+        if (handlers is null)
+        {
+            return;
+        }
+
         foreach (Action<RespireSubscriptionGap> handler in handlers.GetInvocationList())
         {
-            try { handler(gap); }
+            try
+            {
+                handler(gap);
+            }
             catch (Exception ex) { _hub.LogGapObserverFailure(ex); }
         }
     }
@@ -156,6 +190,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     public IAsyncEnumerator<RespireMessage> GetAsyncEnumerator(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(IsDisposed, this);
+
         if (Interlocked.CompareExchange(ref _enumerating, 1, 0) != 0)
         {
             throw new InvalidOperationException("A RespireSubscription can only have one active enumerator.");
@@ -183,11 +218,18 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
         // Reserve admission separately from disposal. Rejection must leave the subscription
         // live, while concurrent or callback-reentrant disposal must not enter another scope.
         if (IsDisposed || Interlocked.CompareExchange(ref _disposeHookActive, 1, 0) != 0)
+        {
             return;
+        }
+
         try
         {
             // Another disposer may finish between the initial check and admission reservation.
-            if (IsDisposed) return;
+            if (IsDisposed)
+            {
+                return;
+            }
+
             await CommandHookScope.RunAsync(hook, SubscriptionHub.UnsubscribeOperation(Kind),
                 CancellationToken.None, this, static subscription => subscription.DisposeUnhookedAsync())
                 .ConfigureAwait(false);
@@ -206,6 +248,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
         }
 
         Buffer.Complete();
+
         try
         {
             await _hub.RemoveAsync(this).ConfigureAwait(false);
@@ -248,6 +291,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
         public async ValueTask DisposeAsync()
         {
             var owner = Interlocked.Exchange(ref _subscription, null);
+
             if (owner is null)
             {
                 return;

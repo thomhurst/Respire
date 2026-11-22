@@ -76,6 +76,7 @@ public class LocalNugetSourceTests
     public async Task CommandFailuresPropagate(string failingCommand)
     {
         using var config = new TestConfig();
+
         if (failingCommand == "enable")
         {
             config.Write(new XElement("packageSources", Source("existing", config.Packages)),
@@ -87,7 +88,11 @@ public class LocalNugetSourceTests
         await Assert.That(async () => await LocalNugetSource.EnsureRegisteredAsync(config.Packages,
             CancellationToken.None, config.Path, async (arguments, token) =>
             {
-                if (arguments[1] == failingCommand) File.WriteAllText(config.Path, "<invalid");
+                if (arguments[1] == failingCommand)
+                {
+                    File.WriteAllText(config.Path, "<invalid");
+                }
+
                 return await LocalNugetSource.RunCommandAsync(arguments, token);
             })).Throws<InvalidOperationException>().WithMessageContaining($"dotnet nuget {failingCommand} failed with exit code");
 
@@ -101,8 +106,16 @@ public class LocalNugetSourceTests
     private sealed class TestConfig : IDisposable
     {
         private readonly DirectoryInfo _root = Directory.CreateTempSubdirectory("Respire NuGet tests ");
-        public string Path { get; }
-        public string Packages { get; }
+
+        public string Path
+        {
+            get;
+        }
+
+        public string Packages
+        {
+            get;
+        }
 
         public TestConfig()
         {
@@ -112,7 +125,9 @@ public class LocalNugetSourceTests
         }
 
         public void Write(params XElement[] sections) => new XDocument(new XElement("configuration", sections)).Save(Path);
+
         public Task<string> RegisterAsync() => LocalNugetSource.EnsureRegisteredAsync(Packages, CancellationToken.None, Path);
+
         public void Dispose() => _root.Delete(recursive: true);
     }
 }

@@ -15,13 +15,15 @@ public class DistributedLockerClusterTests
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
-            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+            Topology = RespireContainerTopology.Cluster,
+            Image = "redis:7.4-alpine",
         });
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with { Protocol = (RespireProtocol)protocol });
         await using var first = new RespireFusionCacheDistributedLocker(client.WithKeyPrefix("cluster-test:"),
             new() { LeaseDuration = TimeSpan.FromSeconds(2) });
         await using var second = new RespireFusionCacheDistributedLocker(client.WithKeyPrefix("cluster-test:"));
         var owners = new Dictionary<int, (string Name, RespireFusionCacheLock Handle)>();
+
         for (var candidate = 0; owners.Count < 3 && candidate < 64; candidate++)
         {
             var name = "cache-" + candidate;
@@ -30,13 +32,23 @@ public class DistributedLockerClusterTests
             var counterSlot = await client.Server.ClusterKeySlotAsync("cluster-test:" + owner.FencingCounterKey.ToString());
             await Assert.That(leaseSlot).IsEqualTo(counterSlot);
             var primary = leaseSlot < 5461 ? 0 : leaseSlot < 10922 ? 1 : 2;
-            if (!owners.TryAdd(primary, (name, owner))) await DistributedLockerTests.ReleaseAsync(first, name, owner);
+
+            if (!owners.TryAdd(primary, (name, owner)))
+            {
+                await DistributedLockerTests.ReleaseAsync(first, name, owner);
+            }
         }
+
         await Assert.That(owners.Count).IsEqualTo(3);
         await Task.Delay(TimeSpan.FromSeconds(3));
+
         foreach (var (primary, (name, owner)) in owners)
         {
-            if (owner.OwnershipLost) throw new InvalidOperationException($"Cluster lease renewal lost primary {primary}.", owner.RenewalFailure);
+            if (owner.OwnershipLost)
+            {
+                throw new InvalidOperationException($"Cluster lease renewal lost primary {primary}.", owner.RenewalFailure);
+            }
+
             await Assert.That(await DistributedLockerTests.AcquireAsync(second, name, TimeSpan.Zero)).IsNull();
             await DistributedLockerTests.ReleaseAsync(first, name, owner);
             var next = (RespireFusionCacheLock)(await DistributedLockerTests.AcquireAsync(second, name, TimeSpan.Zero))!;

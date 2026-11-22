@@ -39,11 +39,20 @@ public sealed record RespireSearchProfileNode(
 
     private static void ValidateNesting(RespireResult value, int depth)
     {
-        if (!RespireSearchReply.IsCollection(value)) return;
+        if (!RespireSearchReply.IsCollection(value))
+        {
+            return;
+        }
+
         if (depth >= MaximumCollectionDepth)
+        {
             throw Unexpected("profile nesting exceeds 64 collection levels");
+        }
+
         for (var i = 0; i < value.Count; i++)
+        {
             ValidateNesting(value[i], depth + 1);
+        }
     }
 
     private static RespireSearchProfileNode Parse(RespireResult result, string name, RespireSearchValue owned)
@@ -52,30 +61,52 @@ public sealed record RespireSearchProfileNode(
         var properties = new Dictionary<string, RespireSearchValue>(StringComparer.Ordinal);
         var metrics = new Dictionary<string, double>(StringComparer.Ordinal);
         var children = new List<RespireSearchProfileNode>();
+
         for (var i = 0; i < result.Count; i += 2)
         {
             var key = result[i];
-            if (!IsName(key)) throw Unexpected("a non-string or empty field name");
+
+            if (!IsName(key))
+            {
+                throw Unexpected("a non-string or empty field name");
+            }
+
             var field = key.AsString();
             var kind = ProfileSchema.GetKind(field);
             var value = result[i + 1];
-            if (field == "Type" && !IsName(value)) throw Unexpected("a non-string or empty node type");
+
+            if (field == "Type" && !IsName(value))
+            {
+                throw Unexpected("a non-string or empty node type");
+            }
             // Copy the tree once, then reuse its owned values in both raw properties and typed children.
             var copied = owned.Items[i + 1];
+
             if (!properties.TryAdd(field, copied))
+            {
                 throw Unexpected("a duplicate field name");
+            }
 
             if (TryReadNumber(value, out var number))
+            {
                 metrics.Add(field, number);
+            }
             else if (kind == ProfileFieldKind.Metric)
+            {
                 throw Unexpected("a non-numeric metric " + field);
+            }
 
             if (kind == ProfileFieldKind.ListNode)
             {
                 if (value.IsNull || value.Type != RespireDataType.Array)
+                {
                     throw Unexpected("a non-array " + field);
+                }
+
                 for (var j = 0; j < value.Count; j++)
+                {
                     children.Add(Parse(value[j], field + " #" + (j + 1).ToString(CultureInfo.InvariantCulture), copied.Items[j]));
+                }
             }
             else if (kind == ProfileFieldKind.ObjectNode || value.Type == RespireDataType.Map)
             {
@@ -86,7 +117,13 @@ public sealed record RespireSearchProfileNode(
         return new(name, properties, metrics, children);
     }
 
-    private enum ProfileFieldKind { Unknown, Metric, ListNode, ObjectNode }
+    private enum ProfileFieldKind
+    {
+        Unknown,
+        Metric,
+        ListNode,
+        ObjectNode
+    }
 
     private static class ProfileSchema
     {
@@ -117,7 +154,10 @@ public sealed record RespireSearchProfileNode(
 
         internal static ProfileFieldKind GetKind(string field)
         {
-            if (Fields.TryGetValue(field, out var kind)) return kind;
+            if (Fields.TryGetValue(field, out var kind))
+            {
+                return kind;
+            }
             // Multi-shard RESP2 profiles wrap each shard in a labeled field/value array.
             return field.StartsWith("Shard #", StringComparison.Ordinal)
                 && int.TryParse(field.AsSpan(7), NumberStyles.None, CultureInfo.InvariantCulture, out var shardNumber)
@@ -156,7 +196,9 @@ public sealed record RespireSearchProfileNode(
     private static void RequireObject(RespireResult value)
     {
         if (value.IsNull || value.Type is not (RespireDataType.Array or RespireDataType.Map) || (value.Count & 1) != 0)
+        {
             throw Unexpected("a value that is not a field/value array or map");
+        }
     }
 
     private static InvalidOperationException Unexpected(string detail) => RespireSearchReply.Unexpected("FT.PROFILE", detail);

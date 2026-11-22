@@ -20,9 +20,11 @@ internal static class QueuedCircuitDispatch
     {
         var deadline = client?.Core.Options.CommandTimeout is { } timeout
             ? CommandDeadline.After(Math.Max(1L, (long)timeout.TotalMilliseconds)) : default;
+
         while (true)
         {
             CircuitAdmission admission = default;
+
             try
             {
                 connection.ThrowIfRetired();
@@ -72,11 +74,16 @@ internal static class QueuedCircuitDispatch
         CommandDeadline deadline = default, RespireClient? client = null)
         where TCommand : struct, IRespCommand
     {
-        if (!deadline.IsSet) deadline = connection.CreateCommandDeadline();
+        if (!deadline.IsSet)
+        {
+            deadline = connection.CreateCommandDeadline();
+        }
+
         while (true)
         {
             CircuitAdmission admission = default;
             var transferred = false;
+
             try
             {
                 connection.ThrowIfRetired();
@@ -103,7 +110,7 @@ internal static class QueuedCircuitDispatch
                 admission.Failed(error, cancellationToken);
                 throw;
             }
-            finally { if (!transferred) admission.Dispose(); }
+            finally { if (!transferred) { admission.Dispose(); } }
         }
     }
 

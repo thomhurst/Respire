@@ -58,8 +58,15 @@ public class PubSubIntegrationTests
         var message = await messageTask.WaitAsync(TimeSpan.FromSeconds(5));
         message.Channel.Should().Be(channel);
         message.Payload.ToArray().Should().Equal(payload);
-        if (kind == RespireSubscriptionKind.Pattern) message.Pattern.Should().Be(target);
-        else message.Pattern.Should().BeNull();
+
+        if (kind == RespireSubscriptionKind.Pattern)
+        {
+            message.Pattern.Should().Be(target);
+        }
+        else
+        {
+            message.Pattern.Should().BeNull();
+        }
     }
 
     [Test]
@@ -282,6 +289,7 @@ public class PubSubIntegrationTests
         resumed[1].Kind.Should().Be(RespireMessageKind.Message);
         resumed[1].Text.Should().Be("after-reconnect");
         await connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         lock (changes)
         {
             changes.Select(change => change.State).Should().ContainInOrder(
@@ -318,9 +326,11 @@ public class PubSubIntegrationTests
         => Task.Run(async () =>
         {
             var messages = new List<RespireMessage>(count);
+
             await foreach (var message in subscription)
             {
                 messages.Add(message);
+
                 if (messages.Count == count)
                 {
                     return messages;
@@ -340,9 +350,11 @@ public class PubSubIntegrationTests
     private async Task<long> PublishUntilReceiversAsync(string channel, string payload, long expectedReceivers)
     {
         long receivers = -1;
+
         for (var attempt = 0; attempt < 100; attempt++)
         {
             receivers = await _client.PublishAsync(channel, payload);
+
             if (receivers == expectedReceivers)
             {
                 return receivers;

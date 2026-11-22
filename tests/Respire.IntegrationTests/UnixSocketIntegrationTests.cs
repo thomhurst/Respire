@@ -29,17 +29,28 @@ public class UnixSocketIntegrationTests(UnixSocketRedisFixture fixture)
         pool.Return(original);
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var pending = client.Lists.LeftPopAsync($"uds:cancel:{Guid.NewGuid():N}", waitFor: null, cancellation.Token).AsTask();
+
         while (true)
         {
             using var list = await client.ExecuteAsync("CLIENT",
                 ["LIST", "ID", id.ToString(System.Globalization.CultureInfo.InvariantCulture)], cancellationToken: deadline.Token);
-            if (list.AsString()!.Contains("flags=b", StringComparison.Ordinal)) break;
+
+            if (list.AsString()!.Contains("flags=b", StringComparison.Ordinal))
+            {
+                break;
+            }
+
             await Task.Delay(1, deadline.Token);
         }
+
         cancellation.Cancel();
         await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
         var reused = await pool.RentAsync(deadline.Token);
-        try { await Assert.That(ReferenceEquals(original, reused)).IsTrue(); }
+
+        try
+        {
+            await Assert.That(ReferenceEquals(original, reused)).IsTrue();
+        }
         finally { pool.Return(reused); }
     }
 
@@ -91,7 +102,12 @@ public class UnixSocketIntegrationTests(UnixSocketRedisFixture fixture)
         await Assert.That(client.ClientSideCache!.GetStatistics().Hits).IsGreaterThan(0);
         await control.SetAsync(key, "after");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (client.ClientSideCache.Count != 0) await Task.Delay(10, timeout.Token);
+
+        while (client.ClientSideCache.Count != 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         await Assert.That(await client.GetStringAsync(key)).IsEqualTo("after");
     }
 
@@ -106,17 +122,25 @@ public class UnixSocketIntegrationTests(UnixSocketRedisFixture fixture)
         await Assert.That(killed.AsInteger()).IsEqualTo(1);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while (true)
         {
             timeout.Token.ThrowIfCancellationRequested();
+
             try
             {
                 using var current = await client.ExecuteAsync("CLIENT", ["ID"], cancellationToken: timeout.Token);
-                if (current.AsInteger() != oldId) break;
+
+                if (current.AsInteger() != oldId)
+                {
+                    break;
+                }
             }
             catch (RespireConnectionException) { }
+
             await Task.Delay(10, timeout.Token);
         }
+
         using var info = await client.ExecuteAsync("CLIENT", "INFO");
         await Assert.That(info.AsString()).Contains("/sockets/redis.sock");
     }
@@ -146,13 +170,18 @@ public sealed class UnixSocketRedisFixture : IAsyncInitializer, IAsyncDisposable
 
     public async Task InitializeAsync()
     {
-        if (!OperatingSystem.IsLinux()) return;
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
         _directory = Path.Combine(Path.GetTempPath(), "respire-uds-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_directory);
         // The image runs Redis as its own UID; both it and the host test need this disposable directory.
         File.SetUnixFileMode(_directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
             | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
             | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute);
+
         try
         {
             _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.4.11-alpine")
@@ -170,12 +199,14 @@ public sealed class UnixSocketRedisFixture : IAsyncInitializer, IAsyncDisposable
             await _container.DisposeAsync();
             _container = null;
         }
+
         if (_directory is not null)
         {
             File.Delete(Path.Combine(_directory, "redis.sock"));
             Directory.Delete(_directory);
             _directory = null;
         }
+
         GC.SuppressFinalize(this);
     }
 }

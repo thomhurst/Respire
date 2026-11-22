@@ -39,24 +39,40 @@ public sealed partial class RespireServerNode
     {
         try
         {
-            if (ranges.IsEmpty) throw new ArgumentException("At least one slot range is required.", nameof(ranges));
+            if (ranges.IsEmpty)
+            {
+                throw new ArgumentException("At least one slot range is required.", nameof(ranges));
+            }
             // Redis 8.4/8.10 slotRangeArrayNormalizeAndValidate rejects 16384 ranges before merging them.
-            if (ranges.Length >= 16384) throw new ArgumentOutOfRangeException(nameof(ranges), "Redis accepts fewer than 16384 ranges.");
+            if (ranges.Length >= 16384)
+            {
+                throw new ArgumentOutOfRangeException(nameof(ranges), "Redis accepts fewer than 16384 ranges.");
+            }
+
             var ordered = ranges.ToArray();
             Array.Sort(ordered, static (left, right) => left.Start.CompareTo(right.Start));
             var arguments = new RespireValue[checked(ranges.Length * 2)];
             var previousEnd = -1;
+
             for (var index = 0; index < ranges.Length; index++)
             {
                 var range = ordered[index];
+
                 if (range.Start < 0 || range.End > 16383 || range.End < range.Start)
+                {
                     throw new ArgumentOutOfRangeException(nameof(ranges), "Slot ranges must be within 0 through 16383 with start <= end.");
+                }
+
                 if (range.Start <= previousEnd)
+                {
                     throw new ArgumentException("Slot ranges must be non-overlapping.", nameof(ranges));
+                }
+
                 previousEnd = range.End;
                 arguments[index * 2] = range.Start;
                 arguments[index * 2 + 1] = range.End;
             }
+
             return ExecuteAsync("CLUSTER MIGRATION IMPORT", arguments, ClusterMigrationParser.TaskId,
                 cancellationToken, NodeCallKind.Mutation);
         }

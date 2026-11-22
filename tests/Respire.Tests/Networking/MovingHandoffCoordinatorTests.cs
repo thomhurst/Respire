@@ -15,27 +15,32 @@ public class MovingHandoffCoordinatorTests
         MovingHandoffCoordinator.Request active;
         MovingHandoffCoordinator.QueueResult firstQueue;
         Task? workerCompletion;
+
         lock (coordinator.Gate)
         {
             firstQueue = Queue(coordinator, peer, sequence: 1, "first-target", stop.Token, Environment.TickCount64);
             active = coordinator.TakeNext(operational: true)!;
             workerCompletion = coordinator.WorkerCompletion;
         }
+
         await Assert.That(firstQueue.StartWorker).IsTrue();
 
         MovingHandoffCoordinator.QueueResult secondQueue;
         MovingHandoffCoordinator.QueueResult latestQueue;
+
         lock (coordinator.Gate)
         {
             secondQueue = Queue(coordinator, peer, sequence: 2, "second-target", stop.Token, Environment.TickCount64);
             latestQueue = Queue(coordinator, peer, sequence: 3, "latest-target", stop.Token, Environment.TickCount64);
         }
+
         await Assert.That(secondQueue.StartWorker).IsFalse();
         await Assert.That(latestQueue.StartWorker).IsFalse();
         await Assert.That(active.Cancellation.IsCancellationRequested).IsTrue();
 
         MovingHandoffCoordinator.Request latest;
         bool workerCompleted;
+
         lock (coordinator.Gate)
         {
             coordinator.Complete(active);
@@ -44,6 +49,7 @@ public class MovingHandoffCoordinatorTests
             _ = coordinator.TakeNext(operational: true);
             workerCompleted = coordinator.WorkerCompletion is null;
         }
+
         await Assert.That(latest.Endpoint.Host).IsEqualTo("latest-target");
         await Assert.That(workerCompleted).IsTrue();
         await Assert.That(workerCompletion is { IsCompleted: true }).IsTrue();
@@ -60,6 +66,7 @@ public class MovingHandoffCoordinatorTests
         MovingHandoffCoordinator.QueueResult duplicate;
         MovingHandoffCoordinator.QueueResult afterExpiry;
         MovingHandoffCoordinator.Request next;
+
         lock (coordinator.Gate)
         {
             first = Queue(coordinator, peer, sequence: 5, "target", stop.Token, now,
@@ -71,6 +78,7 @@ public class MovingHandoffCoordinatorTests
             coordinator.Complete(next);
             _ = coordinator.TakeNext(operational: true);
         }
+
         await Assert.That(first.MarkConnectionSequence).IsTrue();
         await Assert.That(first.StartWorker).IsTrue();
         await Assert.That(duplicate.MarkConnectionSequence).IsTrue();
@@ -95,6 +103,7 @@ public class MovingHandoffCoordinatorTests
         Task idle;
         Task completed;
         bool idleBeforeEnd;
+
         lock (coordinator.Gate)
         {
             coordinator.BeginDrain();
@@ -103,6 +112,7 @@ public class MovingHandoffCoordinatorTests
             coordinator.EndDrain();
             completed = coordinator.WaitForDrains();
         }
+
         await Assert.That(idleBeforeEnd).IsFalse();
         await Assert.That(completed.IsCompleted).IsTrue();
     }
@@ -114,6 +124,7 @@ public class MovingHandoffCoordinatorTests
         Task first;
         Task second;
         bool secondInitiallyCompleted;
+
         lock (coordinator.Gate)
         {
             coordinator.BeginDrain();
@@ -140,6 +151,7 @@ public class MovingHandoffCoordinatorTests
         bool retiredFence;
         bool liveFence;
         bool hasFencesBeforeForget;
+
         lock (coordinator.Gate)
         {
             _ = Queue(coordinator, retiredPeer, 1, "target", stop.Token, Environment.TickCount64);

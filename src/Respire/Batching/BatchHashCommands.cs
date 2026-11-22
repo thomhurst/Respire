@@ -158,8 +158,7 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IRespireBat
         => Set(key, field, value, RespireSetWhen.Always);
 
     public RespirePending<bool> Set(
-        RespireKey key, string field, RespireValue value, RespireSetWhen when)
-        => when switch
+        RespireKey key, string field, RespireValue value, RespireSetWhen when) => when switch
         {
             RespireSetWhen.Always => sink.Add<Cmd3, bool>(
                 "HSET", new Cmd3(Verbs.HSet, sink.Client.Key(in key), field, value),

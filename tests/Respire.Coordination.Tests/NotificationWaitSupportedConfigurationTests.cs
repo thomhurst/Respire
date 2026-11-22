@@ -29,6 +29,7 @@ public class NotificationWaitSupportedConfigurationTests(SharedRedis74 fixture)
         var coordination = new RespireCoordination(prefixedView ? client.WithKeyPrefix(prefix) : client);
         var keyPrefix = prefixedView ? "" : prefix;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         if (operation == "hash")
         {
             await using var lease = await coordination.AcquireLeaseAsync(

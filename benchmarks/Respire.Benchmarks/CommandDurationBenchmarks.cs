@@ -14,7 +14,10 @@ public class CommandDurationBenchmarks
     private string _expectedOperation = null!;
 
     [Params(false, true)]
-    public bool DurationEnabled { get; set; }
+    public bool DurationEnabled
+    {
+        get; set;
+    }
 
     /// <summary>Prepares a GET case and verifies subsequent GET duration observations.</summary>
     [GlobalSetup(Targets = new[] { nameof(StringGetMiss), nameof(BytesGetMiss) })]
@@ -33,27 +36,37 @@ public class CommandDurationBenchmarks
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configured) ? configured : 6379;
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Database = 7, Connections = 1, ThreadPoolMonitoring = false,
+            Protocol = RespireProtocol.Resp2,
+            Database = 7,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             Endpoints = { new RespireEndpoint(host, port) },
         });
         await _client.Keys.DeleteAsync(Key);
         _listener.InstrumentPublished = (instrument, listener) =>
         {
             if (DurationEnabled && instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
                 listener.EnableMeasurementEvents(instrument);
+            }
         };
         _listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
             foreach (var tag in tags)
+            {
                 if (tag.Key == "db.operation.name" && tag.Value is string operation && operation == _expectedOperation)
                 {
                     Interlocked.Increment(ref _measurements);
                     break;
                 }
+            }
         });
         _listener.Start();
+
         if (await StringGetMiss() is not null || await BytesGetMiss() is not null || await StringLength() != 0)
+        {
             throw new InvalidOperationException("Duration benchmark key must be absent.");
+        }
         // Setup exercises every command; only later measurements of this case count.
         Interlocked.Exchange(ref _measurements, 0);
     }
@@ -65,8 +78,11 @@ public class CommandDurationBenchmarks
         try
         {
             await _client.DisposeAsync();
+
             if (DurationEnabled != (Interlocked.Read(ref _measurements) != 0))
+            {
                 throw new InvalidOperationException("Duration listener did not match the benchmark mode.");
+            }
         }
         finally
         {

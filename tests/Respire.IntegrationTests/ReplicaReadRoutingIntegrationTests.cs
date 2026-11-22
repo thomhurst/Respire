@@ -28,16 +28,23 @@ public class ReplicaReadRoutingIntegrationTests(SharedReplicaTopologies topologi
         var fixture = await topologies.GetAsync(server);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [fixture.DataEndpoints[0]], ReplicaEndpoints = [fixture.DataEndpoints[1]],
-            Protocol = protocol, Connections = 1, ThreadPoolMonitoring = false,
+            Endpoints = [fixture.DataEndpoints[0]],
+            ReplicaEndpoints = [fixture.DataEndpoints[1]],
+            Protocol = protocol,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             ReplicaRefreshInterval = TimeSpan.FromMinutes(1),
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var key = $"prepared-replica:{Guid.NewGuid():N}";
         await client.SetAsync(key, "hello", cancellationToken: deadline.Token);
         var reader = client.WithReadFrom(RespireReadFrom.Replica);
+
         while (await reader.GetStringAsync(key, deadline.Token) != "hello")
+        {
             await Task.Delay(10, deadline.Token);
+        }
+
         for (var i = 0; i < 8; i++)
         {
             (await reader.GetStringAsync(key, deadline.Token)).Should().Be("hello");
@@ -57,19 +64,23 @@ public class ReplicaReadRoutingIntegrationTests(SharedReplicaTopologies topologi
         var routes = new ConcurrentDictionary<string, ConcurrentQueue<RespireEndpoint>>(StringComparer.Ordinal);
         using var listener = Listen(routes, scope.TraceId);
         using var source = new ActivitySource("Respire");
+
         using (var command = source.StartActivity("SET"))
         {
             command!.SetTag("db.operation.name", "SET");
             command.SetTag("server.address", "127.0.0.1");
             command.SetTag("server.port", 1234);
         }
+
         var unrelated = new ActivityContext(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom(), ActivityTraceFlags.Recorded);
+
         using (var command = source.StartActivity("SET", ActivityKind.Client, unrelated))
         {
             command!.SetTag("db.operation.name", "SET");
             command.SetTag("server.address", "127.0.0.1");
             command.SetTag("server.port", 5678);
         }
+
         routes["SET"].Should().ContainSingle().Which.Should().Be(new RespireEndpoint("127.0.0.1", 1234));
     }
 
@@ -100,8 +111,12 @@ public class ReplicaReadRoutingIntegrationTests(SharedReplicaTopologies topologi
         var key = $"nearest-key:{Guid.NewGuid():N}";
         await reader.SetAsync(key, "value");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
         while (await reader.GetStringAsync(key, deadline.Token) != "value")
+        {
             await Task.Delay(50, deadline.Token);
+        }
+
         routes["SET"].Last().Should().Be(fixture.DataEndpoints[0]);
         routes["GET"].Should().OnlyContain(endpoint => fixture.DataEndpoints.Contains(endpoint));
         await Task.Delay(TimeSpan.FromMilliseconds(1_100), deadline.Token);
@@ -228,7 +243,11 @@ public class ReplicaReadRoutingIntegrationTests(SharedReplicaTopologies topologi
                 if (activity.TraceId != traceId
                     || activity.GetTagItem("db.operation.name") is not string operation
                     || activity.GetTagItem("server.address") is not string host
-                    || activity.GetTagItem("server.port") is not { } port) return;
+                    || activity.GetTagItem("server.port") is not { } port)
+                {
+                    return;
+                }
+
                 routes.GetOrAdd(operation, static _ => new()).Enqueue(new(host, Convert.ToInt32(port)));
             },
         };
@@ -256,9 +275,15 @@ public sealed class SharedReplicaTopologies : IAsyncDisposable
     {
         foreach (var fixture in new[] { _redis, _valkey })
         {
-            if (!fixture.IsValueCreated) continue;
+            if (!fixture.IsValueCreated)
+            {
+                continue;
+            }
             // A failed start already removed its container and reported the error to its tests.
-            try { await (await fixture.Value).DisposeAsync(); }
+            try
+            {
+                await (await fixture.Value).DisposeAsync();
+            }
             catch (Exception) when (fixture.Value.IsFaulted) { }
         }
     }

@@ -21,6 +21,7 @@ public partial class SentinelRoutingTests
             "GET key" => "$3\r\nnew\r\n"u8.ToArray(),
             _ => null,
         };
+
         await using var first = Primary(Reply);
         await using var replacement = Primary(Reply);
         var port = first.Port;
@@ -45,10 +46,21 @@ public partial class SentinelRoutingTests
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
             ActivityStarted = activity =>
             {
-                if (activity.OperationName != "GET" || !TestTelemetry.IsFrom(activity, first.Port, replacement.Port)) return;
-                if (retirements != 0 && !retireReplacement) return;
+                if (activity.OperationName != "GET" || !TestTelemetry.IsFrom(activity, first.Port, replacement.Port))
+                {
+                    return;
+                }
+
+                if (retirements != 0 && !retireReplacement)
+                {
+                    return;
+                }
+
                 if (coalesce && retirements == 0)
+                {
                     follower = client.GetStringAsync("key").AsTask();
+                }
+
                 retirements++;
                 Volatile.Write(ref port, replacement.Port);
                 // Force the admission race after SendTrackedAsync has selected its connection.
@@ -56,12 +68,17 @@ public partial class SentinelRoutingTests
                 var connection = generation.Multiplexer.GetConnection();
                 using var rejection = Respire.Protocol.RespValue.Error("READONLY demoted");
                 generation.ObserveResponse(connection, "GET", in rejection);
-                if (cancel) cancellation.Cancel();
+
+                if (cancel)
+                {
+                    cancellation.Cancel();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
 
         var read = client.GetStringAsync("key", cancellation.Token).AsTask();
+
         if (cancel || retireReplacement)
         {
             await Assert.That(async () => await read.WaitAsync(Limit)).Throws<RespireConnectionRetiredException>();
@@ -69,12 +86,15 @@ public partial class SentinelRoutingTests
             await Assert.That(replacement.ReceivedCommands).DoesNotContain("GET key");
             return;
         }
+
         await Assert.That(await read.WaitAsync(Limit)).IsEqualTo("new");
+
         if (coalesce)
         {
             await Assert.That(follower is not null).IsTrue();
             await Assert.That(await follower!.WaitAsync(Limit)).IsEqualTo("new");
         }
+
         await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes).IsEqualTo(initialFlushes + 1);
         await Assert.That(retirements).IsEqualTo(1);
         await Assert.That(original.IsRetired).IsTrue();

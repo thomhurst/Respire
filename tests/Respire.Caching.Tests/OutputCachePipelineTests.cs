@@ -22,9 +22,14 @@ public class OutputCachePipelineTests
         {
             if (command.StartsWith("EVAL ", StringComparison.Ordinal))
             {
-                if (Interlocked.Increment(ref registrations) == firstGroup) server.MinimumCommandsBeforeReply = 1;
+                if (Interlocked.Increment(ref registrations) == firstGroup)
+                {
+                    server.MinimumCommandsBeforeReply = 1;
+                }
+
                 return ":1\r\n"u8.ToArray();
             }
+
             return FakeRespServer.OkReply;
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -47,7 +52,11 @@ public class OutputCachePipelineTests
         await using var server = new FakeRespServer();
         server.ReplyOverride = (_, command) =>
         {
-            if (command.StartsWith("ZSCAN ", StringComparison.Ordinal)) return ScanReply(count);
+            if (command.StartsWith("ZSCAN ", StringComparison.Ordinal))
+            {
+                return ScanReply(count);
+            }
+
             if (command.StartsWith("ZREMRANGEBYSCORE __MSOCT_tag", StringComparison.Ordinal))
             {
                 var current = Interlocked.Increment(ref removed);
@@ -55,9 +64,17 @@ public class OutputCachePipelineTests
                 server.MinimumCommandsBeforeReply = current == count ? 1 : count;
                 return ":1\r\n"u8.ToArray();
             }
+
             if (command.StartsWith("SET ", StringComparison.Ordinal))
+            {
                 return command.Contains(" IFEQ ", StringComparison.Ordinal) ? "$-1\r\n"u8.ToArray() : FakeRespServer.OkReply;
-            if (command.StartsWith("EVAL", StringComparison.Ordinal)) return ":0\r\n"u8.ToArray();
+            }
+
+            if (command.StartsWith("EVAL", StringComparison.Ordinal))
+            {
+                return ":0\r\n"u8.ToArray();
+            }
+
             return ":1\r\n"u8.ToArray();
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -66,6 +83,7 @@ public class OutputCachePipelineTests
         await Assert.That(removed).IsEqualTo(count);
         await Assert.That(logger.Messages.Any(message => message.Contains("lost its lock", StringComparison.Ordinal)))
             .IsEqualTo(loseLock && loggingEnabled);
+
         if (loseLock && loggingEnabled)
         {
             var entry = logger.Events.Single();
@@ -77,6 +95,7 @@ public class OutputCachePipelineTests
             await Assert.That(entry.State.Single().Value).IsEqualTo(
                 "Respire output-cache cleanup lost its lock; skipping the remaining sweep and master purge.");
         }
+
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("ZREMRANGEBYSCORE __MSOCT ", StringComparison.Ordinal)))
             .IsEqualTo(!loseLock);
     }
@@ -93,11 +112,13 @@ public class OutputCachePipelineTests
     private static byte[] ScanReply(int count)
     {
         var reply = new StringBuilder($"*2\r\n$1\r\n0\r\n*{count * 2}\r\n");
+
         for (var index = 0; index < count; index++)
         {
             var tag = $"tag{index}";
             reply.Append('$').Append(tag.Length).Append("\r\n").Append(tag).Append("\r\n$1\r\n1\r\n");
         }
+
         return Encoding.UTF8.GetBytes(reply.ToString());
     }
 
@@ -106,10 +127,20 @@ public class OutputCachePipelineTests
 
     private sealed class CapturingLogger(bool enabled = true) : ILogger<RespireOutputCacheStore>
     {
-        public List<string> Messages { get; } = [];
-        public List<LogEntry> Events { get; } = [];
+        public List<string> Messages
+        {
+            get;
+        } = [];
+
+        public List<LogEntry> Events
+        {
+            get;
+        } = [];
+
         public bool IsEnabled(LogLevel logLevel) => enabled;
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             Messages.Add(formatter(state, exception));

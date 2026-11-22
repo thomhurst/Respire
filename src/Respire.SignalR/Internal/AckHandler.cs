@@ -14,14 +14,22 @@ internal sealed class AckHandler : IDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (!_pending.TryAdd(id, completion)) throw new InvalidOperationException("Duplicate group acknowledgement.");
+
+            if (!_pending.TryAdd(id, completion))
+            {
+                throw new InvalidOperationException("Duplicate group acknowledgement.");
+            }
+
             return completion.Task;
         }
     }
 
     internal void TriggerAck(int id)
     {
-        if (_pending.TryRemove(id, out var completion)) completion.TrySetResult();
+        if (_pending.TryRemove(id, out var completion))
+        {
+            completion.TrySetResult();
+        }
     }
 
     internal void RemoveAck(int id) => _pending.TryRemove(id, out _);
@@ -30,10 +38,20 @@ internal sealed class AckHandler : IDisposable
     {
         lock (_gate)
         {
-            if (_disposed) return;
+            if (_disposed)
+            {
+                return;
+            }
+
             _disposed = true;
+
             foreach (var id in _pending.Keys)
-                if (_pending.TryRemove(id, out var completion)) completion.TrySetCanceled();
+            {
+                if (_pending.TryRemove(id, out var completion))
+                {
+                    completion.TrySetCanceled();
+                }
+            }
         }
     }
 }

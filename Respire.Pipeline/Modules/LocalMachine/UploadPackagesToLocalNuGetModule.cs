@@ -15,7 +15,7 @@ public class UploadPackagesToLocalNuGetModule : Module<int>
         var localNugetFolder = await context.GetModule<CreateLocalNugetFolderModule>();
         var packages = packageFiles.ValueOrDefault ?? Array.Empty<FileInfo>();
         var localNugetDirectory = localNugetFolder.ValueOrDefault ?? throw new InvalidOperationException("Local NuGet folder was not created");
-        
+
         if (packages.Length == 0)
         {
             context.Logger.LogWarning("No packages found to copy to local NuGet");
@@ -23,13 +23,13 @@ public class UploadPackagesToLocalNuGetModule : Module<int>
         }
 
         context.Logger.LogInformation("Copying {Count} packages to local NuGet folder", packages.Length);
-        
+
         var copiedCount = 0;
-        
+
         foreach (var packageFile in packages)
         {
             var destinationPath = Path.Combine(localNugetDirectory.FullName, packageFile.Name);
-            
+
             try
             {
                 packageFile.CopyTo(destinationPath, overwrite: true);
@@ -44,7 +44,7 @@ public class UploadPackagesToLocalNuGetModule : Module<int>
         }
 
         context.Logger.LogInformation("Completed copying {Count} packages to local NuGet", copiedCount);
-        
+
         return copiedCount;
     }
 }

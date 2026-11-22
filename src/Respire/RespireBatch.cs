@@ -40,6 +40,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 {
     private readonly RespireClient _client;
     private readonly RespireHashImportSession? _importSession;
+
     private QueuedConnectionPolicy ConnectionPolicy => new(_importSession);
     private readonly List<Op> _ops = [];
     private bool _disposed;
@@ -75,7 +76,12 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_sent) throw new InvalidOperationException("This batch has already been sent.");
+
+            if (_sent)
+            {
+                throw new InvalidOperationException("This batch has already been sent.");
+            }
+
             return ConnectionPolicy.EnterOperation();
         }
         catch (Exception error)
@@ -269,6 +275,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             core.Endpoint,
             core.Options.Database,
             out telemetryOperation) : default;
+
         if (_ops.Count == 0)
         {
             if (core.Sentinel is not null)
@@ -277,11 +284,17 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                     "PIPELINE", _ops, static op => op.Operation, core.Options.Database,
                     out telemetryOperation, sentinelStarted);
             }
+
             if (core.Sentinel is null)
+            {
                 telemetry.Complete(core, telemetryOperation, batchSize: 0);
+            }
             else
+            {
                 telemetry.Complete(telemetryOperation, host: null, port: 6379,
                     database: core.Options.Database, batchSize: 0);
+            }
+
             return new RespireBatchResult(0, null);
         }
 
@@ -289,22 +302,32 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         // fence older reads unless a non-primary view's complete batch is known to be read-only.
         // Read-only commands can still require primary routing, such as CLUSTERSCAN.
         var cacheToInvalidate = core.ClientCache;
+
         if (cacheToInvalidate is not null && core.Cluster is not null
             && _client.GetBatchReadFromPolicy() != RespireReadFrom.Primary
             && _ops.TrueForAll(static operation => operation.IsReadOnly))
+        {
             cacheToInvalidate = null;
+        }
+
         var mutationFence = cacheToInvalidate is null ? default : cacheToInvalidate.BeginUnknownMutation();
+
         try
         {
-            foreach (var op in _ops) op.MutationFence = mutationFence;
+            foreach (var op in _ops)
+            {
+                op.MutationFence = mutationFence;
+            }
 
             if (core.Cluster is not null && ConnectionPolicy.CanReplayRejectedCommands)
             {
                 var groups = new List<(int? Slot, List<Op> Operations)>();
                 var groupIndexes = new Dictionary<int, int>();
+
                 foreach (var op in _ops)
                 {
                     var groupKey = op.TryGetClusterSlot(out var slot) ? slot + 1 : 0;
+
                     if (!groupIndexes.TryGetValue(groupKey, out var groupIndex))
                     {
                         groupIndex = groups.Count;
@@ -316,6 +339,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 }
 
                 var clusterTasks = new Task[groups.Count];
+
                 for (var i = 0; i < groups.Count; i++)
                 {
                     clusterTasks[i] = RunClusterGroupAsync(
@@ -336,20 +360,29 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             }
 
             RespireConnection? connection = null;
+
             if (_client.UsesPrimaryBacklog && ConnectionPolicy.PinnedConnection is null
                 && !_ops.Exists(static op => op.IsCursorRead))
             {
                 try
                 {
                     connection = _client.SelectPrimaryBacklogConnection(cancellationToken);
+
                     if (connection is null)
                     {
                         if (core.Sentinel is not null)
+                        {
                             telemetry = RespireTelemetry.StartBatchOperation("PIPELINE", _ops, static op => op.Operation,
                                 core.Options.Database, out telemetryOperation, sentinelStarted);
+                        }
+
                         connection = await RunBackloggedBatchAsync(cancellationToken).ConfigureAwait(false);
+
                         if (core.Sentinel is not null && connection is not null)
+                        {
                             telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                        }
+
                         var queuedFailures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
                         telemetry.Complete(core, telemetryOperation, error: queuedFailures is { Length: > 0 } ? queuedFailures[0].Error : null,
                             connection: connection, batchSize: _ops.Count == 1 ? null : _ops.Count);
@@ -358,33 +391,49 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 }
                 catch (Exception error)
                 {
-                    foreach (var op in _ops) op.Fail(error);
+                    foreach (var op in _ops)
+                    {
+                        op.Fail(error);
+                    }
+
                     telemetry.Complete(core, telemetryOperation, error: error, batchSize: _ops.Count == 1 ? null : _ops.Count);
                     return new RespireBatchResult(_ops.Count,
                         CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence));
                 }
             }
+
             if (core.CommandRetries is not null && !ConnectionPolicy.IsImportSession
                 && _ops.TrueForAll(static op => !op.IsCursorRead && op.RetryCategory != RespireCommandRetryCategory.Never))
             {
                 if (core.Sentinel is not null)
+                {
                     telemetry = RespireTelemetry.StartBatchOperation("PIPELINE", _ops, static op => op.Operation,
                         core.Options.Database, out telemetryOperation, sentinelStarted);
+                }
+
                 connection = await RunRetryableBatchAsync(cancellationToken, initialConnection: connection).ConfigureAwait(false);
+
                 if (core.Sentinel is not null && connection is not null)
+                {
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                }
+
                 var failures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
                 telemetry.Complete(core, telemetryOperation, error: failures is { Length: > 0 } ? failures[0].Error : null,
                     connection: connection, batchSize: _ops.Count == 1 ? null : _ops.Count);
                 return new RespireBatchResult(_ops.Count, failures);
             }
+
             try
             {
                 connection ??= ConnectionPolicy.PinnedConnection ?? await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+
                 if (core.Sentinel is not null)
+                {
                     telemetry = RespireTelemetry.StartBatchOperation(
                         "PIPELINE", _ops, static op => op.Operation,
                         connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
+                }
             }
             catch (Exception ex)
             {
@@ -396,8 +445,11 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 }
 
                 if (connection is null)
+                {
                     RespireTelemetry.RecordUnroutedBatchFailure("PIPELINE", _ops, static op => op.Operation,
                         core.Options.Database, sentinelStarted, ex);
+                }
+
                 telemetry.Complete(
                     core,
                     telemetryOperation,
@@ -417,8 +469,11 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             else
             {
                 connection = await RunStandaloneBatchAsync(connection, cancellationToken).ConfigureAwait(false);
+
                 if (core.Sentinel is not null && core.Circuits is not null)
+                {
                     telemetry.UpdateServerEndpoint(connection.Host, connection.Port);
+                }
             }
 
             var batchFailures = CompleteMutationAndCollectFailures(ref cacheToInvalidate, in mutationFence);
@@ -437,20 +492,28 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
     private async ValueTask<RespireConnection?> RunBackloggedBatchAsync(CancellationToken cancellationToken)
     {
         var deadline = LogicalCommandRetry.CreateDeadline(_client.Core.Options.CommandTimeout);
+
         try
         {
-            foreach (var op in _ops) op.Snapshot();
+            foreach (var op in _ops)
+            {
+                op.Snapshot();
+            }
+
             return await _client.RunPrimaryBacklogAsync<RespireConnection?>("PIPELINE", cancellationToken, deadline,
                 async (connection, originalDeadline) =>
                 {
                     if (_client.Core.CommandRetries is not null
                         && _ops.TrueForAll(static op => op.RetryCategory != RespireCommandRetryCategory.Never))
+                    {
                         return await RunRetryableBatchAsync(cancellationToken, initialConnection: connection,
                             deadline: originalDeadline).ConfigureAwait(false);
+                    }
+
                     return await RunStandaloneBatchAsync(connection, cancellationToken, originalDeadline).ConfigureAwait(false);
                 }, _ops[0].Observation).ConfigureAwait(false);
         }
-        finally { foreach (var op in _ops) op.ReleaseSnapshot(); }
+        finally { foreach (var op in _ops) { op.ReleaseSnapshot(); } }
     }
 
     private async ValueTask<RespireConnection?> RunRetryableBatchAsync(CancellationToken callerToken, List<Op>? group = null,
@@ -460,7 +523,12 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         var core = _client.Core;
         var operations = group ?? _ops;
         var canBacklogInitialAcquisition = initialConnection is null;
-        if (!deadline.IsSet) deadline = LogicalCommandRetry.CreateDeadline(core.Options.CommandTimeout);
+
+        if (!deadline.IsSet)
+        {
+            deadline = LogicalCommandRetry.CreateDeadline(core.Options.CommandTimeout);
+        }
+
         using var timeout = deadline.IsSet
             ? CommandTimeoutCancellation.Create(callerToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
             : null;
@@ -468,24 +536,35 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(operations.Count);
         var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(operations.Count);
         var category = RespireCommandRetryCategory.Never;
+
         for (var i = 0; i < operations.Count; i++)
         {
             observations[i] = operations[i].Observation;
             // Numeric ordering describes risk only; permission is checked separately for every member.
-            if (operations[i].RetryCategory > category) category = operations[i].RetryCategory;
+            if (operations[i].RetryCategory > category)
+            {
+                category = operations[i].RetryCategory;
+            }
         }
+
         RespireConnection? connection = null;
         var retries = 0;
+
         try
         {
             callerToken.ThrowIfCancellationRequested();
             // Serialize before any asynchronous route selection. Borrowed arguments may change
             // after execution starts, but every attempt must send the original bytes.
-            foreach (var op in operations) op.Snapshot();
+            foreach (var op in operations)
+            {
+                op.Snapshot();
+            }
+
             for (var attempt = 1; ; attempt++)
             {
                 token.ThrowIfCancellationRequested();
                 var outcome = CommandWriteOutcome.DefinitelyUnwritten;
+
                 try
                 {
                     if (core.Cluster is { } cluster)
@@ -497,7 +576,11 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                                 slot = await cluster.GetPrimaryRoutingSlotAsync(token).ConfigureAwait(false);
                                 initialConnection = null;
                             }
-                            if (attempt > 1) await cluster.WaitForRouteReplacementAsync(slot, token).ConfigureAwait(false);
+
+                            if (attempt > 1)
+                            {
+                                await cluster.WaitForRouteReplacementAsync(slot, token).ConfigureAwait(false);
+                            }
                             // Retry groups hold no continuations, but a fresh cursor page must still record
                             // the server that issues its cursor. Each attempt revalidates that pin, so the next
                             // page finds the server that answered the final attempt.
@@ -515,6 +598,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                             await RunBackloggedClusterGroupAsync(slot, operations, readFrom, callerToken, deadline).ConfigureAwait(false);
                             return null;
                         }
+
                         DeferredOperation.SetAttempts(operations, operations[0].Observation.Attempts);
                         DeferredOperation.ShareEndpoint(operations, operations[0].Observation);
                     }
@@ -527,7 +611,10 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                         core.Circuits?.Acquire(core.Multiplexer.ActiveConnectionEndpoint, token).Dispose();
                         connection = await core.Multiplexer.GetHealthyConnectionAsync(token).ConfigureAwait(false);
                     }
-                    else connection = initialConnection ?? await _client.AcquireConnectionAsync(null, token, operations[0].Observation).ConfigureAwait(false);
+                    else
+                    {
+                        connection = initialConnection ?? await _client.AcquireConnectionAsync(null, token, operations[0].Observation).ConfigureAwait(false);
+                    }
                     // Ordered admission has no immutable per-member write evidence. Once any
                     // send starts, treat the complete unit as a possible execution.
                     outcome = CommandWriteOutcome.Unknown;
@@ -538,13 +625,19 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                     {
                         for (var i = 0; i < operations.Count; i++)
                         {
-                            try { sends[i] = operations[i].StartClusterSend(_client, connection, token, observations[i], deadline); }
+                            try
+                            {
+                                sends[i] = operations[i].StartClusterSend(_client, connection, token, observations[i], deadline);
+                            }
                             catch (Exception error) { sends[i] = ValueTask.FromException<RespValue>(error); }
                         }
+
                         acceptedRetry = true;
                     }
                     else if (core.Circuits is null && !_client.HasOptOutBypass && connection.TryEnqueueMany(operations, sends, observations, token, deadline))
+                    {
                         acceptedRetry = true;
+                    }
                     else
                     {
                         for (var i = 0; i < operations.Count; i++)
@@ -554,6 +647,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                             var accepted = await operations[i].StartOrderedSendAsync(_client, connection, token,
                                 observations[i], deadline, core.Circuits).ConfigureAwait(false);
                             sends[i] = accepted.Reply;
+
                             if (accepted.Connection is { } endpoint)
                             {
                                 connection = endpoint;
@@ -565,10 +659,15 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                     for (var i = 0; i < operations.Count; i++)
                     {
                         if (core.Cluster is not null)
+                        {
                             _ = await operations[i].CompleteClusterSendAsync(this, connection, sends[i], readFrom, token, observations[i], deadline).ConfigureAwait(false);
+                        }
                         else
+                        {
                             await operations[i].CaptureReplyAsync(sends[i]).ConfigureAwait(false);
+                        }
                     }
+
                     if (attempt > 1 && acceptedRetry && (core.Cluster is null
                         || !operations.TrueForAll(static op => op.AttemptError is RespireCircuitOpenException)))
                     {
@@ -578,17 +677,34 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 }
                 catch (Exception error)
                 {
-                    foreach (var op in operations) op.CaptureFailure(error);
+                    foreach (var op in operations)
+                    {
+                        op.CaptureFailure(error);
+                    }
                 }
 
-                if (!TryGetBatchRetryDelay(operations, attempt, outcome, deadline, token, out var delay)) break;
+                if (!TryGetBatchRetryDelay(operations, attempt, outcome, deadline, token, out var delay))
+                {
+                    break;
+                }
+
                 var attempts = 0;
+
                 foreach (var op in operations)
                 {
-                    if (op.AttemptError is { } error) op.Observation.Handled(error);
-                    if (op.Observation.Attempts > attempts) attempts = op.Observation.Attempts;
+                    if (op.AttemptError is { } error)
+                    {
+                        op.Observation.Handled(error);
+                    }
+
+                    if (op.Observation.Attempts > attempts)
+                    {
+                        attempts = op.Observation.Attempts;
+                    }
+
                     op.DiscardReply();
                 }
+
                 DeferredOperation.SetAttempts(operations, attempts);
                 await core.DelayUnitRetryAsync(delay, token).ConfigureAwait(false);
             }
@@ -597,25 +713,40 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         {
             if (error is OperationCanceledException canceled && canceled.CancellationToken == token
                 && token.IsCancellationRequested)
+            {
                 error = callerToken.IsCancellationRequested
                     ? new OperationCanceledException(canceled.Message, canceled, callerToken)
                     : new RespireTimeoutException("PIPELINE", core.Options.CommandTimeout!.Value, canceled);
-            foreach (var op in operations) op.CaptureFailure(error);
+            }
+
+            foreach (var op in operations)
+            {
+                op.CaptureFailure(error);
+            }
         }
         finally
         {
-            if (core.Cluster is null) DeferredOperation.ShareEndpoint(operations, operations[0].Observation);
+            if (core.Cluster is null)
+            {
+                DeferredOperation.ShareEndpoint(operations, operations[0].Observation);
+            }
+
             foreach (var op in operations)
             {
                 op.NormalizeCancellation(callerToken, token, core.Options.CommandTimeout);
                 op.PublishReply(_client);
                 op.ReleaseSnapshot();
             }
+
             if (retries != 0)
+            {
                 RespireTelemetry.RecordCommandRetry(category, operations.Exists(static op => op.Error is not null) ? "exhausted" : "succeeded");
+            }
+
             ArrayPool<ValueTask<RespValue>>.Shared.Return(sends, clearArray: true);
             ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(observations, clearArray: true);
         }
+
         return connection;
     }
 
@@ -624,11 +755,17 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
     {
         delay = default;
         var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
+
         foreach (var failed in operations)
         {
-            if (failed.AttemptError is not { } error) continue;
+            if (failed.AttemptError is not { } error)
+            {
+                continue;
+            }
+
             var permitted = true;
             var candidate = TimeSpan.Zero;
+
             foreach (var member in operations)
             {
                 if (!_client.Core.CommandRetries!.TryGetDelay(error, outcome, member.RetryCategory,
@@ -637,12 +774,22 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                     permitted = false;
                     break;
                 }
-                if (memberDelay > candidate) candidate = memberDelay;
+
+                if (memberDelay > candidate)
+                {
+                    candidate = memberDelay;
+                }
             }
-            if (!permitted) continue;
+
+            if (!permitted)
+            {
+                continue;
+            }
+
             delay = candidate;
             return true;
         }
+
         return false;
     }
 
@@ -654,16 +801,22 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         CommandDeadline deadline = default)
     {
         // Both admission paths include write-gate contention in the original timeout budget.
-        if (!deadline.IsSet) deadline = connection.CreateCommandDeadline();
+        if (!deadline.IsSet)
+        {
+            deadline = connection.CreateCommandDeadline();
+        }
+
         var sends = ArrayPool<ValueTask<RespValue>>.Shared.Rent(_ops.Count);
         var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(_ops.Count);
         var executingConnection = connection;
+
         try
         {
             for (var i = 0; i < _ops.Count; i++)
             {
                 observations[i] = _ops[i].Observation;
             }
+
             var circuits = _client.Core.Circuits;
             // Circuit-enabled queues acquire and observe each permit independently.
             if (circuits is not null || _client.HasOptOutBypass || !connection.TryEnqueueMany(_ops, sends, observations, cancellationToken, deadline))
@@ -680,11 +833,18 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                         observations[i], deadline, circuits).ConfigureAwait(false);
                     sends[i] = accepted.Reply;
                     // A pipeline can span generations. Attribute its scope to the last accepted entry.
-                    if (accepted.Connection is { } endpoint) executingConnection = endpoint;
+                    if (accepted.Connection is { } endpoint)
+                    {
+                        executingConnection = endpoint;
+                    }
                 }
             }
+
             for (var i = 0; i < _ops.Count; i++)
+            {
                 _ = await _ops[i].CompleteSendAsync(_client, sends[i]).ConfigureAwait(false);
+            }
+
             return executingConnection;
         }
         finally
@@ -699,19 +859,33 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         // Bound retained reply tasks, and await each admission before starting the next.
         // Even an empty ring may be fenced by credential renewal; its waiters are not FIFO.
         var tasks = new Task<Exception?>[Math.Min(_ops.Count, _client.Core.Options.MaxInflightCommands)];
+
         for (var offset = 0; offset < _ops.Count;)
         {
             var count = Math.Min(tasks.Length, _ops.Count - offset);
+
             for (var index = 0; index < count; index++)
+            {
                 tasks[index] = await _ops[offset + index].StartImportAsync(_client, connection, cancellationToken).ConfigureAwait(false);
+            }
             // Slots beyond count still contain completed tasks from the preceding chunk.
             var results = await Task.WhenAll(tasks).ConfigureAwait(false);
             offset += count;
+
             for (var index = 0; index < count; index++)
             {
-                if (results[index] is not { } error || !ConnectionPolicy.RequiresExpiration(error)) continue;
+                if (results[index] is not { } error || !ConnectionPolicy.RequiresExpiration(error))
+                {
+                    continue;
+                }
+
                 await ConnectionPolicy.ExpireAsync(error).ConfigureAwait(false);
-                for (; offset < _ops.Count; offset++) _ops[offset].Fail(error);
+
+                for (; offset < _ops.Count; offset++)
+                {
+                    _ops[offset].Fail(error);
+                }
+
                 return;
             }
         }
@@ -730,12 +904,14 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         }
 
         _disposed = true;
+
         if (_sent)
         {
             return;
         }
 
         var error = new RespireBatchDiscardedException();
+
         foreach (var operation in _ops)
         {
             operation.Fail(error);
@@ -762,25 +938,35 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             await RunBackloggedClusterGroupAsync(slot, operations, readFrom, cancellationToken, deadline).ConfigureAwait(false);
             return;
         }
+
         if (_client.Core.CommandRetries is not null
             && operations.TrueForAll(static op => !op.IsCursorRead && op.RetryCategory != RespireCommandRetryCategory.Never))
         {
             _ = await RunRetryableBatchAsync(cancellationToken, operations, slot, readFrom, initialConnection, deadline).ConfigureAwait(false);
             return;
         }
+
         RespireConnection connection;
         RespireConnection? continuationConnection;
         // Read selection borrows the first pending's existing owner. Copy the completed
         // selection count to the other members before any command starts its own retries.
         var selectionObservation = operations[0].Observation;
+
         if (!deadline.IsSet && _client.Core.Options.BacklogPolicy == RespireBacklogPolicy.Queue)
+        {
             deadline = LogicalCommandRetry.CreateDeadline(_client.Core.Options.CommandTimeout);
+        }
+
         var acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _client.Core.Options.CommandTimeout);
+
         try
         {
             var resolvePrimary = slot is null && operations.Exists(static operation => operation.Operation is "FLUSHDB" or "FLUSHALL");
+
             if (resolvePrimary)
+            {
                 slot = await _client.Core.Cluster!.GetPrimaryRoutingSlotAsync(acquisition.Token).ConfigureAwait(false);
+            }
             // Unkeyed selection cannot establish a primary route or a cursor pin.
             (connection, continuationConnection) = initialConnection is not null && !resolvePrimary
                 && !operations.Exists(static op => op.IsCursorContinuation.HasValue) ? (initialConnection, null)
@@ -799,10 +985,16 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         catch (Exception ex)
         {
             if (ex is OperationCanceledException cancelled && acquisition.IsDeadlineCancellation(cancelled))
+            {
                 ex = acquisition.CreateTimeout("PIPELINE", _client.Core, cause: cancelled);
+            }
             else if (ex is OperationCanceledException callerCancelled && acquisition.IsCallerCancellation(callerCancelled))
+            {
                 ex = new OperationCanceledException(callerCancelled.Message, callerCancelled, cancellationToken);
+            }
+
             DeferredOperation.SetAttempts(operations, selectionObservation.Attempts);
+
             foreach (var operation in operations)
             {
                 operation.Fail(ex);
@@ -811,17 +1003,24 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             return;
         }
         finally { acquisition.Dispose(); }
+
         var selectionAttempts = selectionObservation.Attempts;
-        if (selectionAttempts != 0) DeferredOperation.SetAttempts(operations, selectionAttempts);
+
+        if (selectionAttempts != 0)
+        {
+            DeferredOperation.SetAttempts(operations, selectionAttempts);
+        }
 
         var sends = new ValueTask<RespValue>[operations.Count];
         var observations = ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Rent(operations.Count);
+
         try
         {
             // Start every send in queue order before awaiting responses to retain pipelining.
             for (var i = 0; i < operations.Count; i++)
             {
                 observations[i] = operations[i].Observation;
+
                 try
                 {
                     var operationConnection = operations[i].IsCursorContinuation == true ? continuationConnection ?? connection : connection;
@@ -839,7 +1038,11 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 _ = await operations[i].CompleteClusterSendAsync(
                         this, operationConnection, sends[i], readFrom, cancellationToken, observations[i], deadline)
                     .ConfigureAwait(false);
-                if (initialConnection is not null) operations[i].PublishReply(_client);
+
+                if (initialConnection is not null)
+                {
+                    operations[i].PublishReply(_client);
+                }
             }
         }
         finally { ArrayPool<RespireTelemetry.ErrorObservation>.Shared.Return(observations, clearArray: true); }
@@ -848,10 +1051,18 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
     private async Task RunBackloggedClusterGroupAsync(int? slot, List<Op> operations, RespireReadFrom readFrom,
         CancellationToken cancellationToken, CommandDeadline deadline)
     {
-        if (!deadline.IsSet) deadline = LogicalCommandRetry.CreateDeadline(_client.Core.Options.CommandTimeout);
+        if (!deadline.IsSet)
+        {
+            deadline = LogicalCommandRetry.CreateDeadline(_client.Core.Options.CommandTimeout);
+        }
+
         try
         {
-            foreach (var op in operations) op.Snapshot();
+            foreach (var op in operations)
+            {
+                op.Snapshot();
+            }
+
             await _client.RunClusterBacklogAsync("PIPELINE", slot, readFrom, cancellationToken, deadline,
                 operations[0].Observation, async (ready, originalDeadline) =>
                 {
@@ -859,8 +1070,8 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                     return true;
                 }).ConfigureAwait(false);
         }
-        catch (Exception error) { foreach (var op in operations) op.Fail(error); }
-        finally { foreach (var op in operations) op.ReleaseSnapshot(); }
+        catch (Exception error) { foreach (var op in operations) { op.Fail(error); } }
+        finally { foreach (var op in operations) { op.ReleaseSnapshot(); } }
     }
 
     private async ValueTask<(RespireConnection Connection, RespireConnection? Continuation)> AcquireGroupConnectionsAsync(
@@ -870,17 +1081,25 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         var configuredReadFrom = _client.GetBatchReadFromPolicy();
         var hasFreshCursor = false;
         var hasContinuation = false;
+
         if (configuredReadFrom != RespireReadFrom.Primary)
         {
             foreach (var operation in operations)
             {
-                if (operation.IsCursorContinuation is not { } continuation) continue;
+                if (operation.IsCursorContinuation is not { } continuation)
+                {
+                    continue;
+                }
+
                 hasFreshCursor |= !continuation;
                 hasContinuation |= continuation;
             }
         }
+
         if ((!hasFreshCursor && !hasContinuation) || slot is not { } cursorSlot)
+        {
             return (await _client.AcquireConnectionAsync(slot, cancellationToken, readFrom, observation).ConfigureAwait(false), null);
+        }
 
         // Capture the issuing connection before a fresh scan can revalidate and replace the shared pin.
         var cursors = _client.Core.ReadRouter.Cursors;
@@ -893,11 +1112,13 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             ? await cursors.GetClusterConnectionAsync(cluster, cursorSlot, configuredReadFrom,
                 affinity: null, isContinuation: false, cancellationToken, observation).ConfigureAwait(false)
             : continuationConnection!;
+
         if (readFrom != configuredReadFrom)
         {
             // A cursor pin identifies its issuing connection, not its current role.
             // Resolve the current primary separately before allowing any writes in this group.
             var primary = await _client.AcquireConnectionAsync(slot, cancellationToken, RespireReadFrom.Primary, observation).ConfigureAwait(false);
+
             if (!ReferenceEquals(connection.Multiplexer, primary.Multiplexer)
                 || (continuationConnection is not null && !ReferenceEquals(continuationConnection.Multiplexer, primary.Multiplexer)))
             {
@@ -907,6 +1128,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 throw new NotSupportedException($"A cursor page pinned to a replica cannot share its batch group with writes. Operations: {names}. Keep cursor pages in a read-only group.");
             }
         }
+
         return (connection, continuationConnection);
     }
 
@@ -915,11 +1137,20 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
     private RespireReadFrom GetGroupReadFrom(List<Op> operations)
     {
         var policy = _client.GetBatchReadFromPolicy();
-        if (policy == RespireReadFrom.Primary) return RespireReadFrom.Primary;
+
+        if (policy == RespireReadFrom.Primary)
+        {
+            return RespireReadFrom.Primary;
+        }
+
         for (var index = 0; index < operations.Count; index++)
         {
-            if (!operations[index].AllowsReadRouting) return RespireReadFrom.Primary;
+            if (!operations[index].AllowsReadRouting)
+            {
+                return RespireReadFrom.Primary;
+            }
         }
+
         return policy;
     }
 
@@ -937,11 +1168,15 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
     private static RespireBatchFailure[]? CollectFailures(List<Op> operations, bool reportErrors = true)
     {
         var failureCount = reportErrors ? DeferredOperation.ReportErrors(operations) : 0;
+
         if (!reportErrors)
         {
             foreach (var operation in operations)
             {
-                if (operation.Error is not null) failureCount++;
+                if (operation.Error is not null)
+                {
+                    failureCount++;
+                }
             }
         }
 
@@ -952,9 +1187,11 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
         var failures = new RespireBatchFailure[failureCount];
         var failureIndex = 0;
+
         for (var i = 0; i < operations.Count; i++)
         {
             var operation = operations[i];
+
             if (operation.Error is { } error)
             {
                 failures[failureIndex++] = new RespireBatchFailure(
@@ -969,6 +1206,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         where TCommand : struct, IRespCommand
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+
         if (_sent)
         {
             throw new InvalidOperationException("This batch has already been sent.");
@@ -986,6 +1224,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         // Only retry-enabled execution retains replies and snapshot state. Default batches
         // keep their existing native reply completion path.
         private RetryAttempt? _attempt;
+
         private sealed class RetryAttempt
         {
             internal RespValue Reply;
@@ -994,19 +1233,35 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             internal ImmediateRetryState? Snapshot;
             internal Exception? SnapshotError;
         }
+
         internal Exception? AttemptError => _attempt?.Error;
+
         protected ImmediateRetryState? SnapshotState => _attempt?.Snapshot;
+
         protected Exception? SnapshotError => _attempt?.SnapshotError;
 
-        public abstract RespireCommandRetryCategory RetryCategory { get; }
+        public abstract RespireCommandRetryCategory RetryCategory
+        {
+            get;
+        }
+
         protected abstract ImmediateRetryState SnapshotArguments();
+
         protected abstract void PublishResponse(RespireClient client, RespValue value);
 
         internal void Snapshot()
         {
-            if (_attempt is not null) return;
+            if (_attempt is not null)
+            {
+                return;
+            }
+
             _attempt = new();
-            try { _attempt.Snapshot = SnapshotArguments(); }
+
+            try
+            {
+                _attempt.Snapshot = SnapshotArguments();
+            }
             catch (Exception error) { _attempt.SnapshotError = error; }
         }
 
@@ -1029,8 +1284,16 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
         internal void DiscardReply()
         {
-            if (_attempt is null) return;
-            if (_attempt.HasReply) _attempt.Reply.Dispose();
+            if (_attempt is null)
+            {
+                return;
+            }
+
+            if (_attempt.HasReply)
+            {
+                _attempt.Reply.Dispose();
+            }
+
             _attempt.Reply = default;
             _attempt.HasReply = false;
             _attempt.Error = null;
@@ -1045,7 +1308,11 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         internal void NormalizeCancellation(CancellationToken callerToken, CancellationToken token, TimeSpan? timeout)
         {
             if (AttemptError is not OperationCanceledException error || error.CancellationToken != token
-                || !token.IsCancellationRequested) return;
+                || !token.IsCancellationRequested)
+            {
+                return;
+            }
+
             _attempt!.Error = callerToken.IsCancellationRequested
                 ? new OperationCanceledException(error.Message, error, callerToken)
                 : timeout is { } duration ? new RespireTimeoutException(Operation, duration, error) : error;
@@ -1067,10 +1334,20 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             }
         }
 
-        public abstract bool IsReadOnly { get; }
+        public abstract bool IsReadOnly
+        {
+            get;
+        }
 
-        public abstract bool AllowsReadRouting { get; }
-        public abstract bool IsCursorRead { get; }
+        public abstract bool AllowsReadRouting
+        {
+            get;
+        }
+
+        public abstract bool IsCursorRead
+        {
+            get;
+        }
 
         public abstract ValueTask<RespValue> StartSend(RespireConnection connection,
             CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation, bool deferFlush,
@@ -1087,13 +1364,17 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
         public abstract bool TryGetClusterSlot(out int slot);
 
-        public abstract bool? IsCursorContinuation { get; }
+        public abstract bool? IsCursorContinuation
+        {
+            get;
+        }
 
         public abstract ValueTask<RespValue> StartClusterSend(
             RespireClient client,
             RespireConnection connection,
             CancellationToken cancellationToken,
             RespireTelemetry.ErrorObservation observation, CommandDeadline deadline = default);
+
         public abstract Task<Exception?> CompleteClusterSendAsync(
             RespireBatch batch,
             RespireConnection connection,
@@ -1112,7 +1393,9 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         where TCommand : struct, IRespCommand
     {
         public override RespireCommandRetryCategory RetryCategory => command.RetryCategory;
+
         protected override ImmediateRetryState SnapshotArguments() => ImmediateRetryState.Rent(in command);
+
         protected override void PublishResponse(RespireClient client, RespValue value) => Complete(client, value);
 
         public override Exception? Error => pending.Error;
@@ -1123,6 +1406,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             || command.GetCacheMutation(Operation) == RespireCacheMutation.ReadOnly;
 
         public override bool AllowsReadRouting => command.ReadKind != ReadCommandKind.None;
+
         public override bool IsCursorRead => CursorCommandMetadata.IsServerCursorContinuation(in command);
 
         // ARSCAN pages are index ranges without an issuing server cursor. They can follow
@@ -1132,8 +1416,11 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
         public override void Fail(Exception error)
             => pending.Fail(command is GeoSearchCommand { IsPolygon: true } ? GeoCommands.PolygonError(error) : error);
+
         public override bool ReportError() => pending.ReportError();
+
         public override void AllowErrorInspection() => pending.AllowErrorInspection();
+
         public override RespireTelemetry.ErrorObservation Observation => pending.Observation;
 
         public override bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
@@ -1145,10 +1432,18 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             RespireTelemetry.ErrorObservation observation, CommandDeadline deadline = default)
         {
             var bound = new MutationCommand<TCommand>(command, MutationFence);
-            if (SnapshotError is { } error) return ValueTask.FromException<RespValue>(error);
+
+            if (SnapshotError is { } error)
+            {
+                return ValueTask.FromException<RespValue>(error);
+            }
+
             if (SnapshotState is { } snapshot)
+            {
                 return client.SendOnConnectionAsync(Operation, connection, new SnapshotCommand<TCommand>(bound, snapshot), cancellationToken,
                     observation: observation, commandDeadline: deadline);
+            }
+
             return client.SendOnConnectionAsync(Operation, connection, bound, cancellationToken,
                 observation: observation, commandDeadline: deadline);
         }
@@ -1164,6 +1459,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             try
             {
                 RespValue value;
+
                 try
                 {
                     value = await send.ConfigureAwait(false);
@@ -1181,8 +1477,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                     // Complete each operation in queue order; retry only its rejected read.
                     value = await ResumeAsync(error, retired: false).ConfigureAwait(false);
                 }
-                catch (RespireServerException error) when (
-                    batch.ConnectionPolicy.CanRecoverRejectedCommand(error, command.TryGetClusterSlot(out var slot) ? slot : null))
+                catch (RespireServerException error) when (batch.ConnectionPolicy.CanRecoverRejectedCommand(error, command.TryGetClusterSlot(out var slot) ? slot : null))
                 {
                     value = await ResumeAsync(error, retired: false).ConfigureAwait(false);
                 }
@@ -1192,20 +1487,32 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                     await CaptureReplyAsync(new ValueTask<RespValue>(value)).ConfigureAwait(false);
                     return AttemptError;
                 }
+
                 return Complete(batch._client, value);
             }
             catch (Exception ex)
             {
-                if (SnapshotState is not null || SnapshotError is not null) CaptureFailure(ex);
-                else Fail(ex);
+                if (SnapshotState is not null || SnapshotError is not null)
+                {
+                    CaptureFailure(ex);
+                }
+                else
+                {
+                    Fail(ex);
+                }
+
                 return ex;
             }
 
             ValueTask<RespValue> ResumeAsync(Exception error, bool retired)
             {
                 var bound = new MutationCommand<TCommand>(command, MutationFence);
+
                 if (SnapshotState is { } snapshot)
+                {
                     return ResumeCommandAsync(new SnapshotCommand<TCommand>(bound, snapshot), error, retired);
+                }
+
                 return ResumeCommandAsync(bound, error, retired);
             }
 
@@ -1241,13 +1548,18 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         {
             var bound = new MutationCommand<TCommand>(command, MutationFence);
             // Retryable batches bulk-admit their serialized snapshot so every attempt sends the original bytes.
-            if (SnapshotError is { } error) return ValueTask.FromException<RespValue>(error);
+            if (SnapshotError is { } error)
+            {
+                return ValueTask.FromException<RespValue>(error);
+            }
+
             if (SnapshotState is { } snapshot)
             {
                 var replay = new SnapshotCommand<TCommand>(bound, snapshot);
                 return connection.SendAsync(in replay, cancellationToken,
                     commandName: Operation, observation: observation, commandDeadline: deadline, deferFlush: deferFlush);
             }
+
             return connection.SendAsync(in bound, cancellationToken,
                 commandName: Operation, observation: observation, commandDeadline: deadline, deferFlush: deferFlush);
         }
@@ -1263,22 +1575,33 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             try
             {
                 var bound = new MutationCommand<TCommand>(command, MutationFence);
-                if (SnapshotError is { } error) throw error;
+
+                if (SnapshotError is { } error)
+                {
+                    throw error;
+                }
+
                 if (SnapshotState is { } snapshot)
                 {
                     var replay = new SnapshotCommand<TCommand>(bound, snapshot);
+
                     if (circuits is not null)
+                    {
                         return await QueuedCircuitDispatch.EnqueueWithConnectionAsync(circuits, connection, replay, Operation,
                             cancellationToken, observation, deadline, client).ConfigureAwait(false);
+                    }
+
                     return (await connection.EnqueuePinnedAsync(replay, cancellationToken, Operation, observation,
                         pinToConnection: false, deadline: deadline,
                         skipTracking: client.ShouldSkipTracking(Operation, in replay)).ConfigureAwait(false), connection);
                 }
+
                 if (circuits is not null)
                 {
                     return await QueuedCircuitDispatch.EnqueueWithConnectionAsync(circuits, connection, bound, Operation,
                         cancellationToken, observation, deadline, client).ConfigureAwait(false);
                 }
+
                 return (await connection.EnqueuePinnedAsync(bound, cancellationToken, Operation, observation,
                     pinToConnection: false, deadline: deadline,
                     skipTracking: client.ShouldSkipTracking(Operation, in bound)).ConfigureAwait(false), connection);
@@ -1340,20 +1663,35 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
         where TCommand : struct, IRespCommand
     {
         public void Write(ref RespWriter writer) => writer.WriteRaw(snapshot.Frame.Span);
+
         public int GetWriteSizeHint() => snapshot.Frame.Length;
+
         public void ValidateAdmission() => command.ValidateAdmission();
+
         public void OnAccepted() => command.OnAccepted();
+
         public CancellationToken GetResponseCancellationToken(CancellationToken token) => command.GetResponseCancellationToken(token);
+
         public ClientSideCacheCoordinator.MutationFence GetMutationFence() => command.GetMutationFence();
+
         public ReadCommandKind ReadKind => command.ReadKind;
+
         public RespireCommandRetryCategory RetryCategory => command.RetryCategory;
+
         public bool IsConnectionProtocol => command.IsConnectionProtocol;
+
         public RespireCacheMutation GetCacheMutation(string operation) => command.GetCacheMutation(operation);
+
         public ClientCacheCommandMetadata GetClientCacheMetadata(string operation) => command.GetClientCacheMetadata(operation);
+
         public int CursorArgumentIndex => command.CursorArgumentIndex;
+
         public bool HasOpaqueCursor => command.HasOpaqueCursor;
+
         public bool TryGetArgument(int index, out RespireValue value) => command.TryGetArgument(index, out value);
+
         public bool TryGetPrimaryKey(out RespireValue key) => command.TryGetPrimaryKey(out key);
+
         public bool TryGetClusterSlot(out int slot) => snapshot.TryGetClusterSlot(out slot);
     }
 }

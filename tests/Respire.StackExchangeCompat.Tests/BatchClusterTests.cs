@@ -34,11 +34,26 @@ public class BatchClusterTests
         await using var connection = RespireConnectionMultiplexer.Wrap(client);
         var batch = connection.GetDatabase().CreateBatch();
         Task<StackExchange.Redis.RedisValue>? move = null;
-        if (movePosition == 0) move = batch.ListRightPopLeftPushAsync("{a}:source", "{b}:destination");
+
+        if (movePosition == 0)
+        {
+            move = batch.ListRightPopLeftPushAsync("{a}:source", "{b}:destination");
+        }
+
         var write = batch.HashSetAsync("{a}:hash", "field", "value");
-        if (movePosition == 1) move = batch.ListRightPopLeftPushAsync("{a}:source", "{b}:destination");
+
+        if (movePosition == 1)
+        {
+            move = batch.ListRightPopLeftPushAsync("{a}:source", "{b}:destination");
+        }
+
         var read = batch.HashGetAsync("{a}:hash", "field");
-        if (movePosition == 2) move = batch.ListRightPopLeftPushAsync("{a}:source", "{b}:destination");
+
+        if (movePosition == 2)
+        {
+            move = batch.ListRightPopLeftPushAsync("{a}:source", "{b}:destination");
+        }
+
         Assert.False(write.IsCompleted);
         Assert.False(read.IsCompleted);
         Assert.False(move!.IsCompleted);

@@ -31,35 +31,50 @@ public class ServerClientCommandTests
 #pragma warning disable RESP010 // This pinned inspection test owns its populated cache and scripted CLIENT replies.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
 #pragma warning restore RESP010
         // Populate after obtaining the handle so each non-ID case isolates its own command.
         var handle = inspection == "ID" ? null : await client.Server.GetClientConnectionAsync();
+
         foreach (var key in new[] { "first", "second" })
+        {
             await Assert.That(await client.GetStringAsync(key)).IsEqualTo("value");
+        }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(2);
         var before = client.ClientSideCache.GetStatistics();
         var commandsBefore = server.CommandsSeen;
+
         switch (inspection)
         {
             case "ID":
                 handle = await client.WithKeyPrefix("ignored:").Server.GetClientConnectionAsync();
                 await Assert.That(handle.Id).IsEqualTo(42);
                 break;
-            case "INFO": await Assert.That((await handle!.InfoAsync()).Id).IsEqualTo(42); break;
-            case "GETNAME": await Assert.That(await handle!.GetNameAsync()).IsEqualTo("worker"); break;
+            case "INFO":
+                await Assert.That((await handle!.InfoAsync()).Id).IsEqualTo(42);
+                break;
+            case "GETNAME":
+                await Assert.That(await handle!.GetNameAsync()).IsEqualTo("worker");
+                break;
             case "TRACKINGINFO":
                 await Assert.That((await handle!.TrackingInfoAsync()).Flags).IsEquivalentTo(["on", "optin"]);
                 break;
         }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(commandsBefore + 1);
         await Assert.That(server.ReceivedCommands[^1]).IsEqualTo($"CLIENT {inspection}");
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(2);
         await Assert.That(client.ClientSideCache.GetStatistics().Invalidations).IsEqualTo(before.Invalidations);
+
         foreach (var key in new[] { "first", "second" })
+        {
             await Assert.That(await client.GetStringAsync(key)).IsEqualTo("value");
+        }
+
         await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(before.Hits + 2);
         await Assert.That(server.CommandsSeen).IsEqualTo(commandsBefore + 1);
 
@@ -93,8 +108,14 @@ public class ServerClientCommandTests
 
         await Assert.That(async () =>
         {
-            if (kill) await handle.KillClientsAsync(new() { Ids = [43] });
-            else await handle.ClientsAsync(new() { Ids = [43] });
+            if (kill)
+            {
+                await handle.KillClientsAsync(new() { Ids = [43] });
+            }
+            else
+            {
+                await handle.ClientsAsync(new() { Ids = [43] });
+            }
         }).ThrowsExactly<Respire.Networking.RespireConnectionRetiredException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
 
@@ -116,7 +137,12 @@ public class ServerClientCommandTests
             resp3 ? "_\r\n"u8.ToArray() : "$-1\r\n"u8.ToArray(),
             .. Enumerable.Repeat(FakeRespServer.OkReply, 9), Integer(1), Integer(0),
             Sequence(resp3 ? '%' : '*', fields), Bulk(binary)];
-        if (resp3) replies = ["%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), .. replies];
+
+        if (resp3)
+        {
+            replies = ["%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), .. replies];
+        }
+
         await using var server = new FakeRespServer(replies);
 #pragma warning disable RESP010 // This protocol/ownership test disposes its client before checking that pinned results remain valid.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with { Protocol = resp3 ? RespireProtocol.Resp3 : RespireProtocol.Resp2 });
@@ -166,9 +192,16 @@ public class ServerClientCommandTests
         Func<ValueTask>[] changes = [() => connection.SetInfoAsync(RespireClientInfoAttribute.LibraryName, "name"),
             () => connection.SetNoEvictAsync(true), () => connection.SetNoTouchAsync(true),
             () => connection.PauseClientsAsync(TimeSpan.FromSeconds(1)), () => connection.UnpauseClientsAsync(),
-            async () => { _ = await connection.UnblockClientAsync(2); }];
+            async () =>
+            {
+                _ = await connection.UnblockClientAsync(2);
+            }];
+
         foreach (var change in changes)
+        {
             await Assert.That(async () => await change()).ThrowsExactly<NotSupportedException>();
+        }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
     }
 
@@ -219,7 +252,8 @@ public class ServerClientCommandTests
 #pragma warning disable RESP010 // This pinning test owns two connections and optional cache state to detect handle rotation.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
         {
-            Connections = 2, Protocol = caching ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
+            Connections = 2,
+            Protocol = caching ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
             ClientSideCache = caching ? new() : null,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
@@ -263,7 +297,11 @@ public class ServerClientCommandTests
         await using var server = new FakeRespServer(Integer(1));
         server.SuppressReply = command =>
         {
-            if (command != "CLIENT INFO") return false;
+            if (command != "CLIENT INFO")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -274,15 +312,26 @@ public class ServerClientCommandTests
         using var cancellation = new CancellationTokenSource();
         var pending = connection.InfoAsync(cancellation.Token).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        if (dispose) await client.DisposeAsync();
-        else cancellation.Cancel();
+
         if (dispose)
+        {
+            await client.DisposeAsync();
+        }
+        else
+        {
+            cancellation.Cancel();
+        }
+
+        if (dispose)
+        {
             await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))).Throws<Exception>();
+        }
         else
         {
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
             await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
         }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(2);
     }
 
@@ -297,8 +346,17 @@ public class ServerClientCommandTests
         await using var seed = new FakeRespServer(2, Bulk("id=7 addr=a name= db=0 flags=N cmd=client|list age=0 idle=0\n"));
         seed.SuppressReply = command =>
         {
-            if (command == "CLUSTER SLOTS") { _ = seed.SendRawAsync("*0\r\n"u8.ToArray()); return true; }
-            if (command != "CLUSTER NODES") return false;
+            if (command == "CLUSTER SLOTS")
+            {
+                _ = seed.SendRawAsync("*0\r\n"u8.ToArray());
+                return true;
+            }
+
+            if (command != "CLUSTER NODES")
+            {
+                return false;
+            }
+
             var topology = $"self 127.0.0.1:{seed.Port}@2 myself,master - 0 0 1 connected\nreplica 127.0.0.1:{replica.Port}@2 slave self 0 0 1 connected\n";
             _ = seed.SendRawAsync(verbatim
                 ? Encoding.ASCII.GetBytes($"={topology.Length + 4}\r\ntxt:{topology}\r\n")
@@ -347,7 +405,9 @@ public class ServerClientCommandTests
 #pragma warning disable RESP010 // This redirect test owns its cluster/cache configuration to verify pinned controls stay on the seed.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
         {
-            UseCluster = true, Protocol = RespireProtocol.Resp3, ClientSideCache = caching ? new() : null,
+            UseCluster = true,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = caching ? new() : null,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
 #pragma warning restore RESP010
@@ -357,11 +417,21 @@ public class ServerClientCommandTests
         {
             switch (control)
             {
-                case "KILL": await connection.KillClientsAsync(new() { Ids = [42] }); break;
-                case "PAUSE": await connection.PauseClientsAsync(TimeSpan.Zero); break;
-                case "INFO": await connection.InfoAsync(); break;
-                case "GETNAME": await connection.GetNameAsync(); break;
-                case "TRACKINGINFO": await connection.TrackingInfoAsync(); break;
+                case "KILL":
+                    await connection.KillClientsAsync(new() { Ids = [42] });
+                    break;
+                case "PAUSE":
+                    await connection.PauseClientsAsync(TimeSpan.Zero);
+                    break;
+                case "INFO":
+                    await connection.InfoAsync();
+                    break;
+                case "GETNAME":
+                    await connection.GetNameAsync();
+                    break;
+                case "TRACKINGINFO":
+                    await connection.TrackingInfoAsync();
+                    break;
             }
         }).ThrowsExactly<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo("MOVED");
@@ -385,9 +455,13 @@ public class ServerClientCommandTests
     }
 
     private static RespireOptions Options(int port) => new() { Protocol = RespireProtocol.Resp2, Connections = 1, AllowAdmin = true, Endpoints = [new("127.0.0.1", port)] };
+
     private static byte[] Integer(long value) => Encoding.ASCII.GetBytes($":{value}\r\n");
+
     private static byte[] Bulk(string value) => Bulk(Encoding.UTF8.GetBytes(value));
+
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];
+
     private static byte[] Sequence(char kind, params byte[][] values) =>
         [.. Encoding.ASCII.GetBytes($"{kind}{(kind == '%' ? values.Length / 2 : values.Length)}\r\n"), .. values.SelectMany(value => value)];
 }

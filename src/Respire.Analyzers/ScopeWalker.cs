@@ -15,7 +15,11 @@ namespace Respire.Analyzers;
 /// </summary>
 internal static partial class ScopeWalker
 {
-    internal enum BarrierStartPolicy { Exclude, Include }
+    internal enum BarrierStartPolicy
+    {
+        Exclude,
+        Include
+    }
 
     /// <summary>
     /// The executable scope owning <paramref name="node"/> — the method, accessor, local function
@@ -114,6 +118,7 @@ internal static partial class ScopeWalker
         CancellationToken cancellationToken)
     {
         var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+
         if (graph is null)
         {
             return IsUnconditionalTopLevelSequence(scope, before, after, requireExitCoverage: false);
@@ -124,7 +129,6 @@ internal static partial class ScopeWalker
         {
             return false;
         }
-
 
         return PathExistsAvoiding(graph, semanticModel, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [], cancellationToken: cancellationToken)
                && !PathExistsAvoiding(graph, semanticModel, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, [before], cancellationToken: cancellationToken);
@@ -139,6 +143,7 @@ internal static partial class ScopeWalker
         CancellationToken cancellationToken)
     {
         var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+
         if (graph is null)
         {
             return IsUnconditionalTopLevelSequence(scope, before, after, requireExitCoverage: true);
@@ -163,6 +168,7 @@ internal static partial class ScopeWalker
         CancellationToken cancellationToken)
     {
         var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+
         if (graph is null)
         {
             return IsUnconditionalTopLevelSequence(scope, before, after, requireExitCoverage: false);
@@ -193,6 +199,7 @@ internal static partial class ScopeWalker
         BarrierStartPolicy startPolicy = BarrierStartPolicy.Exclude)
     {
         var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+
         if (graph is null)
         {
             return IsUnconditionalTopLevelSequence(scope, before, after, requireExitCoverage: false)
@@ -220,12 +227,14 @@ internal static partial class ScopeWalker
         CancellationToken cancellationToken)
     {
         var barrierArray = barriers.ToArray();
+
         if (barrierArray.Length == 0)
         {
             return false;
         }
 
         var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+
         if (graph is null)
         {
             return barrierArray.Any(barrier => Dominates(
@@ -253,6 +262,7 @@ internal static partial class ScopeWalker
     {
         var barrierArray = barriers.ToArray();
         var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+
         if (graph is null)
         {
             return barrierArray.Any(barrier => PostDominates(
@@ -267,13 +277,17 @@ internal static partial class ScopeWalker
         // Without any release site, only an unreachable acquisition is safe.
         // A reachable acquisition still needs release when execution never exits.
         if (barrierArray.Length == 0)
+        {
             return !PathExistsAvoiding(graph, semanticModel, graph.Blocks[0], int.MinValue,
                 beforeBlock, before.SpanStart, [], cancellationToken: cancellationToken);
+        }
 
         // A back edge can replace the owned value without ever reaching the exit block.
         if (PathExistsAvoiding(graph, semanticModel, beforeBlock, before.SpanStart,
                 beforeBlock, before.SpanStart, barrierArray, startPolicy, cancellationToken, origin: before))
+        {
             return false;
+        }
 
         return !PathExistsAvoiding(
             graph,
@@ -460,8 +474,7 @@ internal static partial class ScopeWalker
                 case ParenthesizedExpressionSyntax parenthesized:
                     expression = parenthesized.Expression;
                     break;
-                case PostfixUnaryExpressionSyntax suppression
-                    when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression):
+                case PostfixUnaryExpressionSyntax suppression when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression):
                     expression = suppression.Operand;
                     break;
                 default:
@@ -477,12 +490,10 @@ internal static partial class ScopeWalker
         {
             switch (expression.Parent)
             {
-                case ParenthesizedExpressionSyntax parenthesized
-                    when IsSame(parenthesized.Expression, expression):
+                case ParenthesizedExpressionSyntax parenthesized when IsSame(parenthesized.Expression, expression):
                     expression = parenthesized;
                     break;
-                case PostfixUnaryExpressionSyntax suppression
-                    when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression)
+                case PostfixUnaryExpressionSyntax suppression when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression)
                          && IsSame(suppression.Operand, expression):
                     expression = suppression;
                     break;

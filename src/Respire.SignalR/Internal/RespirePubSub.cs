@@ -32,7 +32,10 @@ internal sealed class RespirePubSub : IAsyncDisposable
     internal CancellationToken Stopping => _stopping;
 
     // Ordinary Cluster PUBLISH reports only subscribers on the receiving node.
-    internal bool ReceiverCountIsGlobal { get; }
+    internal bool ReceiverCountIsGlobal
+    {
+        get;
+    }
 
     private RespireChannel Channel(string name)
     {
@@ -49,10 +52,16 @@ internal sealed class RespirePubSub : IAsyncDisposable
     internal async Task<ChannelSubscription> SubscribeAsync(string channel)
     {
         await _gate.WaitAsync(Stopping).ConfigureAwait(false);
+
         try
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (_subscriptions.TryGetValue(channel, out var existing)) return existing;
+
+            if (_subscriptions.TryGetValue(channel, out var existing))
+            {
+                return existing;
+            }
+
             var subscription = await _client.SubscribeAsync(Channel(channel),
                 new(_options.SubscriptionBufferSize, RespireSubscriptionOverflow.DropOldest), Stopping).ConfigureAwait(false);
             var receiver = new ChannelSubscription(subscription, channel, this);
@@ -66,25 +75,45 @@ internal sealed class RespirePubSub : IAsyncDisposable
     {
         ChannelSubscription? receiver;
         await _gate.WaitAsync(Stopping).ConfigureAwait(false);
-        try { _subscriptions.TryRemove(channel, out receiver); }
+
+        try
+        {
+            _subscriptions.TryRemove(channel, out receiver);
+        }
         finally { _gate.Release(); }
-        if (receiver is not null) await receiver.DisposeAsync().ConfigureAwait(false);
+
+        if (receiver is not null)
+        {
+            await receiver.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     internal async Task ResetAsync()
     {
         foreach (var channel in _subscriptions.Keys)
+        {
             await UnsubscribeAsync(channel).ConfigureAwait(false);
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         await _lifetime.CancelAsync().ConfigureAwait(false);
         await _gate.WaitAsync().ConfigureAwait(false);
         ChannelSubscription[] receivers;
-        try { receivers = _subscriptions.Values.ToArray(); _subscriptions.Clear(); }
+
+        try
+        {
+            receivers = _subscriptions.Values.ToArray();
+            _subscriptions.Clear();
+        }
         finally { _gate.Release(); }
+
         await Task.WhenAll(receivers.Select(static async receiver => await receiver.DisposeAsync().ConfigureAwait(false)))
             .ConfigureAwait(false);
         // The shared client belongs to DI or its caller, not to this hub manager.
@@ -94,11 +123,16 @@ internal sealed class RespirePubSub : IAsyncDisposable
     private void ReportGap(string channel, RespireSubscriptionGap gap)
     {
         RedisLog.DeliveryGap(_logger, _options.ChannelPrefix + channel, gap.Reason, gap.DroppedMessages);
+
         try
         {
             var tags = new System.Diagnostics.TagList { { "signalr.hub", _hub }, { "reason", gap.Reason.ToString() } };
             Gaps.Add(1, tags);
-            if (gap.DroppedMessages != 0) Dropped.Add(gap.DroppedMessages, tags);
+
+            if (gap.DroppedMessages != 0)
+            {
+                Dropped.Add(gap.DroppedMessages, tags);
+            }
         }
         catch { /* Diagnostics cannot stop subscription delivery. */ }
     }
@@ -116,16 +150,26 @@ internal sealed class RespirePubSub : IAsyncDisposable
 
         internal ChannelSubscription(RespireSubscription subscription, string channel, RespirePubSub owner)
         {
-            _subscription = subscription; _channel = channel; _owner = owner;
+            _subscription = subscription;
+            _channel = channel;
+            _owner = owner;
             _stopping = CancellationTokenSource.CreateLinkedTokenSource(owner.Stopping);
         }
 
         internal void OnMessage(Action<ChannelMessage> callback)
-            => OnMessage(message => { callback(message); return Task.CompletedTask; });
+            => OnMessage(message =>
+            {
+                callback(message);
+                return Task.CompletedTask;
+            });
 
         internal void OnMessage(Func<ChannelMessage, Task> callback)
         {
-            if (_consumer is not null) throw new InvalidOperationException("A channel already has a consumer.");
+            if (_consumer is not null)
+            {
+                throw new InvalidOperationException("A channel already has a consumer.");
+            }
+
             _consumer = ConsumeAsync(callback);
         }
 
@@ -137,14 +181,23 @@ internal sealed class RespirePubSub : IAsyncDisposable
                 {
                     try
                     {
-                        if (message.Kind == RespireMessageKind.Gap) _owner.ReportGap(_channel, message.Gap!);
-                        else await callback(new(message.Payload, _stopping.Token)).ConfigureAwait(false);
+                        if (message.Kind == RespireMessageKind.Gap)
+                        {
+                            _owner.ReportGap(_channel, message.Gap!);
+                        }
+                        else
+                        {
+                            await callback(new(message.Payload, _stopping.Token)).ConfigureAwait(false);
+                        }
                     }
                     catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { break; }
                     catch (Exception error) { RedisLog.InternalMessageFailed(_owner._logger, error); }
                 }
+
                 if (!_stopping.IsCancellationRequested)
+                {
                     RedisLog.SubscriptionEnded(_owner._logger, _channel, await _subscription.Completion.ConfigureAwait(false));
+                }
             }
             catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { }
             catch (Exception error) { RedisLog.InternalMessageFailed(_owner._logger, error); }
@@ -152,10 +205,19 @@ internal sealed class RespirePubSub : IAsyncDisposable
 
         public async ValueTask DisposeAsync()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
             await _stopping.CancelAsync().ConfigureAwait(false);
             await _subscription.DisposeAsync().ConfigureAwait(false);
-            if (_consumer is not null) await _consumer.ConfigureAwait(false);
+
+            if (_consumer is not null)
+            {
+                await _consumer.ConfigureAwait(false);
+            }
+
             _stopping.Dispose();
         }
     }

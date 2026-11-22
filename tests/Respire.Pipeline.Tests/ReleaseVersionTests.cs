@@ -34,8 +34,15 @@ public class ReleaseVersionTests
     {
         using var repository = new Repository();
         await repository.InitializeAsync();
-        if (annotated) await repository.Git("tag", "-a", "v2.0.0", "-m", "stable cut");
-        else await repository.Git("tag", "v2.0.0");
+
+        if (annotated)
+        {
+            await repository.Git("tag", "-a", "v2.0.0", "-m", "stable cut");
+        }
+        else
+        {
+            await repository.Git("tag", "v2.0.0");
+        }
 
         await Assert.That((await repository.VersionAsync()).PackageVersion).IsEqualTo("2.0.0");
         await repository.Git("commit", "--allow-empty", "-m", "+semver:major");
@@ -65,7 +72,12 @@ public class ReleaseVersionTests
     {
         using var repository = new Repository();
         await repository.InitializeAsync();
-        if (released) await repository.Git("tag", "v2.0.0");
+
+        if (released)
+        {
+            await repository.Git("tag", "v2.0.0");
+        }
+
         var version = await repository.VersionAsync(branch: "feature/test");
         var height = released ? 0 : 1;
         await Assert.That(version.PackageVersion).IsEqualTo($"2.0.0-ci.feature-test.{height}.g{version.ShortCommitHash}");
@@ -120,7 +132,10 @@ public class ReleaseVersionTests
         public void Dispose()
         {
             foreach (var file in _directory.EnumerateFiles("*", SearchOption.AllDirectories))
+            {
                 file.Attributes &= ~FileAttributes.ReadOnly;
+            }
+
             _directory.Delete(recursive: true);
         }
     }

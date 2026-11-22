@@ -15,7 +15,12 @@ public class PubSubPrefixTests
         [Matrix(RespireSubscriptionKind.Channel, RespireSubscriptionKind.Pattern, RespireSubscriptionKind.Sharded)] RespireSubscriptionKind kind)
     {
         RespireChannel physicalTarget = default;
-        var verb = kind switch { RespireSubscriptionKind.Pattern => "PSUBSCRIBE", RespireSubscriptionKind.Sharded => "SSUBSCRIBE", _ => "SUBSCRIBE" };
+        var verb = kind switch
+        {
+            RespireSubscriptionKind.Pattern => "PSUBSCRIBE",
+            RespireSubscriptionKind.Sharded => "SSUBSCRIBE",
+            _ => "SUBSCRIBE"
+        };
         await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray())
         {
             ReplyOverride = (_, command) => command.StartsWith(verb + " ", StringComparison.Ordinal)
@@ -25,7 +30,9 @@ public class PubSubPrefixTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
         });
 #pragma warning restore RESP010
         byte[] prefix = [255, 0, (byte)'*', (byte)'?', (byte)'[', (byte)']', (byte)'\\', (byte)':'];
@@ -60,8 +67,16 @@ public class PubSubPrefixTests
         await first.DisposeAsync();
         await view.DisposeAsync();
         var retainedRead = duplicateReader.MoveNextAsync().AsTask();
-        if (kind == RespireSubscriptionKind.Sharded) await root.PublishShardedAsync(physical, "retained");
-        else await root.PublishAsync(physical, "retained");
+
+        if (kind == RespireSubscriptionKind.Sharded)
+        {
+            await root.PublishShardedAsync(physical, "retained");
+        }
+        else
+        {
+            await root.PublishAsync(physical, "retained");
+        }
+
         await server.SendRawAsync(Message("retained"), subscriptionConnection);
         await Assert.That(await retainedRead.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(duplicateReader.Current.Text).IsEqualTo("retained");
@@ -90,8 +105,11 @@ public class PubSubPrefixTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var root = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("localhost", 6379)], KeyPrefix = "keys:", PubSubPrefix = configured,
-            ReplicaEndpoints = [new("localhost", 6380)], ClientSideCache = new(),
+            Endpoints = [new("localhost", 6379)],
+            KeyPrefix = "keys:",
+            PubSubPrefix = configured,
+            ReplicaEndpoints = [new("localhost", 6380)],
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         configured[0] = 1;
@@ -151,8 +169,15 @@ public class PubSubPrefixTests
         };
         await using var root = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = root.WithPubSubPrefix("events:");
-        using (await view.ExecuteAsync("PUBLISH", "item", "raw")) { }
-        using (await view.ExecuteAsync($"PUBLISH item raw")) { }
+
+        using (await view.ExecuteAsync("PUBLISH", "item", "raw"))
+        {
+        }
+
+        using (await view.ExecuteAsync($"PUBLISH item raw"))
+        {
+        }
+
         _ = await view.Server.PubSubChannelsAsync((RespireChannel)"item*");
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["PUBLISH item raw", "PUBLISH item raw", "PUBSUB CHANNELS item*"]);
     }
@@ -167,7 +192,7 @@ public class PubSubPrefixTests
         await Assert.That(() => root.WithPubSubPrefix("")).Throws<ArgumentException>();
         await Assert.That(() => root.WithPubSubPrefix("\uD800")).Throws<ArgumentException>();
         await Assert.That(() => RespireClient.Create(new RespireOptions
-            { Endpoints = [new("localhost", 6379)], PubSubPrefix = "\uDC00" })).Throws<ArgumentException>();
+        { Endpoints = [new("localhost", 6379)], PubSubPrefix = "\uDC00" })).Throws<ArgumentException>();
         await Assert.That(root.WithKeyPrefix("keys:").ResolveChannel("item")).IsEqualTo((RespireChannel)"item");
     }
 
@@ -182,12 +207,14 @@ public class PubSubPrefixTests
     {
         using var stream = new MemoryStream();
         stream.Write(Encoding.ASCII.GetBytes($"{(push ? '>' : '*')}{values.Length}\r\n"));
+
         foreach (var value in values)
         {
             stream.Write(Encoding.ASCII.GetBytes($"${value.Length}\r\n"));
             stream.Write(value);
             stream.Write("\r\n"u8);
         }
+
         return stream.ToArray();
     }
 }

@@ -13,7 +13,13 @@ internal sealed partial class ClientSideCacheCoordinator
         /// <summary>Copies active key count and allocated map capacity under the mutation gate.</summary>
         internal (int Keys, int Capacity) MutationWriterStorage
         {
-            get { lock (owner._queryLock) return (owner._mutationWriters.Count, owner._mutationWriters.EnsureCapacity(0)); }
+            get
+            {
+                lock (owner._queryLock)
+                {
+                    return (owner._mutationWriters.Count, owner._mutationWriters.EnsureCapacity(0));
+                }
+            }
         }
 
         /// <summary>Borrowed gate used to hold a controlled shared-read admission barrier.</summary>
@@ -25,7 +31,10 @@ internal sealed partial class ClientSideCacheCoordinator
         {
             get
             {
-                lock (owner._queryLock) return owner._queryDependencies.Count;
+                lock (owner._queryLock)
+                {
+                    return owner._queryDependencies.Count;
+                }
             }
         }
 
@@ -34,7 +43,10 @@ internal sealed partial class ClientSideCacheCoordinator
         {
             get
             {
-                lock (owner._queryLock) return owner._queryStorage.Inspect();
+                lock (owner._queryLock)
+                {
+                    return owner._queryStorage.Inspect();
+                }
             }
         }
     }

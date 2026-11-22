@@ -38,6 +38,7 @@ public class CancellationTraceTests
 #pragma warning restore RESP010
         var gate = new RespireFakeGate();
         using var fault = server.InjectFault("PING", RespireFakeFault.Pause(gate, afterExecution: true), occurrences: null);
+
         try
         {
             using var caller = new CancellationTokenSource();
@@ -66,7 +67,10 @@ public class CancellationTraceTests
     private static async Task WaitForWriteFlushAsync(Respire.Networking.RespireConnection connection)
     {
         using var timeout = new CancellationTokenSource(Limit);
+
         while (connection.CaptureTimeoutDiagnostics().PendingWriteBytes != 0)
+        {
             await Task.Delay(1, timeout.Token);
+        }
     }
 }

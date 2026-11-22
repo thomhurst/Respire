@@ -15,7 +15,10 @@ public class ClusterMultiKeyIntegrationTests(SharedRedisClusterFixture fixture)
     {
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, SplitCrossSlotCommands = true, Protocol = protocol, Connections = 1,
+            UseCluster = true,
+            SplitCrossSlotCommands = true,
+            Protocol = protocol,
+            Connections = 1,
             Endpoints = [new(fixture.Cluster.Host, fixture.Cluster.Port(0))],
         });
         RespireKey a = $"{{{fixture.ReserveSlot(0)}}}:a";
@@ -24,9 +27,13 @@ public class ClusterMultiKeyIntegrationTests(SharedRedisClusterFixture fixture)
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         (await client.Strings.SetManyAsync([(a, "first"), (b, "second"), (a, "last")], timeout.Token)).Should().BeTrue();
         (await client.Strings.GetManyAsync([b, missing, a, b], timeout.Token)).Should().Equal("second", null, "last", "second");
+
         using (var exists = await client.ExecuteAsync(RespireCommands.Key.EXISTS,
             [a.AsValue(), missing.AsValue(), b.AsValue(), b.AsValue()], cancellationToken: timeout.Token))
+        {
             exists.AsInteger().Should().Be(3);
+        }
+
         (await client.Keys.TouchAsync([a, b, missing], timeout.Token)).Should().Be(2);
         (await client.Keys.DeleteAsync([a, b, a, missing], timeout.Token)).Should().Be(2);
         (await client.Strings.SetManyAsync([(a, "1"), (b, "2")], timeout.Token)).Should().BeTrue();

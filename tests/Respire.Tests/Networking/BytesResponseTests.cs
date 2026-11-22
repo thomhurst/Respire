@@ -38,11 +38,17 @@ public class BytesResponseTests
         await server.SendRawAsync("|1\r\n+meta\r\n+value\r\n$"u8.ToArray());
         await server.SendRawAsync(Encoding.ASCII.GetBytes($"{length}\r\n"));
         var half = length / 2;
-        if (half != 0) await server.SendRawAsync(expected[..half]);
+
+        if (half != 0)
+        {
+            await server.SendRawAsync(expected[..half]);
+        }
+
         await server.SendRawAsync([.. expected[half..], 13]);
         await server.SendRawAsync([10]);
         var next = await second.WaitAsync(deadline.Token);
         await Assert.That(next!.AsSpan().SequenceEqual(expected)).IsTrue();
+
         if (length > 0)
         {
             next![0] ^= 0xff;
@@ -61,16 +67,30 @@ public class BytesResponseTests
         var command = new Cmd1(Verbs.Get, "key");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = new Task<byte[]?>[payloads.Length];
+
         for (var i = 0; i < pending.Length; i++)
+        {
             pending[i] = connection.SendBytesAsync(command, deadline.Token, "GET").AsTask();
+        }
+
         await WaitForCommands(server, pending.Length, deadline.Token);
 
         var frames = new List<byte>();
+
         for (var i = 0; i < payloads.Length - 1; i++)
         {
-            if (i == 5) frames.AddRange("-ERR failed\r\n"u8.ToArray());
-            else if (payloads[i] is null) frames.AddRange("$-1\r\n"u8.ToArray());
-            else frames.AddRange([.. Encoding.ASCII.GetBytes($"${payloads[i].Length}\r\n"), .. payloads[i], 13, 10]);
+            if (i == 5)
+            {
+                frames.AddRange("-ERR failed\r\n"u8.ToArray());
+            }
+            else if (payloads[i] is null)
+            {
+                frames.AddRange("$-1\r\n"u8.ToArray());
+            }
+            else
+            {
+                frames.AddRange([.. Encoding.ASCII.GetBytes($"${payloads[i].Length}\r\n"), .. payloads[i], 13, 10]);
+            }
         }
 
         // The last reply's payload arrives in a later receive than its header.
@@ -80,11 +100,13 @@ public class BytesResponseTests
         await server.SendRawAsync([.. last[10..], 13, 10]);
 
         await Assert.That(await pending[0].WaitAsync(deadline.Token)).IsNull();
+
         for (var i = 1; i < 5; i++)
         {
             var result = await pending[i].WaitAsync(deadline.Token);
             await Assert.That(result!.AsSpan().SequenceEqual(payloads[i])).IsTrue();
         }
+
         await Assert.That(async () => await pending[5].WaitAsync(deadline.Token)).Throws<RespireServerException>();
         var tail = await pending[6].WaitAsync(deadline.Token);
         await Assert.That(tail!.AsSpan().SequenceEqual(last)).IsTrue();
@@ -114,6 +136,7 @@ public class BytesResponseTests
             {
                 await Assert.That(TryCompleteBulkDirect(connection, frame.AsSpan(0, cut), header.Length, length, out _)).IsFalse();
             }
+
             byte[] malformed = [.. frame[..^2], 0, 0];
             await Assert.That(TryCompleteBulkDirect(connection, malformed, header.Length, length, out _)).IsFalse();
             await Assert.That(Inflight(connection).TryPeek(out var head)).IsTrue();
@@ -127,8 +150,15 @@ public class BytesResponseTests
         await Assert.That(frameEnd).IsEqualTo(frame.Length);
         Completions(connection).Flush();
         var result = await pending.WaitAsync(deadline.Token);
-        if (expected is null) await Assert.That(result).IsNull();
-        else await Assert.That(result!.AsSpan().SequenceEqual(expected)).IsTrue();
+
+        if (expected is null)
+        {
+            await Assert.That(result).IsNull();
+        }
+        else
+        {
+            await Assert.That(result!.AsSpan().SequenceEqual(expected)).IsTrue();
+        }
     }
 
     [Test]
@@ -177,8 +207,12 @@ public class BytesResponseTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         var completed = TryCompleteBulkDirect(connection, frame, headerEnd, length, out var frameEnd);
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
         if (!completed || frameEnd != frame.Length)
+        {
             throw new InvalidOperationException("Direct completion did not consume the frame.");
+        }
+
         return allocated;
     }
 
@@ -238,12 +272,17 @@ public class BytesResponseTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = connection.SendBytesAsync(new Cmd1(Verbs.Get, "key"), deadline.Token, "GET").AsTask();
         await WaitForCommands(server, 1, deadline.Token);
-        if (malformed) await server.SendRawAsync([.. "$8192\r\n"u8, .. new byte[8192], 0, 0]);
+
+        if (malformed)
+        {
+            await server.SendRawAsync([.. "$8192\r\n"u8, .. new byte[8192], 0, 0]);
+        }
         else
         {
             await server.SendRawAsync("$8192\r\nx"u8.ToArray());
             await server.DisposeAsync();
         }
+
         await Assert.That(async () => await pending.WaitAsync(deadline.Token)).Throws<RespireException>();
     }
 
@@ -279,7 +318,12 @@ public class BytesResponseTests
         var view = client.WithKeyPrefix("tenant:");
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = Read(view, mode, deadline.Token).AsTask();
-        while (!server.ReceivedCommands.Contains("GET tenant:key")) await Task.Delay(1, deadline.Token);
+
+        while (!server.ReceivedCommands.Contains("GET tenant:key"))
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         var ring = Inflight(client.Core.Multiplexer.GetConnection());
         await Assert.That(ring.TryPeek(out var head)).IsTrue();
         await Assert.That(head is BytesPendingResponseSource).IsEqualTo(!cached && !RespireTelemetry.IsOperationEnabled("GET"));
@@ -288,12 +332,17 @@ public class BytesResponseTests
         await Assert.That(first!.AsSpan().SequenceEqual(expected)).IsTrue();
         first![0] ^= 0xff;
         var secondPending = Read(view, mode, deadline.Token).AsTask();
+
         if (!cached)
         {
             while (server.ReceivedCommands.Count(command => command == "GET tenant:key") < 2)
+            {
                 await Task.Delay(1, deadline.Token);
+            }
+
             await server.SendRawAsync(reply);
         }
+
         var second = await secondPending.WaitAsync(deadline.Token);
         await Assert.That(second!.AsSpan().SequenceEqual(expected)).IsTrue();
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET tenant:key"))
@@ -332,20 +381,22 @@ public class BytesResponseTests
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_inflight")]
     private static extern ref InflightRing Inflight(RespireConnection connection);
 
-    private static ValueTask<byte[]?> Read(IRespireClient client, int mode, CancellationToken token)
-        => mode switch
-        {
-            0 => client.GetBytesAsync("key", token),
-            1 => client.GetAsync<byte[]>("key", token),
-            2 => client.Strings.GetBytesAsync("key", token),
-            _ => client.Strings.GetAsync<byte[]>("key", token),
-        };
+    private static ValueTask<byte[]?> Read(IRespireClient client, int mode, CancellationToken token) => mode switch
+    {
+        0 => client.GetBytesAsync("key", token),
+        1 => client.GetAsync<byte[]>("key", token),
+        2 => client.Strings.GetBytesAsync("key", token),
+        _ => client.Strings.GetAsync<byte[]>("key", token),
+    };
 
     private static Task<RespireConnection> Connect(FakeRespServer server)
         => RespireConnection.ConnectAsync("127.0.0.1", server.Port, new() { Protocol = RespireProtocol.Resp2 });
 
     private static async Task WaitForCommands(FakeRespServer server, int count, CancellationToken token)
     {
-        while (server.CommandsSeen < count) await Task.Delay(1, token);
+        while (server.CommandsSeen < count)
+        {
+            await Task.Delay(1, token);
+        }
     }
 }

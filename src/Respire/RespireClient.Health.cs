@@ -15,7 +15,11 @@ public sealed partial class RespireClient : IRespireHealthProbe
             ? CommandHookScope.RunAsync(hook, "PROBE HEALTH", cancellationToken,
                 (Client: this, Options: options, Token: cancellationToken),
                 static s => s.Client.ProbeHealthUnhookedAsync(s.Options, s.Token),
-                static s => { s.Options?.Validate(); return "PROBE HEALTH"; })
+                static s =>
+                {
+                    s.Options?.Validate();
+                    return "PROBE HEALTH";
+                })
             : ProbeHealthUnhookedAsync(options, cancellationToken);
 
     private async ValueTask<RespireHealthProbeResult[]> ProbeHealthUnhookedAsync(
@@ -39,9 +43,14 @@ public sealed partial class RespireClient : IRespireHealthProbe
     {
         var connected = connection?.IsAcceptingCommands == true;
         var entered = false;
+
         try
         {
-            if (!connected) throw new RespireConnectionException("The node has no existing usable command connection.");
+            if (!connected)
+            {
+                throw new RespireConnectionException("The node has no existing usable command connection.");
+            }
+
             await capacity.WaitAsync(cancellationToken).ConfigureAwait(false);
             entered = true;
             // Admission can win the semaphore race while deadline cancellation is releasing
@@ -51,8 +60,16 @@ public sealed partial class RespireClient : IRespireHealthProbe
             using var reply = await connection!.SendAsync(new RawCommand(RespCommands.Ping),
                 cancellationToken, commandName: "PING", pinToConnection: true).ConfigureAwait(false);
             // The using scope owns the reply, including server errors.
-            if (reply.IsError) throw new RespireServerException(reply.GetErrorMessage());
-            if (reply.AsString() != "PONG") throw new RespireProtocolException("PING did not return PONG.");
+            if (reply.IsError)
+            {
+                throw new RespireServerException(reply.GetErrorMessage());
+            }
+
+            if (reply.AsString() != "PONG")
+            {
+                throw new RespireProtocolException("PING did not return PONG.");
+            }
+
             return new(endpoint, true, Stopwatch.GetElapsedTime(started));
         }
         catch (Exception error)
@@ -61,7 +78,10 @@ public sealed partial class RespireClient : IRespireHealthProbe
         }
         finally
         {
-            if (entered) capacity.Release();
+            if (entered)
+            {
+                capacity.Release();
+            }
         }
     }
 
@@ -69,25 +89,43 @@ public sealed partial class RespireClient : IRespireHealthProbe
     private (RespireEndpoint Endpoint, RespireConnection? Connection)[] CaptureHealthProbeTargets(bool allNodes)
     {
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
+
         if (_core.Cluster is { } cluster)
         {
             var snapshot = cluster.RoutingSnapshot;
+
             if (!snapshot.IsComplete)
+            {
                 throw new RespireConnectionException("Redis Cluster topology is not available for a health check.");
+            }
+
             var nodes = allNodes ? snapshot.Masters.Concat(snapshot.ReplicaNodes) : snapshot.Masters;
             var targets = nodes.Distinct().Select(node =>
                 (Endpoint: new RespireEndpoint(node.Host, node.Port), Connection: node.GetExistingHealthConnection())).ToArray();
-            if (allNodes) return targets;
+
+            if (allNodes)
+            {
+                return targets;
+            }
+
             foreach (var candidate in targets)
             {
-                if (candidate.Connection is not null) return [candidate];
+                if (candidate.Connection is not null)
+                {
+                    return [candidate];
+                }
             }
+
             return targets.Take(1).ToArray();
         }
 
         var primary = _core.Sentinel is { } sentinel ? sentinel.Current?.Multiplexer : _core.Multiplexer;
+
         if (primary is null)
+        {
             throw new RespireConnectionException("Sentinel has no validated primary for a health check.");
+        }
+
         (RespireEndpoint Endpoint, RespireConnection? Connection) target =
             (new(primary.Host, primary.Port), primary.GetExistingHealthConnection());
         return allNodes ? new[] { target }.Concat(_core.ReadRouter.CaptureHealthConnections()).ToArray() : [target];

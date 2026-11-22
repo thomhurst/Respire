@@ -18,8 +18,12 @@ public class KeySortCommandTests
         RespireKey[] patterns = ["unused", pattern, "#", "unused"];
         var options = new RespireSortOptions
         {
-            By = by, Get = patterns.AsMemory(1, 2), Alpha = true,
-            Descending = true, ReadOnly = true, Limit = new(1, 3),
+            By = by,
+            Get = patterns.AsMemory(1, 2),
+            Alpha = true,
+            Descending = true,
+            ReadOnly = true,
+            Limit = new(1, 3),
         };
         var copy = options with { };
         var hash = options.GetHashCode();
@@ -29,8 +33,12 @@ public class KeySortCommandTests
         patterns[2] = "changed";
         var equal = new RespireSortOptions
         {
-            By = "weight:*", Get = new RespireKey[] { new byte[] { 0xff, 0, (byte)'*' }, "#" },
-            Alpha = true, Descending = true, ReadOnly = true, Limit = new(1, 3),
+            By = "weight:*",
+            Get = new RespireKey[] { new byte[] { 0xff, 0, (byte)'*' }, "#" },
+            Alpha = true,
+            Descending = true,
+            ReadOnly = true,
+            Limit = new(1, 3),
         };
         await Assert.That(options == equal).IsTrue();
         await Assert.That(copy == equal).IsTrue();
@@ -45,7 +53,12 @@ public class KeySortCommandTests
             options with { Alpha = false }, options with { Descending = false },
             options with { ReadOnly = false }, options with { Limit = new(1, 4) },
         ];
-        foreach (var changed in different) await Assert.That(options == changed).IsFalse();
+
+        foreach (var changed in different)
+        {
+            await Assert.That(options == changed).IsFalse();
+        }
+
         await Assert.That(options.Equals((RespireSortOptions?)null)).IsFalse();
     }
 
@@ -69,7 +82,11 @@ public class KeySortCommandTests
     {
         var found = ClusterHash.TryGetFixedPatternSlot(Encoding.UTF8.GetBytes(pattern), out var slot);
         await Assert.That(found).IsEqualTo(expected);
-        if (found) await Assert.That(slot).IsEqualTo(ClusterHash.GetSlot(pattern));
+
+        if (found)
+        {
+            await Assert.That(slot).IsEqualTo(ClusterHash.GetSlot(pattern));
+        }
     }
 
     [Test]
@@ -81,7 +98,9 @@ public class KeySortCommandTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", 1)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", 1)],
         });
 #pragma warning restore RESP010
         using var batch = client.WithKeyPrefix(prefix).CreateBatch();
@@ -109,12 +128,25 @@ public class KeySortCommandTests
         RespireKey[] patterns = [pattern, "#"];
         var pending = queue.Keys.Sort<byte[]>("items", new RespireSortOptions
         {
-            ReadOnly = true, By = "weight:*", Get = patterns, Descending = true, Alpha = true, Limit = new(1, 3),
+            ReadOnly = true,
+            By = "weight:*",
+            Get = patterns,
+            Descending = true,
+            Alpha = true,
+            Limit = new(1, 3),
         });
         Array.Fill(pattern, (byte)'x');
         patterns[1] = "changed";
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(pending.Result[0]).IsEquivalentTo(new byte[] { 0xff, 0 }, CollectionOrdering.Matching);
         await Assert.That(pending.Result[1]).IsNull();
         await Assert.That(pending.Result[2]).IsEquivalentTo(new byte[] { (byte)'x' });
@@ -148,20 +180,37 @@ public class KeySortCommandTests
         var view = client.WithKeyPrefix("tenant:");
         Func<Task>[] invalid =
         [
-            async () => { await client.Keys.SortAsync("key", new RespireSortOptions { Limit = new(-1, 1) }); },
-            async () => { await client.Keys.SortStoreAsync("key", "target", new RespireSortOptions { ReadOnly = true }); },
-            async () => { await client.Keys.MoveAsync("key", -1); },
+            async () =>
+            {
+                await client.Keys.SortAsync("key", new RespireSortOptions { Limit = new(-1, 1) });
+            },
+            async () =>
+            {
+                await client.Keys.SortStoreAsync("key", "target", new RespireSortOptions { ReadOnly = true });
+            },
+            async () =>
+            {
+                await client.Keys.MoveAsync("key", -1);
+            },
         ];
-        foreach (var call in invalid) await Assert.That(call).Throws<ArgumentException>();
+
+        foreach (var call in invalid)
+        {
+            await Assert.That(call).Throws<ArgumentException>();
+        }
+
         await Assert.That(async () => await view.Keys.RandomAsync()).Throws<NotSupportedException>();
+
         foreach (var prefix in new[] { "tenant:*:", "tenant->field:", "tenant\0:" })
         {
             var unsafeView = client.WithKeyPrefix(prefix);
             await Assert.That(async () => await unsafeView.Keys.SortAsync("key", new RespireSortOptions { By = "weight:*" }))
                 .Throws<NotSupportedException>();
         }
+
         using var batch = view.CreateBatch();
         await using var transaction = view.CreateTransaction();
+
         foreach (var commands in new[] { batch.Keys, transaction.Keys })
         {
             await Assert.That(() => commands.Random()).Throws<NotSupportedException>();
@@ -169,6 +218,7 @@ public class KeySortCommandTests
             await Assert.That(() => commands.SortStore("key", "target", new RespireSortOptions { ReadOnly = true })).Throws<ArgumentException>();
             await Assert.That(() => commands.Sort("key", new RespireSortOptions { Limit = new(-1, 1) })).Throws<ArgumentException>();
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -183,7 +233,11 @@ public class KeySortCommandTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
@@ -218,12 +272,18 @@ public class KeySortCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         var options = new RespireSortOptions { By = "{sort}:weight:*", Get = new RespireKey[] { "{sort}:object:*->field", "#" } };
-        if (path == "immediate") await view.Keys.SortStoreAsync("{sort}:source", "{sort}:target", options);
+
+        if (path == "immediate")
+        {
+            await view.Keys.SortStoreAsync("{sort}:source", "{sort}:target", options);
+        }
         else if (path == "batch")
         {
             using var batch = view.CreateBatch();
@@ -238,11 +298,13 @@ public class KeySortCommandTests
             await transaction.CommitAsync();
             await Assert.That(pending.Result).IsEqualTo(1);
         }
+
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(owner.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC"))
             .IsEquivalentTo(["SORT tenant:{sort}:source BY tenant:{sort}:weight:* GET tenant:{sort}:object:*->field GET # ASC STORE tenant:{sort}:target"]);
         using var rejectedBatch = view.CreateBatch();
         await using var rejectedTransaction = view.CreateTransaction();
+
         foreach (var queue in new[] { rejectedBatch.Keys, rejectedTransaction.Keys })
         {
             await Assert.That(() => queue.SortStore("{a}:key", "{b}:key")).Throws<RespireCrossSlotException>();
@@ -251,6 +313,7 @@ public class KeySortCommandTests
             await Assert.That(() => queue.Move("key", 1)).Throws<NotSupportedException>();
             await Assert.That(() => queue.Random()).Throws<NotSupportedException>();
         }
+
         await Assert.That(async () => await view.Keys.SortStoreAsync("{a}:key", "{b}:key")).Throws<RespireCrossSlotException>();
         await Assert.That(async () => await view.Keys.SortAsync("{a}:key", options)).Throws<RespireCrossSlotException>();
         var readOnlyError = await Assert.That(async () => await view.Keys.SortAsync("{a}:key", options with { ReadOnly = true }))

@@ -19,7 +19,10 @@ public class ClientCacheTrackingBenchmarks
     private long _allocatedStarted;
 
     [ParamsSource(nameof(Modes))]
-    public string Mode { get; set; } = "OptIn";
+    public string Mode
+    {
+        get; set;
+    } = "OptIn";
 
     // Baseline builds predate the additional modes. Their OPTIN cases use this identical fixture.
     public IEnumerable<string> Modes => Environment.GetEnvironmentVariable("RESPIRE_BENCH_BASELINE") == "1"
@@ -35,18 +38,21 @@ public class ClientCacheTrackingBenchmarks
             Connections = 1,
         };
         var cache = new RespireClientSideCacheOptions();
+
         if (Mode != "OptIn")
         {
             // Reflection is confined to setup so this fixture compiles against the old API.
             var mode = typeof(RespireClientSideCacheOptions).GetProperty("TrackingMode")
                 ?? throw new InvalidOperationException("The selected build has no configurable tracking support.");
             mode.SetValue(cache, Enum.Parse(mode.PropertyType, Mode is "OptOut" or "OptOutNoLoop" ? "OptOut" : "Broadcast"));
+
             if (Mode == "OptOutNoLoop")
             {
                 var noLoop = typeof(RespireClientSideCacheOptions).GetProperty("NoLoop")
                     ?? throw new InvalidOperationException("The selected build has no NOLOOP support.");
                 noLoop.SetValue(cache, true);
             }
+
             if (Mode is "BroadcastPrefix" or "BroadcastManyPrefixes")
             {
                 var prefixes = typeof(RespireClientSideCacheOptions).GetProperty("KeyPrefixes")
@@ -58,15 +64,24 @@ public class ClientCacheTrackingBenchmarks
                 prefixes.SetValue(cache, values);
             }
         }
+
         _writer = await RespireClient.ConnectAsync(options);
         await _writer.SetAsync(_key, _value);
         _reader = await RespireClient.ConnectAsync(options with { ClientSideCache = cache });
+
         if (await _reader.GetStringAsync(_key) != _value || _reader.ClientSideCache!.Count != 1)
+        {
             throw new InvalidOperationException("Cache setup did not retain the expected value.");
+        }
+
         var hits = _reader.ClientSideCache.GetStatistics().Hits;
         await _reader.GetStringAsync(_key);
+
         if (_reader.ClientSideCache.GetStatistics().Hits != hits + 1)
+        {
             throw new InvalidOperationException("The hit benchmark is not using a local cache entry.");
+        }
+
         _cpuStarted = Process.GetCurrentProcess().TotalProcessorTime;
         _allocatedStarted = GC.GetTotalAllocatedBytes();
         _started = Stopwatch.GetTimestamp();
@@ -84,9 +99,13 @@ public class ClientCacheTrackingBenchmarks
         while (_reader!.ClientSideCache!.Count != 0)
         {
             if (Stopwatch.GetElapsedTime(started) > TimeSpan.FromSeconds(10))
+            {
                 throw new TimeoutException("Tracking invalidation did not evict the measured entry.");
+            }
+
             await Task.Yield();
         }
+
         return await _reader.GetStringAsync(_key);
     }
 
@@ -94,6 +113,7 @@ public class ClientCacheTrackingBenchmarks
     public async Task Cleanup()
     {
         if (_started != 0)
+        {
             Console.WriteLine("CACHE_TRACKING_PROCESS_METRICS " + JsonSerializer.Serialize(new
             {
                 Mode,
@@ -101,7 +121,13 @@ public class ClientCacheTrackingBenchmarks
                 cpuMilliseconds = (Process.GetCurrentProcess().TotalProcessorTime - _cpuStarted).TotalMilliseconds,
                 allocatedBytes = GC.GetTotalAllocatedBytes() - _allocatedStarted,
             }));
-        if (_reader is not null) await _reader.DisposeAsync();
+        }
+
+        if (_reader is not null)
+        {
+            await _reader.DisposeAsync();
+        }
+
         if (_writer is not null)
         {
             await _writer.DeleteAsync(_key);

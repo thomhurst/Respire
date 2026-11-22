@@ -12,19 +12,24 @@ public partial interface IRespireServerCommands
     /// <summary>Lists literal channels on one execution node. Set sharded for PUBSUB SHARDCHANNELS (Redis 7+).</summary>
     /// <remarks>Pattern and channel bytes are not key-prefixed. Pattern subscriptions are excluded.</remarks>
     ValueTask<RespireChannel[]> PubSubChannelsAsync(RespireChannel? pattern = null, bool sharded = false, CancellationToken cancellationToken = default);
+
     /// <summary>Counts literal subscribers on one execution node. Set sharded for PUBSUB SHARDNUMSUB (Redis 7+).</summary>
     /// <remarks>Names are copied before asynchronous work. Subscription kind does not alter the supplied bytes.</remarks>
     ValueTask<RespireChannelSubscriberCount[]> PubSubSubscriberCountsAsync(ReadOnlySpan<RespireChannel> channels, bool sharded = false, CancellationToken cancellationToken = default);
+
     /// <summary>Counts unique subscribed patterns on one execution node. Redis: PUBSUB NUMPAT.</summary>
     ValueTask<long> PubSubPatternCountAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Lists channels separately on every discovered Cluster node, including replicas; one result on standalone.</summary>
     /// <remarks>Cancellation during discovery throws. After discovery it becomes per-node errors in the returned
     /// results, preserving completed successes. Inspect each result's IsSuccess or Error.</remarks>
     ValueTask<RespireServerResult<RespireChannel[]>[]> PubSubChannelsOnAllNodesAsync(RespireChannel? pattern = null, bool sharded = false, CancellationToken cancellationToken = default);
+
     /// <summary>Counts subscribers separately on every discovered node; results are not aggregated.</summary>
     /// <remarks>Cancellation during discovery throws. After discovery it becomes per-node errors in the returned
     /// results, preserving completed successes. Inspect each result's IsSuccess or Error.</remarks>
     ValueTask<RespireServerResult<RespireChannelSubscriberCount[]>[]> PubSubSubscriberCountsOnAllNodesAsync(ReadOnlySpan<RespireChannel> channels, bool sharded = false, CancellationToken cancellationToken = default);
+
     /// <summary>Counts unique patterns separately on every discovered node; results are not aggregated.</summary>
     /// <remarks>Cancellation during discovery throws. After discovery it becomes per-node errors in the returned
     /// results, preserving completed successes. Inspect each result's IsSuccess or Error.</remarks>
@@ -39,6 +44,7 @@ internal sealed partial class ServerCommands
     private static readonly Verb PubSubNumSub = new(-1, "PUBSUB", "NUMSUB");
     private static readonly Verb PubSubShardNumSub = new(-1, "PUBSUB", "SHARDNUMSUB");
     private static readonly Verb PubSubNumPat = new(-1, "PUBSUB", "NUMPAT");
+
     private readonly record struct PubSubCall<T>(string Operation, CmdN Command, ResponseConverter<ServerCommands, T> Convert);
     private static readonly PubSubCall<long> PatternCountCall = new("PUBSUB NUMPAT", new CmdN(PubSubNumPat, []),
         static (ServerCommands _, in RespValue value) => ParseSubscriptionCount(in value));
@@ -85,24 +91,40 @@ internal sealed partial class ServerCommands
     private static RespireValue[] ChannelArguments(ReadOnlySpan<RespireChannel> channels)
     {
         var arguments = new RespireValue[channels.Length];
-        for (var index = 0; index < channels.Length; index++) arguments[index] = channels[index].AsValue();
+
+        for (var index = 0; index < channels.Length; index++)
+        {
+            arguments[index] = channels[index].AsValue();
+        }
+
         return arguments;
     }
 
     private static RespireChannel[] ParseChannels(in RespValue value, bool sharded)
     {
         if (value.Type is not (RespireDataType.Array or RespireDataType.Set))
+        {
             throw new RespireProtocolException("PUBSUB channels must be an array.");
+        }
+
         var items = value.AsArray();
         var result = new RespireChannel[items.Length];
-        for (var index = 0; index < items.Length; index++) result[index] = ParseChannel(in items[index], sharded);
+
+        for (var index = 0; index < items.Length; index++)
+        {
+            result[index] = ParseChannel(in items[index], sharded);
+        }
+
         return result;
     }
 
     private static RespireChannel ParseChannel(in RespValue value, bool sharded)
     {
         if (value.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
+        {
             throw new RespireProtocolException("PUBSUB channel names must be strings.");
+        }
+
         var channel = RespireChannel.FromOwnedBytes(value.AsSpan().ToArray());
         return sharded ? RespireChannel.Sharded(channel) : channel;
     }
@@ -110,20 +132,34 @@ internal sealed partial class ServerCommands
     private static long ParseSubscriptionCount(in RespValue value)
     {
         if (value.Type != RespireDataType.Integer || value.AsInteger() < 0)
+        {
             throw new RespireProtocolException("PUBSUB counts must be nonnegative integers.");
+        }
+
         return value.AsInteger();
     }
 
     private static RespireChannelSubscriberCount[] ParseSubscriberCounts(in RespValue value, bool sharded)
     {
         if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
+        {
             throw new RespireProtocolException("PUBSUB subscriber counts must contain channel/count pairs.");
+        }
+
         var items = value.AsArray();
+
         if (items.Length % 2 != 0)
+        {
             throw new RespireProtocolException("PUBSUB subscriber counts must contain complete channel/count pairs.");
+        }
+
         var result = new RespireChannelSubscriberCount[items.Length / 2];
+
         for (var index = 0; index < result.Length; index++)
+        {
             result[index] = new(ParseChannel(in items[index * 2], sharded), ParseSubscriptionCount(in items[index * 2 + 1]));
+        }
+
         return result;
     }
 }

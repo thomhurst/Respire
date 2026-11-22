@@ -13,7 +13,11 @@ public sealed partial class RespireClient
         RespireScript script, RespireKey[] keys, RespireValue[] args,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        if (_core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
+        if (_core.Disposed)
+        {
+            ThrowIfDisposedForCommand(observeErrors: false);
+        }
+
         var tail = BuildScriptTail(keys, args);
         var cache = _core.ClientCache;
         var fence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
@@ -28,9 +32,17 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation observation)
     {
         if (!CanRetryDeclared(script.RetryCategory))
+        {
             return ExecuteScriptCoreAsync(script, tail, cancellationToken, mutationFence, observation);
+        }
+
         var stable = new RespireValue[tail.Length];
-        for (var index = 0; index < tail.Length; index++) stable[index] = tail[index].Snapshot();
+
+        for (var index = 0; index < tail.Length; index++)
+        {
+            stable[index] = tail[index].Snapshot();
+        }
+
         return RunWithDeclaredRetriesAsync(script.EvalShaOperation, script.RetryCategory,
             (Client: this, Script: script, Tail: stable, Fence: mutationFence, Observation: observation),
             static (state, attempt) => state.Client.ExecuteScriptCoreAsync(state.Script, state.Tail, attempt.Token,
@@ -46,11 +58,19 @@ public sealed partial class RespireClient
         RespireTelemetry.ErrorObservation observation = default)
     {
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource<RespireResult>.Run(
                 (Client: this, Script: script, Tail: tail, Token: cancellationToken),
                 static (state, owner) => state.Client.ExecuteScriptAsync(state.Script, state.Tail, state.Token, owner));
+        }
+
         var core = _core;
-        if (core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
+
+        if (core.Disposed)
+        {
+            ThrowIfDisposedForCommand(observeErrors: false);
+        }
+
         var cache = core.ClientCache;
         var mutationFence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
         var response = ExecuteScriptWithRetriesAsync(script, tail, cancellationToken, mutationFence, observation);
@@ -70,6 +90,7 @@ public sealed partial class RespireClient
     {
         var ownsObservation = errorObservation.IsEmpty;
         var observation = ownsObservation ? RespireTelemetry.ErrorObservation.Rent(force: true) : errorObservation;
+
         try
         {
             return await StartTrackedScriptExecutionCoreAsync(script, keys, args, cancellationToken,
@@ -83,6 +104,7 @@ public sealed partial class RespireClient
                 observation.Final(error);
                 observation.Dispose();
             }
+
             throw;
         }
     }
@@ -98,6 +120,7 @@ public sealed partial class RespireClient
     {
         var owner = callerObservation.IsEmpty ? DispatchResponseSource<bool>.Start() : null;
         var observation = owner?.Observation ?? callerObservation;
+
         try
         {
             return await StartLockExecutionCoreAsync(key, token, milliseconds, requireIdentity,
@@ -120,11 +143,17 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         if (!observation.IsEmpty)
+        {
             return SendCoreAsync(operation, command, cancellationToken, flags, allowReadFrom,
                 cursorAffinity, observation, observeErrors: false);
+        }
+
         if (flags == RespireCommandFlags.None && cursorAffinity is null && !RespireTelemetry.IsOperationEnabled(operation)
             && TryGetNativeDispatchConnection(operation, in command, out var connection))
+        {
             return connection.SendNativeCheckedAsync(in command, cancellationToken, operation);
+        }
+
         return DispatchResponseSource<RespValue>.Run(
             (Client: this, Operation: operation, Command: command, Token: cancellationToken,
                 Flags: flags, Read: allowReadFrom, Affinity: cursorAffinity),
@@ -149,9 +178,12 @@ public sealed partial class RespireClient
     {
         // Keep attempts even if metrics are enabled while this streaming operation is pending.
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource<Stream?>.Run(
                 (Client: this, Operation: operation, Command: command, Token: cancellationToken),
                 static (state, owner) => state.Client.SendBulkStreamUnhookedAsync(state.Operation, state.Command, state.Token, owner));
+        }
+
         try
         {
             return RespireTelemetry.ObserveStreamError(
@@ -182,11 +214,14 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource<RespValue>.Run(
                 (Client: this, Operation: operation, Connection: connection, Command: command,
                     Token: cancellationToken, Pinned: pinToConnection, Asking: sendAsking),
                 static (state, owner) => state.Client.SendOnConnectionObservedAsync(state.Operation,
                     state.Connection, state.Command, state.Token, state.Pinned, owner, state.Asking));
+        }
+
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
         return RespireTelemetry.IsOperationEnabled(operation)
@@ -232,18 +267,23 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource<TResult>.Run(
                 (Client: this, Operation: operation, Command: command, Token: cancellationToken,
                     State: state, Converter: converter, Transfer: transferOwnership, Affinity: cursorAffinity),
                 static (state, owner) => state.Client.ConvertObservedResponseAsync(state.Operation, state.Command,
                     state.Token, state.State, state.Converter, state.Transfer, state.Affinity, owner));
+        }
+
         ClientSideCacheCoordinator.MutationFence mutationFence = default;
         ValueTask<RespValue> response;
+
         try
         {
             response = SendCoreAsync(operation, command, cancellationToken, RespireCommandFlags.None,
                 allowReadFrom: true, cursorAffinity: cursorAffinity, out mutationFence,
                 observation: observation, observeErrors: false, deferMutationCompletion: true);
+
             if (mutationFence.IsRequired)
             {
                 // Conversion decides the logical outcome; a successful raw reply alone
@@ -257,9 +297,13 @@ public sealed partial class RespireClient
         {
             if (mutationFence.IsRequired)
             {
-                try { _core.ClientCache!.CompleteMutation(in mutationFence); }
+                try
+                {
+                    _core.ClientCache!.CompleteMutation(in mutationFence);
+                }
                 catch (Exception) { /* Preserve the dispatch or converter failure. */ }
             }
+
             observation.Final(error);
             observation.Dispose();
             throw;
@@ -306,10 +350,12 @@ public sealed partial class RespireClient
     {
         // Re-enter the unhooked helper so acquiring an error owner does not repeat admission.
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource<TResult>.Run(
                 (Client: this, Operation: operation, Command: command, Token: cancellationToken, State: state, Converter: converter),
                 static (state, owner) => state.Client.ConvertBlockingResponseUnhookedAsync(
                     state.Operation, state.Command, state.Token, state.State, state.Converter, owner));
+        }
         // SendBlockingAsync captures preflight errors in its ValueTask. The converter owns
         // the lease through dedicated connection cleanup and final reply publication.
         var response = SendBlockingAsync(operation, command, cancellationToken, observeErrors: false, observation: observation);
@@ -349,11 +395,18 @@ public sealed partial class RespireClient
         Func<RespireResult, TResult> convert, RespireTelemetry.ErrorObservation transferred)
     {
         if (transferred.IsEmpty)
+        {
             return await DispatchResponseSource<TResult>.Run(
                 (Client: this, Script: script, Tail: tail, Token: cancellationToken, Convert: convert),
                 static (state, owner) => state.Client.ExecuteScriptConvertedUnhookedAsync(
                     state.Script, state.Tail, state.Token, state.Convert, owner)).ConfigureAwait(false);
-        if (_core.Disposed) ThrowIfDisposedForCommand(observeErrors: false);
+        }
+
+        if (_core.Disposed)
+        {
+            ThrowIfDisposedForCommand(observeErrors: false);
+        }
+
         var cache = _core.ClientCache;
         var fence = cache is null || script.IsCacheReadOnly ? default : cache.BeginUnknownMutation();
         var response = ExecuteScriptWithRetriesAsync(script, tail, cancellationToken, fence, transferred);
@@ -369,12 +422,16 @@ public sealed partial class RespireClient
         where TCommand : struct, IRespCommand
     {
         if (observation.IsEmpty)
+        {
             return DispatchResponseSource<TResult>.Run(
                 (Client: this, Operation: operation, Connection: connection, Command: command, Token: cancellationToken,
                     State: state, Converter: converter, Pinned: pinToConnection, Admit: admit),
                 static (state, owner) => state.Client.ConvertOnConnectionUnhookedAsync(state.Operation, state.Connection,
                     state.Command, state.Token, state.State, state.Converter, state.Pinned, owner, state.Admit));
+        }
+
         ValueTask<RespValue> response;
+
         try
         {
             // Admitted routes are pinned and complete any client-cache mutation fence before conversion.
@@ -389,16 +446,28 @@ public sealed partial class RespireClient
             observation.Dispose();
             throw;
         }
+
         return PooledResponseSource<TState, TResult>.Create(response, state, converter, observation: observation);
     }
 
     private void ThrowIfDisposedForCommand(bool observeErrors = true)
     {
-        if (!_core.Disposed) return;
-        try { ObjectDisposedException.ThrowIf(true, this); }
+        if (!_core.Disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            ObjectDisposedException.ThrowIf(true, this);
+        }
         catch (ObjectDisposedException error)
         {
-            if (observeErrors) RespireTelemetry.RecordError(error, internallyHandled: false);
+            if (observeErrors)
+            {
+                RespireTelemetry.RecordError(error, internallyHandled: false);
+            }
+
             throw;
         }
     }
@@ -407,10 +476,22 @@ public sealed partial class RespireClient
         ClusterScriptTelemetry? scriptTelemetry, Action<Exception>? onRetry,
         RespireTelemetry.ErrorObservation observation, RespireEndpoint? endpoint = null)
     {
-        if (!observation.IsEmpty) observation.Handled(error, endpoint ?? observation.Endpoint);
-        else if (scriptTelemetry is not null) scriptTelemetry.RecordRetry(error);
-        else if (onRetry is not null) onRetry(error);
-        else RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts, endpoint);
+        if (!observation.IsEmpty)
+        {
+            observation.Handled(error, endpoint ?? observation.Endpoint);
+        }
+        else if (scriptTelemetry is not null)
+        {
+            scriptTelemetry.RecordRetry(error);
+        }
+        else if (onRetry is not null)
+        {
+            onRetry(error);
+        }
+        else
+        {
+            RespireTelemetry.RecordError(error, internallyHandled: true, retryAttempts, endpoint);
+        }
     }
 
 }

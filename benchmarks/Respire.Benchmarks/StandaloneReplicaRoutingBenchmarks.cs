@@ -31,27 +31,49 @@ public class StandaloneReplicaRoutingBenchmarks
         _replicaPort = int.TryParse(Environment.GetEnvironmentVariable("REDIS_REPLICA_PORT"), out port) ? port : 6381;
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(host, _primaryPort)], ReplicaEndpoints = [new(host, _replicaPort)],
-            Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+            Endpoints = [new(host, _primaryPort)],
+            ReplicaEndpoints = [new(host, _replicaPort)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
             // These cases isolate prepared reads. Expiry/revalidation is covered by routing tests.
             ReplicaRefreshInterval = TimeSpan.FromHours(1),
         }).ConfigureAwait(false);
         _replica = _client.WithReadFrom(RespireReadFrom.Replica);
+
         if (RespireTelemetry.IsOperationEnabled("GET"))
+        {
             throw new InvalidOperationException("Standalone replica benchmarks require uninstrumented dispatch.");
+        }
+
         if (!await _client.SetAsync(_key, _payload).ConfigureAwait(false))
+        {
             throw new InvalidOperationException("Failed to initialize the replica benchmark payload.");
+        }
+
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
         while (await _replica.GetStringAsync(_key, deadline.Token).ConfigureAwait(false) != _payload)
+        {
             await Task.Delay(10, deadline.Token).ConfigureAwait(false);
+        }
+
         for (var i = 0; i < 50; i++)
+        {
             if (await _client.GetStringAsync(_key).ConfigureAwait(false) != _payload
                 || await _replica.GetStringAsync(_key).ConfigureAwait(false) != _payload
                 || PreparedReplicaRoute() != _replicaPort || PreparedPrimaryRoute() != _primaryPort)
+            {
                 throw new InvalidOperationException("A standalone read selected the wrong role or returned a wrong reply.");
+            }
+        }
+
         if ((await ReplicaStringConcurrent50().ConfigureAwait(false)).Any(value => value != _payload)
             || (await PrimaryStringConcurrent50().ConfigureAwait(false)).Any(value => value != _payload))
+        {
             throw new InvalidOperationException("A concurrent standalone read returned a wrong reply.");
+        }
+
         _operation = null;
         _operations = 0;
         _process.Refresh();
@@ -76,13 +98,21 @@ public class StandaloneReplicaRoutingBenchmarks
     private int PreparedRoute(RespireReadFrom policy, int expectedPort)
     {
         var pending = _client.Core.ReadRouter.GetConnectionAsync(policy, default, observation: default);
+
         if (!pending.IsCompletedSuccessfully)
+        {
             throw new InvalidOperationException("A prepared standalone selection did not complete synchronously.");
+        }
+
 #pragma warning disable RESP009 // The completion check above guarantees synchronous prepared-route selection.
         var connection = pending.GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
         if (connection.Port != expectedPort)
+        {
             throw new InvalidOperationException("A prepared standalone selection chose the wrong role.");
+        }
+
         return connection.Port;
     }
 
@@ -104,7 +134,12 @@ public class StandaloneReplicaRoutingBenchmarks
     public Task<string?[]> ReplicaStringConcurrent50()
     {
         Count(nameof(ReplicaStringConcurrent50), 50);
-        for (var i = 0; i < _reads.Length; i++) _reads[i] = _replica.GetStringAsync(_key).AsTask();
+
+        for (var i = 0; i < _reads.Length; i++)
+        {
+            _reads[i] = _replica.GetStringAsync(_key).AsTask();
+        }
+
         return Task.WhenAll(_reads);
     }
 
@@ -112,7 +147,12 @@ public class StandaloneReplicaRoutingBenchmarks
     public Task<string?[]> PrimaryStringConcurrent50()
     {
         Count(nameof(PrimaryStringConcurrent50), 50);
-        for (var i = 0; i < _reads.Length; i++) _reads[i] = _client.GetStringAsync(_key).AsTask();
+
+        for (var i = 0; i < _reads.Length; i++)
+        {
+            _reads[i] = _client.GetStringAsync(_key).AsTask();
+        }
+
         return Task.WhenAll(_reads);
     }
 
@@ -129,11 +169,19 @@ public class StandaloneReplicaRoutingBenchmarks
         // Raw per-launch counters include calibration, warmup and completion work, not server CPU.
         Console.WriteLine("STANDALONE_REPLICA_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
-            operation = _operation, operations = _operations,
+            operation = _operation,
+            operations = _operations,
             cpuMilliseconds = (_process.TotalProcessorTime - _cpuAt).TotalMilliseconds,
             elapsedSeconds = Stopwatch.GetElapsedTime(_startedAt).TotalSeconds,
         }));
-        try { if (_client is not null) await _client.DisposeAsync().ConfigureAwait(false); }
+
+        try
+        {
+            if (_client is not null)
+            {
+                await _client.DisposeAsync().ConfigureAwait(false);
+            }
+        }
         finally { _process.Dispose(); }
     }
 }

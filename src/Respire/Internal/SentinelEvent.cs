@@ -32,23 +32,49 @@ internal readonly record struct SentinelEvent(
     {
         if (channel.SequenceEqual("+switch-master"u8))
         {
-            if (!NextToken(ref text, out var name) || !name.SequenceEqual(serviceName)) return default;
+            if (!NextToken(ref text, out var name) || !name.SequenceEqual(serviceName))
+            {
+                return default;
+            }
+
             var oldPrimary = NextEndpoint(ref text);
             var newPrimary = NextEndpoint(ref text);
             return new(SentinelEventKind.SwitchMaster, oldPrimary, newPrimary);
         }
 
-        if (!channel.SequenceEqual("+sdown"u8) && !channel.SequenceEqual("+odown"u8)) return default;
-        if (!NextToken(ref text, out var instanceType)) return default;
+        if (!channel.SequenceEqual("+sdown"u8) && !channel.SequenceEqual("+odown"u8))
+        {
+            return default;
+        }
+
+        if (!NextToken(ref text, out var instanceType))
+        {
+            return default;
+        }
+
         if (instanceType.SequenceEqual("master"u8))
         {
-            if (!NextToken(ref text, out var master) || !master.SequenceEqual(serviceName)) return default;
+            if (!NextToken(ref text, out var master) || !master.SequenceEqual(serviceName))
+            {
+                return default;
+            }
+
             return new(SentinelEventKind.MasterDown, NextEndpoint(ref text));
         }
-        if (!instanceType.SequenceEqual("slave"u8)) return default;
+
+        if (!instanceType.SequenceEqual("slave"u8))
+        {
+            return default;
+        }
         // Skip the replica name, IP and port, then expect "@ <master-name>".
         for (var skipped = 0; skipped < 3; skipped++)
-            if (!NextToken(ref text, out _)) return default;
+        {
+            if (!NextToken(ref text, out _))
+            {
+                return default;
+            }
+        }
+
         return NextToken(ref text, out var separator) && separator.SequenceEqual("@"u8)
             && NextToken(ref text, out var owner) && owner.SequenceEqual(serviceName)
             ? new(SentinelEventKind.ReplicaDown) : default;
@@ -56,21 +82,32 @@ internal readonly record struct SentinelEvent(
 
     private static RespireEndpoint? NextEndpoint(ref ReadOnlySpan<byte> text)
     {
-        if (!NextToken(ref text, out var host) || !NextToken(ref text, out var portText)) return null;
+        if (!NextToken(ref text, out var host) || !NextToken(ref text, out var portText))
+        {
+            return null;
+        }
+
         if (!Utf8Parser.TryParse(portText, out int port, out var consumed) || consumed != portText.Length
-            || port is < 1 or > 65535) return null;
+            || port is < 1 or > 65535)
+        {
+            return null;
+        }
+
         return new RespireEndpoint(Encoding.UTF8.GetString(host), port);
     }
 
     private static bool NextToken(ref ReadOnlySpan<byte> text, out ReadOnlySpan<byte> token)
     {
         text = text.TrimStart((byte)' ');
+
         if (text.IsEmpty)
         {
             token = default;
             return false;
         }
+
         var end = text.IndexOf((byte)' ');
+
         if (end < 0)
         {
             token = text;
@@ -81,6 +118,7 @@ internal readonly record struct SentinelEvent(
             token = text[..end];
             text = text[(end + 1)..];
         }
+
         return true;
     }
 }

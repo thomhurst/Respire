@@ -26,21 +26,40 @@ public sealed class RespireReliableTopic<T>
         ArgumentNullException.ThrowIfNull(serialize);
         ArgumentNullException.ThrowIfNull(deserialize);
         ArgumentException.ThrowIfNullOrWhiteSpace(topicName);
+
         if (topicName.Contains('{') || topicName.Contains('}'))
+        {
             throw new ArgumentException("Topic names cannot contain braces.", nameof(topicName));
+        }
+
         _ = StrictUtf8.GetByteCount(topicName);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(deliveryLimit);
-        if (maximumLength is <= 0) throw new ArgumentOutOfRangeException(nameof(maximumLength));
-        if (maximumAge is { } age) JobQueueScheduling.ValidateDuration(age, nameof(maximumAge));
+
+        if (maximumLength is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximumLength));
+        }
+
+        if (maximumAge is { } age)
+        {
+            JobQueueScheduling.ValidateDuration(age, nameof(maximumAge));
+        }
+
         if (maximumLength.HasValue && maximumAge.HasValue)
+        {
             throw new ArgumentException("Choose length or age retention, not both.");
+        }
+
         StreamKey = "{respire-topic:" + topicName + "}:messages";
         (_client, _serialize, _deserialize, _deliveryLimit, _maximumLength, _maximumAge) =
             (client, serialize, deserialize, deliveryLimit, maximumLength, maximumAge);
     }
 
     /// <summary>The retained source stream, before any client key prefix.</summary>
-    public string StreamKey { get; }
+    public string StreamKey
+    {
+        get;
+    }
 
     /// <summary>Appends a message and applies exact length or age retention using server time.</summary>
     /// <remarks>Age retention runs on publication, not on a background timer. A retry after a lost reply

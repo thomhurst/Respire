@@ -18,6 +18,7 @@ public class SemaphoreErrorMetricsTests
         using var metrics = new ErrorCollector();
         using var caller = RespireTelemetry.ErrorObservation.Rent(force: true);
         var detached = DispatchResponseSource<bool>.Start();
+
         try
         {
             // Exercise the production adapter without adding a test-only construction API.
@@ -64,8 +65,14 @@ public class SemaphoreErrorMetricsTests
         var commands = server.ReceivedCommands.Count;
         var error = await Assert.That(async () =>
         {
-            if (renewal) await acquired.Permit!.ResetExpiryAsync(TimeSpan.Zero);
-            else await semaphore.TryAcquireAsync(TimeSpan.Zero);
+            if (renewal)
+            {
+                await acquired.Permit!.ResetExpiryAsync(TimeSpan.Zero);
+            }
+            else
+            {
+                await semaphore.TryAcquireAsync(TimeSpan.Zero);
+            }
         }).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(error!.ParamName).IsEqualTo("expiry");
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(commands);
@@ -146,12 +153,17 @@ public class SemaphoreErrorMetricsTests
             : command.StartsWith("EVAL ", StringComparison.Ordinal) ? "-WRONGTYPE acquire rejected\r\n"u8.ToArray() : null;
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith(releasePrefix, StringComparison.Ordinal)) return false;
+            if (!command.StartsWith(releasePrefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             releasing.TrySetResult(server.ReceivedConnectionIds[^1]);
             return true;
         };
         var acquisition = new RespireSemaphore(client, "key", 1).TryAcquireAsync(TimeSpan.FromSeconds(30)).AsTask();
         var connection = await releasing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         try
         {
             await Assert.That(acquisition.IsCompleted).IsFalse();
@@ -162,6 +174,7 @@ public class SemaphoreErrorMetricsTests
             server.SuppressReply = null;
             await server.SendRawAsync(cleanupFails ? "-NOPERM cleanup rejected\r\n"u8.ToArray() : ":1\r\n"u8.ToArray(), connection);
         }
+
         var error = await Assert.That(async () => await acquisition).ThrowsExactly<RespireServerException>();
         await Assert.That(error!.Code).IsEqualTo("WRONGTYPE");
         var items = metrics.Items.ToArray();
@@ -171,6 +184,7 @@ public class SemaphoreErrorMetricsTests
         await Assert.That((bool)items[^1]["redis.client.errors.internal"]!).IsFalse();
         await Assert.That(items[^1]["db.response.status_code"]).IsEqualTo("WRONGTYPE");
         await Assert.That(items[^1]["redis.client.operation.retry_attempts"]).IsEqualTo(cleanupFails ? 2 : 1);
+
         if (cleanupFails)
         {
             await Assert.That(items[1]["db.response.status_code"]).IsEqualTo("NOPERM");
@@ -217,7 +231,12 @@ public class SemaphoreErrorMetricsTests
                 written.TrySetResult();
                 return true;
             }
-            if (!command.StartsWith(releasePrefix, StringComparison.Ordinal)) return false;
+
+            if (!command.StartsWith(releasePrefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             releasing.TrySetResult(server.ReceivedConnectionIds[^1]);
             return true;
         };
@@ -227,6 +246,7 @@ public class SemaphoreErrorMetricsTests
         await written.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
         var connection = await releasing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         try
         {
             await Assert.That(acquisition.IsCompleted).IsFalse();
@@ -239,6 +259,7 @@ public class SemaphoreErrorMetricsTests
             server.SuppressReply = null;
             await server.SendRawAsync(":1\r\n"u8.ToArray(), connection);
         }
+
         var error = await Assert.That(async () => await acquisition).Throws<OperationCanceledException>();
         await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
         await Assert.That(acquisition.IsCanceled).IsTrue();
@@ -250,8 +271,12 @@ public class SemaphoreErrorMetricsTests
         // Release can reroute while the fenced acquire socket retires. Count every
         // handled transport retry after the rejected fence under the same caller owner.
         var handled = items.Where(item => (bool)item["redis.client.errors.internal"]!).ToArray();
+
         for (var i = 0; i < handled.Length; i++)
+        {
             await Assert.That(handled[i]["redis.client.operation.retry_attempts"]).IsEqualTo(i);
+        }
+
         await Assert.That(final["redis.client.operation.retry_attempts"]).IsEqualTo(handled.Length);
         await Assert.That(ReferenceEquals(items[^1], final)).IsTrue();
     }
@@ -268,7 +293,9 @@ public class SemaphoreErrorMetricsTests
         metrics.OnMeasurement = item =>
         {
             if (item.GetValueOrDefault("db.response.status_code") as string == "WRONGTYPE")
+            {
                 detachedFailure.TrySetResult();
+            }
         };
         var releasePrefix = $"EVALSHA {RespireSemaphore.ReleaseScript.Sha1} ";
         var releases = 0;
@@ -288,8 +315,16 @@ public class SemaphoreErrorMetricsTests
     {
         private readonly RespireMetricsOptions _previous = RespireMetrics.Configuration;
         private readonly MeterListener _listener = new();
-        internal ConcurrentQueue<Dictionary<string, object?>> Items { get; } = new();
-        internal Action<Dictionary<string, object?>>? OnMeasurement { get; set; }
+
+        internal ConcurrentQueue<Dictionary<string, object?>> Items
+        {
+            get;
+        } = new();
+
+        internal Action<Dictionary<string, object?>>? OnMeasurement
+        {
+            get; set;
+        }
 
         internal ErrorCollector()
         {
@@ -297,7 +332,9 @@ public class SemaphoreErrorMetricsTests
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
@@ -322,6 +359,7 @@ public class SemaphoreErrorMetricsTests
     {
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var server = new FakeRespServer(32, ":1\r\n"u8.ToArray());
@@ -338,7 +376,9 @@ public class SemaphoreErrorMetricsTests
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
                 items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
@@ -350,12 +390,14 @@ public class SemaphoreErrorMetricsTests
             await Assert.That((bool)recorded[^1]["redis.client.errors.internal"]!).IsFalse();
             await Assert.That(recorded[^1]["db.response.status_code"]).IsEqualTo("WRONGTYPE");
             await Assert.That(recorded[^1]["redis.client.operation.retry_attempts"]).IsEqualTo(cleanupFails ? 1 : 0);
+
             if (cleanupFails)
             {
                 await Assert.That((bool)recorded[0]["redis.client.errors.internal"]!).IsTrue();
                 await Assert.That(recorded[0]["db.response.status_code"]).IsEqualTo("NOPERM");
                 await Assert.That(recorded[0]["redis.client.operation.retry_attempts"]).IsEqualTo(0);
             }
+
             await Assert.That(releases).IsEqualTo(2);
             await Assert.That(permit.IsReleased).IsTrue();
             server.ReplyOverride = null;
@@ -368,6 +410,7 @@ public class SemaphoreErrorMetricsTests
     {
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var server = new FakeRespServer(32, ":1\r\n"u8.ToArray());
@@ -381,7 +424,11 @@ public class SemaphoreErrorMetricsTests
                 ? "-NOPERM surrender rejected\r\n"u8.ToArray() : null;
             server.SuppressReply = command =>
             {
-                if (!command.StartsWith(renewalPrefix, StringComparison.Ordinal)) return false;
+                if (!command.StartsWith(renewalPrefix, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 written.TrySetResult();
                 return true;
             };
@@ -390,14 +437,20 @@ public class SemaphoreErrorMetricsTests
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
                 items.Enqueue(tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
             listener.Start();
             var renewal = permit.ResetExpiryAsync(TimeSpan.FromMilliseconds(50)).AsTask();
             await written.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            try { await Task.Delay(TimeSpan.FromMilliseconds(100)); }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100));
+            }
             finally
             {
                 server.SuppressReply = null;
@@ -405,6 +458,7 @@ public class SemaphoreErrorMetricsTests
                     command.StartsWith(renewalPrefix, StringComparison.Ordinal));
                 await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds[index]);
             }
+
             await Assert.That(await renewal).IsFalse();
             await Assert.That(items.Count).IsEqualTo(1);
             await Assert.That((bool)items.Single()["redis.client.errors.internal"]!).IsTrue();
@@ -423,6 +477,7 @@ public class SemaphoreErrorMetricsTests
     {
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var server = new FakeRespServer(8, ":1\r\n"u8.ToArray());
@@ -432,7 +487,11 @@ public class SemaphoreErrorMetricsTests
             var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             server.SuppressReply = command =>
             {
-                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 entered.TrySetResult();
                 return true;
             };
@@ -443,7 +502,9 @@ public class SemaphoreErrorMetricsTests
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
@@ -452,6 +513,7 @@ public class SemaphoreErrorMetricsTests
             });
             listener.Start();
             using var cancellation = new CancellationTokenSource();
+
             try
             {
                 var renewal = release ? permit.ReleaseAsync(cancellation.Token).AsTask()
@@ -471,6 +533,7 @@ public class SemaphoreErrorMetricsTests
                 await server.SendRawAsync(":1\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
                 await firstRenewal;
             }
+
             await Assert.That(await permit.VerifyStillHeldAsync()).IsTrue();
         }
         finally { RespireMetrics.Configure(previous); }
@@ -483,6 +546,7 @@ public class SemaphoreErrorMetricsTests
     {
         var previous = RespireMetrics.Configuration;
         RespireMetrics.Configure(new() { Groups = RespireMetricGroups.Resiliency });
+
         try
         {
             await using var server = new FakeRespServer(32, ":1\r\n"u8.ToArray())
@@ -492,8 +556,10 @@ public class SemaphoreErrorMetricsTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Protocol = RespireProtocol.Resp2, Connections = 1,
-                Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromSeconds(5),
+                Protocol = RespireProtocol.Resp2,
+                Connections = 1,
+                Endpoints = [new("127.0.0.1", server.Port)],
+                CommandTimeout = TimeSpan.FromSeconds(5),
             });
             await using var acquired = await new RespireSemaphore(client, "key", 1).TryAcquireAsync(TimeSpan.FromSeconds(30));
             var permit = acquired.Permit!;
@@ -508,7 +574,12 @@ public class SemaphoreErrorMetricsTests
                     written.TrySetResult();
                     return true;
                 }
-                if (!command.StartsWith(releasePrefix, StringComparison.Ordinal)) return false;
+
+                if (!command.StartsWith(releasePrefix, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 releasing.TrySetResult();
                 return true;
             };
@@ -518,13 +589,22 @@ public class SemaphoreErrorMetricsTests
             listener.InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.errors")
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             };
             listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
                 var item = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
-                if (!(bool)item["redis.client.errors.internal"]!) finals.Enqueue(item);
-                else handled.Enqueue(item);
+
+                if (!(bool)item["redis.client.errors.internal"]!)
+                {
+                    finals.Enqueue(item);
+                }
+                else
+                {
+                    handled.Enqueue(item);
+                }
             });
             listener.Start();
             using var cancellation = new CancellationTokenSource();
@@ -532,6 +612,7 @@ public class SemaphoreErrorMetricsTests
             await written.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
             await releasing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
             try
             {
                 await Assert.That(finals.Count).IsEqualTo(0);
@@ -547,12 +628,14 @@ public class SemaphoreErrorMetricsTests
                     ? ":1\r\n-NOPERM cleanup rejected\r\n"u8.ToArray() : ":1\r\n:1\r\n"u8.ToArray(),
                     server.ReceivedConnectionIds[renewalIndex]);
             }
+
             var error = await Assert.That(async () => await renewal).Throws<OperationCanceledException>();
             await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
             var final = finals.Single();
             await Assert.That(final["error.type"]).IsEqualTo(typeof(OperationCanceledException).FullName);
             await Assert.That(final["redis.client.operation.retry_attempts"]).IsEqualTo(cleanupFails ? 1 : 0);
             await Assert.That(handled.Count).IsEqualTo(cleanupFails ? 1 : 0);
+
             if (cleanupFails)
             {
                 await Assert.That(handled.Single()["db.response.status_code"]).IsEqualTo("NOPERM");

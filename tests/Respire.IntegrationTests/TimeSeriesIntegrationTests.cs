@@ -11,7 +11,10 @@ namespace Respire.IntegrationTests;
 public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
 {
     [ClassDataSource<ModernRedisTestContainer>(Shared = SharedType.Keyed, Key = TestConstraints.ClientCacheServer)]
-    public required ModernRedisTestContainer CacheServer { get; init; }
+    public required ModernRedisTestContainer CacheServer
+    {
+        get; init;
+    }
 
     private async Task<RespireClient> ConnectAsync(int protocol)
         => await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
@@ -274,12 +277,28 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
         // The documented conservative contract is a full local flush, including unrelated keys.
         Func<Task>[] mutations =
         [
-            async () => { await timeSeries.AddAsync(source, 1, 1.5); },
-            async () => { await timeSeries.MultiAddAsync([new(source, 11, 2.5), new(source, 21, 3.5)], maxBatchSize: 1); },
-            async () => { await timeSeries.IncrementByAsync(source, 1, new() { Timestamp = 31 }); },
-            async () => { await timeSeries.DecrementByAsync(source, 0.5, new() { Timestamp = 41 }); },
-            async () => { await timeSeries.DeleteRangeAsync(source, new(41, 41)); },
+            async () =>
+            {
+                await timeSeries.AddAsync(source, 1, 1.5);
+            },
+            async () =>
+            {
+                await timeSeries.MultiAddAsync([new(source, 11, 2.5), new(source, 21, 3.5)], maxBatchSize: 1);
+            },
+            async () =>
+            {
+                await timeSeries.IncrementByAsync(source, 1, new() { Timestamp = 31 });
+            },
+            async () =>
+            {
+                await timeSeries.DecrementByAsync(source, 0.5, new() { Timestamp = 41 });
+            },
+            async () =>
+            {
+                await timeSeries.DeleteRangeAsync(source, new(41, 41));
+            },
         ];
+
         foreach (var mutate in mutations)
         {
             await Assert.That(await client.GetStringAsync(unrelated)).IsEqualTo("retained");

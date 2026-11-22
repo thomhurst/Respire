@@ -33,7 +33,9 @@ public class ValueCodecCommandTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Serializer = serializer,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Serializer = serializer,
         });
 #pragma warning restore RESP010
         var prefixed = client.WithKeyPrefix("tenant:");
@@ -43,7 +45,11 @@ public class ValueCodecCommandTests
         await Assert.That(await prefixed.GetAsync<int>("count")).IsEqualTo(42);
         await prefixed.SetAsync<string>("text", "plain");
         await prefixed.SetAsync<byte[]>("bytes", raw);
-        using (var sent = await client.ExecuteAsync(RespireCommands.String.SET, "raw", raw)) { }
+
+        using (var sent = await client.ExecuteAsync(RespireCommands.String.SET, "raw", raw))
+        {
+        }
+
         using var result = await client.ExecuteAsync(RespireCommands.String.GET, "typed");
         var decoded = result.As<Payload>();
         await Assert.That(result.AsBytes()).IsEquivalentTo(frame);
@@ -77,16 +83,24 @@ public class ValueCodecCommandTests
         serializer.Serialize(bytes, value);
         var frame = bytes.WrittenSpan.ToArray();
         byte[][] replies = [FakeRespServer.OkReply, Bulk(frame)];
-        if (transaction) replies = [FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(),
+
+        if (transaction)
+        {
+            replies = [FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "+QUEUED\r\n"u8.ToArray(),
             [.. "*2\r\n"u8, .. replies.SelectMany(reply => reply)]];
+        }
+
         await using var server = new FakeRespServer(replies);
         // The deferred codec scenario owns the serializer used to snapshot mutable values.
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Serializer = serializer,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Serializer = serializer,
         });
+
 #pragma warning restore RESP010
         if (transaction)
         {
@@ -106,6 +120,7 @@ public class ValueCodecCommandTests
             (await queue.ExecuteAsync()).ThrowIfAnyFailed();
             await Assert.That(read.Result!.Text).IsEqualTo(expectedText);
         }
+
         var set = server.ReceivedArguments.Single(args => args[0].AsSpan().SequenceEqual("SET"u8));
         await Assert.That(set[2]).IsEquivalentTo(frame);
     }
@@ -120,6 +135,14 @@ public class ValueCodecCommandTests
     }
 
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];
+
     public sealed record Payload(string Text);
-    public sealed class MutablePayload { public string Text { get; set; } = ""; }
+
+    public sealed class MutablePayload
+    {
+        public string Text
+        {
+            get; set;
+        } = "";
+    }
 }

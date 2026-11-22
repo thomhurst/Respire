@@ -58,39 +58,68 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
     /// <inheritdoc />
     public IDatabase GetDatabase(int db = -1, object? asyncState = null)
     {
-        if (asyncState is not null) throw Compatibility.Unsupported("asyncState");
-        if (db == -1) db = _defaultDatabase;
+        if (asyncState is not null)
+        {
+            throw Compatibility.Unsupported("asyncState");
+        }
+
+        if (db == -1)
+        {
+            db = _defaultDatabase;
+        }
+
         ArgumentOutOfRangeException.ThrowIfNegative(db);
+
         lock (_gate)
         {
             ThrowIfClosed();
+
             if (!_clients.TryGetValue(db, out var client))
             {
-                if (_options is null) throw Compatibility.Unsupported("GetDatabase for a different database on a wrapped client");
+                if (_options is null)
+                {
+                    throw Compatibility.Unsupported("GetDatabase for a different database on a wrapped client");
+                }
+
                 client = RespireClient.Create(_options with { Database = db });
                 _clients.Add(db, client);
             }
+
             if (!_databases.TryGetValue(db, out var database))
             {
                 database = new CompatDatabase(this, client, db);
                 _databases.Add(db, database);
             }
+
             return database;
         }
     }
 
     /// <inheritdoc />
     public string ClientName => _configuration.ClientName ?? string.Empty;
+
     /// <summary>Identifies native configuration without exposing credentials.</summary>
     public string Configuration => string.Join(",", _configuration.Endpoints.Select(static endpoint => endpoint.ToString()))
         + $",defaultDatabase={_defaultDatabase}";
+
     /// <inheritdoc />
     public override string ToString() => Configuration;
+
     /// <inheritdoc />
     public int TimeoutMilliseconds => _configuration.CommandTimeout is { } timeout
         ? (int)Math.Min(timeout.TotalMilliseconds, int.MaxValue) : Timeout.Infinite;
+
     /// <inheritdoc />
-    public bool IsConnected { get { lock (_gate) return _closeTask is null && _clients.Values.Any(static client => client.IsConnected); } }
+    public bool IsConnected
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _closeTask is null && _clients.Values.Any(static client => client.IsConnected);
+            }
+        }
+    }
 
     internal CancellationToken QueuedShutdown => _queuedShutdown.Token;
 
@@ -108,9 +137,12 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
 
     private async Task RemoveWhenCompleteAsync(Task task)
     {
-        try { await task.ConfigureAwait(false); }
+        try
+        {
+            await task.ConfigureAwait(false);
+        }
         catch { /* The original task retains its result for its caller. */ }
-        finally { lock (_gate) _operations.Remove(task); }
+        finally { lock (_gate) { _operations.Remove(task); } }
     }
 
     private void ThrowIfClosed() => ObjectDisposedException.ThrowIf(_closeTask is not null, this);
@@ -125,6 +157,7 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
         Wait((Task)task);
         return task.GetAwaiter().GetResult();
     }
+
     /// <inheritdoc />
     public void WaitAll(params Task[] tasks) => Wait(Task.WhenAll(tasks));
 
@@ -139,6 +172,7 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
         var started = Stopwatch.GetTimestamp();
         var remaining = timeout;
         var maximumSlice = TimeSpan.FromDays(30);
+
         while (remaining > maximumSlice)
         {
             try
@@ -147,8 +181,10 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
                 return;
             }
             catch (TimeoutException) when (!task.IsCompleted) { }
+
             remaining = timeout - Stopwatch.GetElapsedTime(started);
         }
+
         await task.WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero).ConfigureAwait(false);
     }
 
@@ -162,13 +198,22 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
     {
         lock (_gate)
         {
-            if (_closeTask is not null) return _closeTask;
+            if (_closeTask is not null)
+            {
+                return _closeTask;
+            }
+
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             _closeTask = completion.Task;
             // Callbacks only settle queued promises. Cancel under the lifetime gate so no work starts afterward.
 #pragma warning disable CA1849
             _queuedShutdown.Cancel();
-            if (!allowCommandsToComplete) _shutdown.Cancel();
+
+            if (!allowCommandsToComplete)
+            {
+                _shutdown.Cancel();
+            }
+
 #pragma warning restore CA1849
             _ = CloseCoreAsync(_operations.ToArray(), _clients.Values.ToArray(), completion);
             return _closeTask;
@@ -178,18 +223,31 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
     private async Task CloseCoreAsync(Task[] operations, IRespireClient[] clients, TaskCompletionSource completion)
     {
         Exception? failure = null;
+
         try
         {
-            try { await Task.WhenAll(operations).ConfigureAwait(false); }
-            catch { /* Command failures remain on the command tasks. */ }
             try
             {
-                if (_subscriber is not null) await _subscriber.DisposeSubscriptionsAsync().ConfigureAwait(false);
+                await Task.WhenAll(operations).ConfigureAwait(false);
+            }
+            catch { /* Command failures remain on the command tasks. */ }
+
+            try
+            {
+                if (_subscriber is not null)
+                {
+                    await _subscriber.DisposeSubscriptionsAsync().ConfigureAwait(false);
+                }
             }
             finally
             {
                 var owned = _servers.Values.Select(static server => (IRespireClient)server.Client);
-                if (_ownsClients) owned = owned.Concat(clients);
+
+                if (_ownsClients)
+                {
+                    owned = owned.Concat(clients);
+                }
+
                 await Task.WhenAll(owned.Select(static client => client.DisposeAsync().AsTask())).ConfigureAwait(false);
             }
         }
@@ -198,14 +256,26 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
         {
             _shutdown.Dispose();
             _queuedShutdown.Dispose();
-            foreach (var database in _databases.Values) database.DisposeDispatch();
+
+            foreach (var database in _databases.Values)
+            {
+                database.DisposeDispatch();
+            }
         }
-        if (failure is null) completion.SetResult();
-        else completion.SetException(failure);
+
+        if (failure is null)
+        {
+            completion.SetResult();
+        }
+        else
+        {
+            completion.SetException(failure);
+        }
     }
 
     /// <inheritdoc />
     public void Dispose() => Close();
+
     /// <inheritdoc />
     public ValueTask DisposeAsync() => new(CloseAsync());
 }

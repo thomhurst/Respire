@@ -9,27 +9,28 @@ namespace Respire.Coordination.Tests;
 public class RateLimiterUpdateTests
 {
     [ClassDataSource<SharedRedis74>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74 Redis { get; init; }
+    public required SharedRedis74 Redis
+    {
+        get; init;
+    }
 
     private static readonly TimeSpan Hour = TimeSpan.FromHours(1);
 
-    private static RateLimiter Create(RespireRateLimiters factory, RespireKey key, int kind, int limit, int queue = 0)
-        => kind switch
-        {
-            0 => factory.FixedWindow(key, limit, Hour, queue),
-            1 => factory.SlidingWindow(key, limit, Hour, 4, queue),
-            2 => factory.TokenBucket(key, limit, 1, Hour, queue),
-            _ => factory.Gcra(key, limit, Hour, queue),
-        };
+    private static RateLimiter Create(RespireRateLimiters factory, RespireKey key, int kind, int limit, int queue = 0) => kind switch
+    {
+        0 => factory.FixedWindow(key, limit, Hour, queue),
+        1 => factory.SlidingWindow(key, limit, Hour, 4, queue),
+        2 => factory.TokenBucket(key, limit, 1, Hour, queue),
+        _ => factory.Gcra(key, limit, Hour, queue),
+    };
 
-    private static RespireRateLimit Define(int kind, int limit, TimeSpan? period = null)
-        => kind switch
-        {
-            0 => RespireRateLimit.FixedWindow(limit, period ?? Hour),
-            1 => RespireRateLimit.SlidingWindow(limit, period ?? Hour, 8),
-            2 => RespireRateLimit.TokenBucket(limit, 1, period ?? Hour),
-            _ => RespireRateLimit.Gcra(limit, period ?? Hour),
-        };
+    private static RespireRateLimit Define(int kind, int limit, TimeSpan? period = null) => kind switch
+    {
+        0 => RespireRateLimit.FixedWindow(limit, period ?? Hour),
+        1 => RespireRateLimit.SlidingWindow(limit, period ?? Hour, 8),
+        2 => RespireRateLimit.TokenBucket(limit, 1, period ?? Hour),
+        _ => RespireRateLimit.Gcra(limit, period ?? Hour),
+    };
 
     [Test]
     [Arguments(0)]
@@ -209,7 +210,9 @@ public class RateLimiterUpdateTests
         var updates = Task.Run(async () =>
         {
             for (var i = 0; i < 20; i++)
+            {
                 await factory.UpdateAsync(limiter, Define(kind, 100, i % 2 == 0 ? TimeSpan.FromHours(2) : Hour));
+            }
         });
         var attempts = Enumerable.Range(0, 200).Select(async _ =>
         {
@@ -282,7 +285,10 @@ public class RateLimiterUpdateTests
 public class RateLimiterUpdateRedis810Tests
 {
     [ClassDataSource<SharedRedis810>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis810 Redis { get; init; }
+    public required SharedRedis810 Redis
+    {
+        get; init;
+    }
 
     [Test]
     public async Task FixedWindowIncrexPreservesUsageAboveTheReducedLimit()

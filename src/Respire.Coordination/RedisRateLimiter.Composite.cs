@@ -18,21 +18,34 @@ internal sealed partial class RedisRateLimiter
             RedisRateLimiterKind.Composite, TimeSpan.FromMilliseconds(1))
     {
         _compositeArguments = new RespireValue[1 + limits.Length];
-        for (var i = 0; i < limits.Length; i++) _compositeArguments[1 + i] = limits[i].Configuration;
+
+        for (var i = 0; i < limits.Length; i++)
+        {
+            _compositeArguments[1 + i] = limits[i].Configuration;
+        }
     }
 
     private static RespireRateLimit[] SnapshotLimits(IReadOnlyList<RespireRateLimit> limits)
     {
         ArgumentNullException.ThrowIfNull(limits);
+
         if (limits.Count is < 1 or > 32)
+        {
             throw new ArgumentOutOfRangeException(nameof(limits), "Specify between one and 32 component limits.");
+        }
+
         var snapshot = new RespireRateLimit[limits.Count];
+
         for (var i = 0; i < snapshot.Length; i++)
         {
             snapshot[i] = limits[i] ?? throw new ArgumentException("Component limits must not be null.", nameof(limits));
+
             if (snapshot[i].Kind == RedisRateLimiterKind.Gcra)
+            {
                 throw new ArgumentException("GCRA is not a composite component.", nameof(limits));
+            }
         }
+
         return snapshot;
     }
 

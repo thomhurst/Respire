@@ -147,13 +147,25 @@ public class StringFastPathWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = client.Strings.GetStreamAsync("key", deadline.Token).AsTask();
-        while (server.CommandsSeen == 0) await Task.Delay(1, deadline.Token);
+
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         if (fragmented)
         {
-            foreach (var value in Encoding.ASCII.GetBytes(attributes)) await server.SendRawAsync([value]);
+            foreach (var value in Encoding.ASCII.GetBytes(attributes))
+            {
+                await server.SendRawAsync([value]);
+            }
+
             await server.SendRawAsync("$5\r\n"u8.ToArray());
         }
-        else await server.SendRawAsync(Encoding.ASCII.GetBytes(attributes + "$5\r\n"));
+        else
+        {
+            await server.SendRawAsync(Encoding.ASCII.GetBytes(attributes + "$5\r\n"));
+        }
         // The stream must be returned before any payload bytes arrive.
         await using var stream = await pending.WaitAsync(deadline.Token);
         await Assert.That(stream).IsNotNull();
@@ -209,9 +221,15 @@ public class StringFastPathWireTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var earlier = client.GetStringAsync("earlier", deadline.Token).AsTask();
         var pending = client.Strings.GetStreamAsync("stream", deadline.Token).AsTask();
-        while (server.CommandsSeen < 2) await Task.Delay(1, deadline.Token);
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(1, deadline.Token);
+        }
+
         await server.SendRawAsync("$5\r\nfirst\r\n$5\r\n"u8.ToArray());
         await using var stream = await pending.WaitAsync(deadline.Token);
+
         try
         {
             await Assert.That(await earlier.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo("first");
@@ -239,7 +257,9 @@ public class StringFastPathWireTests
 #pragma warning disable RESP010
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, SentinelPrimaryName = "primary",
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            SentinelPrimaryName = "primary",
             Endpoints = [new("127.0.0.1", sentinel.Port)],
         });
 #pragma warning restore RESP010
@@ -258,6 +278,7 @@ public class StringFastPathWireTests
         const int chunkSize = 512 * 1024;
         const int chunkCount = totalBytes / chunkSize;
         var chunk = new byte[chunkSize];
+
         for (var index = 0; index < chunk.Length; index++)
         {
             chunk[index] = (byte)(index % 251);
@@ -270,6 +291,7 @@ public class StringFastPathWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var pending = client.Strings.GetStreamAsync("large").AsTask();
         using var commandTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen == 0)
         {
             await Task.Delay(10, commandTimeout.Token);
@@ -284,24 +306,36 @@ public class StringFastPathWireTests
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             var buffer = new byte[64 * 1024];
             var readTotal = 0;
+
             while (true)
             {
                 var read = await stream!.ReadAsync(buffer);
-                if (read == 0) break;
+
+                if (read == 0)
+                {
+                    break;
+                }
+
                 readTotal += read;
                 hash.AppendData(buffer, 0, read);
             }
 
-            if (readTotal != totalBytes) throw new InvalidDataException($"Read {readTotal} of {totalBytes} bytes.");
+            if (readTotal != totalBytes)
+            {
+                throw new InvalidDataException($"Read {readTotal} of {totalBytes} bytes.");
+            }
+
             return hash.GetHashAndReset();
         });
 
         using var expectedHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
         for (var index = 0; index < chunkCount; index++)
         {
             expectedHash.AppendData(chunk);
             await server.SendRawAsync(chunk);
         }
+
         await server.SendRawAsync("\r\n"u8.ToArray());
 
         var actualHash = await readTask.WaitAsync(TimeSpan.FromSeconds(30));
@@ -349,7 +383,12 @@ public class StringFastPathWireTests
         var command = new Cmd1(Verbs.Get, "key");
         var pending = connection.SendBulkStreamAsync(in command, lifetime.Token, "GET");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         await server.SendRawAsync("$10\r\n"u8.ToArray());
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         var read = stream!.ReadAsync(new byte[16]).AsTask();
@@ -361,7 +400,12 @@ public class StringFastPathWireTests
 
         await server.SendRawAsync("abcdefghij\r\n"u8.ToArray());
         var ping = connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING").AsTask();
-        while (server.CommandsSeen < 2) await Task.Delay(10, timeout.Token);
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         await server.SendRawAsync("+PONG\r\n"u8.ToArray());
         using var pong = await ping.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pong.AsString()).IsEqualTo("PONG");
@@ -379,7 +423,12 @@ public class StringFastPathWireTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var command = new Cmd1(Verbs.Get, "key");
         var pending = connection.SendBulkStreamAsync(in command, lifetime.Token, "GET");
-        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         var connectionId = server.ReceivedConnectionIds[0];
         await server.SendRawAsync("$8\r\na"u8.ToArray(), connectionId);
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -387,7 +436,12 @@ public class StringFastPathWireTests
         await Assert.That(await stream!.ReadAsync(firstByte)).IsEqualTo(1);
 
         var ping = connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING").AsTask();
-        while (server.CommandsSeen < 2) await Task.Delay(10, timeout.Token);
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         var retirement = connection.RetireAsync();
         var pendingRead = stream.ReadAsync(new byte[8]).AsTask();
         lifetime.Cancel();
@@ -414,7 +468,12 @@ public class StringFastPathWireTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var command = new Cmd1(Verbs.Get, "key");
         var pending = connection.SendBulkStreamAsync(in command, lifetime.Token, "GET");
-        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         var connectionId = server.ReceivedConnectionIds[0];
         await server.SendRawAsync("$8\r\na"u8.ToArray(), connectionId);
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -571,7 +630,12 @@ public class StringFastPathWireTests
         var command = new Cmd1(Verbs.Get, "key");
         var pending = connection.SendBulkStreamAsync(in command, commandName: "GET");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         await server.SendRawAsync("$10\r\nhello"u8.ToArray());
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -597,7 +661,12 @@ public class StringFastPathWireTests
         var command = new Cmd1(Verbs.Get, "key");
         var pending = connection.SendBulkStreamAsync(in command, commandName: "GET");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         await server.SendRawAsync("$262144\r\n"u8.ToArray());
         var sending = server.SendRawAsync(new byte[256 * 1024]);
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -605,7 +674,11 @@ public class StringFastPathWireTests
 
         await connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         stream!.Dispose();
-        try { await sending.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+        try
+        {
+            await sending.WaitAsync(TimeSpan.FromSeconds(5));
+        }
         catch (Exception error) when (error is IOException or System.Net.Sockets.SocketException or ObjectDisposedException)
         {
             // Closing the unread connection may abort the server's backpressured write.
@@ -621,6 +694,7 @@ public class StringFastPathWireTests
 
         var pending = client.GetStringAsync("key");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen == 0)
         {
             await Task.Delay(10, timeout.Token);
@@ -667,6 +741,7 @@ public class StringFastPathWireTests
         var first = client.GetStringAsync("first", cancellation.Token);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.CommandsSeen == 0)
         {
             await Task.Delay(10, timeout.Token);
@@ -746,6 +821,7 @@ public class StringFastPathWireTests
         var pop = client.Lists.LeftPopAsync("key", waitFor: TimeSpan.FromSeconds(5));
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (!server.ReceivedCommands.Any(static c => c.StartsWith("BLPOP", StringComparison.Ordinal)))
         {
             await Task.Delay(10, timeout.Token);

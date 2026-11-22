@@ -1,6 +1,6 @@
-using Respire.Tests.Networking;
 using Respire.Internal;
 using Respire.Protocol;
+using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -16,25 +16,48 @@ public partial class ErrorMetricsTests
         [Matrix("count", "cancelled", "disposed")] string failure,
         [Matrix(false, true)] bool commandMetrics)
     {
-        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency
-            | (commandMetrics ? RespireMetricGroups.Command : RespireMetricGroups.None) });
+        using var configuration = new MetricConfigurationScope(new()
+        {
+            Groups = RespireMetricGroups.Resiliency
+            | (commandMetrics ? RespireMetricGroups.Command : RespireMetricGroups.None)
+        });
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var cancellation = new CancellationTokenSource();
-        if (failure == "cancelled") cancellation.Cancel();
-        if (failure == "disposed") await client.DisposeAsync();
+
+        if (failure == "cancelled")
+        {
+            cancellation.Cancel();
+        }
+
+        if (failure == "disposed")
+        {
+            await client.DisposeAsync();
+        }
+
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
         var count = failure == "count" ? 0 : 250;
         var pageCancelled = false;
+
         async Task Execute()
         {
             switch (route)
             {
-                case "keys": await First(client.Keys.ScanAsync(countHint: count, cancellationToken: cancellation.Token)); break;
-                case "hash": await First(client.Hashes.ScanAsync("key", countHint: count, cancellationToken: cancellation.Token)); break;
-                case "fields": await First(client.Hashes.ScanFieldsAsync("key", countHint: count, cancellationToken: cancellation.Token)); break;
-                case "set": await First(client.Sets.ScanAsync("key", countHint: count, cancellationToken: cancellation.Token)); break;
-                case "sorted": await First(client.SortedSets.ScanAsync("key", countHint: count, cancellationToken: cancellation.Token)); break;
+                case "keys":
+                    await First(client.Keys.ScanAsync(countHint: count, cancellationToken: cancellation.Token));
+                    break;
+                case "hash":
+                    await First(client.Hashes.ScanAsync("key", countHint: count, cancellationToken: cancellation.Token));
+                    break;
+                case "fields":
+                    await First(client.Hashes.ScanFieldsAsync("key", countHint: count, cancellationToken: cancellation.Token));
+                    break;
+                case "set":
+                    await First(client.Sets.ScanAsync("key", countHint: count, cancellationToken: cancellation.Token));
+                    break;
+                case "sorted":
+                    await First(client.SortedSets.ScanAsync("key", countHint: count, cancellationToken: cancellation.Token));
+                    break;
                 case "fields-page":
                     var fieldsPage = client.Hashes.ScanFieldsPageAsync("key", countHint: count, cancellationToken: cancellation.Token);
                     pageCancelled = fieldsPage.IsCanceled;
@@ -52,15 +75,28 @@ public partial class ErrorMetricsTests
                     break;
             }
         }
+
         var error = await Assert.That(Execute).Throws<Exception>();
+
         if (failure == "cancelled")
         {
             await Assert.That(error is OperationCanceledException).IsTrue();
             await Assert.That(((OperationCanceledException)error!).CancellationToken).IsEqualTo(cancellation.Token);
-            if (route is "fields-page" or "valkey" or "resumable") await Assert.That(pageCancelled).IsTrue();
+
+            if (route is "fields-page" or "valkey" or "resumable")
+            {
+                await Assert.That(pageCancelled).IsTrue();
+            }
         }
-        else if (failure == "disposed") await Assert.That(error).IsTypeOf<ObjectDisposedException>();
-        else await Assert.That(error).IsTypeOf<ArgumentOutOfRangeException>();
+        else if (failure == "disposed")
+        {
+            await Assert.That(error).IsTypeOf<ObjectDisposedException>();
+        }
+        else
+        {
+            await Assert.That(error).IsTypeOf<ArgumentOutOfRangeException>();
+        }
+
         var final = capture.Items.Single();
         await Assert.That(final.Tags["error.type"]).IsEqualTo(error!.GetType().FullName);
         await Assert.That((bool)final.Tags["redis.client.errors.internal"]!).IsFalse();
@@ -81,8 +117,11 @@ public partial class ErrorMetricsTests
     [Arguments(true)]
     public async Task CollectionScanParserPreservesOriginalFailure(bool commandMetrics)
     {
-        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency
-            | (commandMetrics ? RespireMetricGroups.Command : RespireMetricGroups.None) });
+        using var configuration = new MetricConfigurationScope(new()
+        {
+            Groups = RespireMetricGroups.Resiliency
+            | (commandMetrics ? RespireMetricGroups.Command : RespireMetricGroups.None)
+        });
         await using var server = new FakeRespServer("*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var capture = new Capture(throwOnMeasurement: true, commandMetrics: commandMetrics);
@@ -115,10 +154,12 @@ public partial class ErrorMetricsTests
         var entries = route == "keys" ? client.Keys.ScanAsync(cancellationToken: cancellation.Token)
             : client.Sets.ScanAsync("key", cancellationToken: cancellation.Token);
         var enumerator = entries.GetAsyncEnumerator();
+
         try
         {
             await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
             cancellation.Cancel();
+
             if (!abandon)
             {
                 var error = await Assert.That(async () => _ = await enumerator.MoveNextAsync()).Throws<OperationCanceledException>();
@@ -126,6 +167,7 @@ public partial class ErrorMetricsTests
             }
         }
         finally { await enumerator.DisposeAsync(); }
+
         await Assert.That(capture.Items.Count).IsEqualTo(abandon ? 0 : 1);
         var verb = route == "keys" ? "SCAN " : "SSCAN ";
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith(verb, StringComparison.Ordinal))).IsEqualTo(1);

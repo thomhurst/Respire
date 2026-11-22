@@ -7,25 +7,23 @@ using StackExchange.Redis;
 using TUnit.Core;
 using Assert = Xunit.Assert;
 
-namespace Hangfire.Redis.Tests
+namespace Hangfire.Redis.Tests;
+
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[NotInParallel]
+public class RedisTest : UpstreamRedisTest
 {
-    [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-    [NotInParallel]
-    public class RedisTest : UpstreamRedisTest
+    private readonly IDatabase _redis;
+
+    public RedisTest(RedisTestContainer fixture) : base(fixture)
     {
-        private readonly IDatabase _redis;
+        _redis = RedisUtils.ShimDatabase;
+    }
 
-        public RedisTest(RedisTestContainer fixture) : base(fixture)
-        {
-            _redis = RedisUtils.ShimDatabase;
-        }
-
-
-        [Test]
-        public void RedisSampleTest()
-        {
-            var defaultValue = _redis.StringGet("samplekey");
-            Assert.True(defaultValue.IsNull);
-        }
+    [Test]
+    public void RedisSampleTest()
+    {
+        var defaultValue = _redis.StringGet("samplekey");
+        Assert.True(defaultValue.IsNull);
     }
 }

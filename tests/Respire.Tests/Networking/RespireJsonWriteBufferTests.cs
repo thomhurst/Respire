@@ -36,6 +36,7 @@ public partial class RespireJsonClientTests
             TestingStreamFactory = async (host, port, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -54,9 +55,11 @@ public partial class RespireJsonClientTests
         transport!.PauseWrites = true;
         var pending = Write(first, cancellation.Token);
         Task next;
+
         try
         {
             await transport.WriteStarted.Task.WaitAsync(timeout.Token);
+
             if (expire)
             {
                 var connection = client.Core.Multiplexer.GetConnection();
@@ -77,16 +80,21 @@ public partial class RespireJsonClientTests
         {
             transport.ResumeWrites.TrySetResult();
         }
+
         await next.WaitAsync(timeout.Token);
         var frames = server.ReceivedArguments.Where(frame => Encoding.UTF8.GetString(frame[0]) == "JSON." + operation).ToArray();
         await Assert.That(frames.Length).IsEqualTo(2);
         var values = new[] { first, replacement };
+
         for (var index = 0; index < frames.Length; index++)
         {
             var expected = JsonSerializer.SerializeToUtf8Bytes(values[index], info);
             await Assert.That(frames[index][3].AsSpan().SequenceEqual(expected)).IsTrue();
+
             if (operation == "MSET")
+            {
                 await Assert.That(frames[index][6].AsSpan().SequenceEqual(expected)).IsTrue();
+            }
         }
 
         Task Write(TextDocument value, CancellationToken token) => operation switch
@@ -110,11 +118,14 @@ public partial class RespireJsonClientTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, Connections = 1, CommandTimeout = null,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = null,
             Endpoints = [new("127.0.0.1", server.Port)],
             TestingStreamFactory = async (host, port, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -132,6 +143,7 @@ public partial class RespireJsonClientTests
         paused.PauseWrites = true;
         paused.HoldAfterConnectionFault = true;
         var pending = Write(first, deadline.Token);
+
         try
         {
             await paused.WriteStarted.Task.WaitAsync(deadline.Token);
@@ -160,23 +172,57 @@ public partial class RespireJsonClientTests
 
     private sealed class PausedJsonWriteStream(Stream inner) : Stream
     {
-        internal bool PauseWrites { get; set; }
-        internal bool HoldAfterConnectionFault { get; set; }
-        internal ReadOnlyMemory<byte> PendingWrite { get; private set; }
-        internal TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ResumeWrites { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool PauseWrites
+        {
+            get; set;
+        }
+
+        internal bool HoldAfterConnectionFault
+        {
+            get; set;
+        }
+
+        internal ReadOnlyMemory<byte> PendingWrite
+        {
+            get; private set;
+        }
+
+        internal TaskCompletionSource WriteStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ResumeWrites
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override bool CanRead => true;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => true;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
         public override void Flush() => inner.Flush();
+
         public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
         public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             => inner.ReadAsync(buffer, cancellationToken);
+
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
             if (PauseWrites)
@@ -188,16 +234,30 @@ public partial class RespireJsonClientTests
                     await inner.WriteAsync(buffer[..17], cancellationToken);
                     buffer = buffer[17..];
                 }
+
                 PendingWrite = buffer;
                 WriteStarted.TrySetResult();
-                if (HoldAfterConnectionFault) await ResumeWrites.Task;
-                else await ResumeWrites.Task.WaitAsync(cancellationToken);
+
+                if (HoldAfterConnectionFault)
+                {
+                    await ResumeWrites.Task;
+                }
+                else
+                {
+                    await ResumeWrites.Task.WaitAsync(cancellationToken);
+                }
             }
+
             await inner.WriteAsync(buffer, cancellationToken);
         }
+
         protected override void Dispose(bool disposing)
         {
-            if (disposing) inner.Dispose();
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
             base.Dispose(disposing);
         }
     }
@@ -233,8 +293,11 @@ public partial class RespireJsonClientTests
         await Assert.That(frames.Length).IsEqualTo(3);
         await Assert.That(frames[0][3]).IsEquivalentTo(expected[1]);
         await Assert.That(frames[1][3]).IsEquivalentTo(expected[0]);
+
         for (var index = 0; index < entries.Length; index++)
+        {
             await Assert.That(frames[2][index * 3 + 3]).IsEquivalentTo(expected[Math.Min(index, expected.Length - 1)]);
+        }
     }
 
     [Test]
@@ -265,9 +328,13 @@ public partial class RespireJsonClientTests
         await Task.WhenAll(values.Select((value, index) => json.SetAsync($"key:{index}", value, contexts[index % 2].TextDocument).AsTask()));
         // Exercise reuse after concurrent returns, including an options mismatch.
         for (var index = 0; index < 2; index++)
+        {
             await json.SetAsync($"repeat:{index}", values[index], contexts[index].TextDocument);
+        }
+
         var frames = server.ReceivedArguments.Where(frame => Encoding.UTF8.GetString(frame[0]) == "JSON.SET").ToArray();
         await Assert.That(frames.Length).IsEqualTo(18);
+
         foreach (var frame in frames)
         {
             var key = Encoding.UTF8.GetString(frame[1]);
@@ -277,6 +344,7 @@ public partial class RespireJsonClientTests
     }
 
     private sealed record TextDocument(string Text);
+
     [JsonSerializable(typeof(TextDocument))]
     private sealed partial class JsonWriteContext : JsonSerializerContext;
 }

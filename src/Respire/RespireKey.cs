@@ -43,7 +43,11 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
     {
         get
         {
-            if (_prefix is not null) return AsValue().GetPrefixedClusterSlot();
+            if (_prefix is not null)
+            {
+                return AsValue().GetPrefixedClusterSlot();
+            }
+
             return _string is not null ? Internal.ClusterHash.GetSlot(_string) : Internal.ClusterHash.GetSlot(_bytes.Span);
         }
     }
@@ -66,14 +70,22 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
     /// <summary>The key as a command argument.</summary>
     internal RespireValue AsValue()
     {
-        if (_prefix is not null) return RespireValue.Prefixed(_prefix, _string, _bytes);
+        if (_prefix is not null)
+        {
+            return RespireValue.Prefixed(_prefix, _string, _bytes);
+        }
+
         return _string is not null ? new RespireValue(_string) : new RespireValue(_bytes);
     }
 
     /// <summary>Returns a key whose storage cannot be changed by the original caller.</summary>
     internal RespireKey Snapshot()
     {
-        if (_string is not null) return this;
+        if (_string is not null)
+        {
+            return this;
+        }
+
         var bytes = _bytes.ToArray();
         return _prefix is not null ? new RespireKey(_prefix, null, bytes) : new RespireKey(bytes);
     }
@@ -83,7 +95,11 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
 
     internal byte[] ToBytes()
     {
-        if (_prefix is null) return _string is null ? _bytes.ToArray() : Encoding.UTF8.GetBytes(_string);
+        if (_prefix is null)
+        {
+            return _string is null ? _bytes.ToArray() : Encoding.UTF8.GetBytes(_string);
+        }
+
         return _prefix.Materialize(_string, _bytes);
     }
 
@@ -92,7 +108,11 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
     {
         get
         {
-            if (_prefix is null) return _string;
+            if (_prefix is null)
+            {
+                return _string;
+            }
+
             return _prefix.Text is not null && _string is not null ? _prefix.Text + _string : null;
         }
     }
@@ -101,19 +121,28 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
     {
         get
         {
-            if (_prefix is not null) return _prefix.GetWireLength(_string, _bytes);
+            if (_prefix is not null)
+            {
+                return _prefix.GetWireLength(_string, _bytes);
+            }
+
             return _string is not null ? Encoding.UTF8.GetByteCount(_string) : _bytes.Length;
         }
     }
 
     internal bool StartsWithAny(Internal.ClientCachePrefixSet prefixes)
     {
-        if (_prefix is null && _string is null) return prefixes.Matches(_bytes.Span);
+        if (_prefix is null && _string is null)
+        {
+            return prefixes.Matches(_bytes.Span);
+        }
+
         var length = WireLength;
         byte[]? rented = null;
-        // stackalloc-audit[7d544854f6f47cb4]: init: WriteWirePayload writes the key payload and returns its length;
+        // stackalloc-audit[b0d2ca6098890291]: init: WriteWirePayload writes the key payload and returns its length;
         // read: Matches reads encoded[..written], the written bytes; failure: a writer throw exits through finally before any read.
         Span<byte> encoded = length <= 256 ? stackalloc byte[length] : (rented = ArrayPool<byte>.Shared.Rent(length));
+
         try
         {
             var written = AsValue().WriteWirePayload(encoded);
@@ -121,7 +150,10 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
         }
         finally
         {
-            if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
         }
     }
 
@@ -129,12 +161,17 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
     internal RespireKey Prepend(Internal.KeyPrefix prefix, bool snapshotBinaryKeys = false)
     {
         if (_prefix is not null && _prefix.TryComposeScanKey(prefix, _bytes, snapshotBinaryKeys, out var scanKey))
+        {
             return scanKey;
+        }
         // Reapplying a prefix to an already resolved key preserves the original text/binary semantics.
         // ToBytes owns a fresh snapshot; copying that storage again would allocate unnecessarily.
         if (_prefix is not null)
+        {
             return (_string is not null && _prefix.Text is not null ? new RespireKey(ToString()) : new RespireKey(ToBytes()))
                 .Prepend(prefix, snapshotBinaryKeys: false);
+        }
+
         return new RespireKey(prefix, _string,
             _string is null && snapshotBinaryKeys ? _bytes.ToArray() : _bytes);
     }
@@ -142,7 +179,11 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
     /// <summary>Resolves a command argument without copying through an intermediate prefixed key.</summary>
     internal RespireValue PrependAsValue(Internal.KeyPrefix prefix, bool snapshotBinaryKeys)
     {
-        if (_prefix is not null) return Prepend(prefix, snapshotBinaryKeys).AsValue();
+        if (_prefix is not null)
+        {
+            return Prepend(prefix, snapshotBinaryKeys).AsValue();
+        }
+
         return RespireValue.Prefixed(prefix, _string,
             _string is null && snapshotBinaryKeys ? _bytes.ToArray() : _bytes);
     }
@@ -166,7 +207,11 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
     /// <inheritdoc/>
     public override string ToString()
     {
-        if (_prefix is null) return _string ?? Internal.Utf8String.GetString(_bytes);
+        if (_prefix is null)
+        {
+            return _string ?? Internal.Utf8String.GetString(_bytes);
+        }
+
         return _prefix.GetString(_string, _bytes);
     }
 
@@ -175,11 +220,15 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
     {
         var owner = _prefix?.ScanOwnerPrefix;
         var otherOwner = other._prefix?.ScanOwnerPrefix;
+
         if (owner is not null || otherOwner is not null)
+        {
             return owner is not null && otherOwner is not null
                 && StringComparer.Ordinal.Equals(owner, otherOwner)
                 && StringComparer.Ordinal.Equals(_prefix!.Text, other._prefix!.Text)
                 && _bytes.Span.SequenceEqual(other._bytes.Span);
+        }
+
         return AsValue().Equals(other.AsValue());
     }
 
@@ -190,7 +239,10 @@ public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormatt
     public override int GetHashCode()
     {
         if (_prefix?.ScanOwnerPrefix is { } owner)
+        {
             return HashCode.Combine(owner, _prefix.Text, new RespireValue(_bytes).GetHashCode());
+        }
+
         return AsValue().GetHashCode();
     }
 }

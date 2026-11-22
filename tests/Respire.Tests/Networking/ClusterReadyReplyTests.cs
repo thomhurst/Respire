@@ -42,6 +42,7 @@ public class ClusterReadyReplyTests
         await Assert.That(connection.ReplicaRedirectsEnabled).IsFalse();
         await Assert.That(server.ReceivedCommands.Contains("CLIENT CAPA REDIRECT")).IsFalse();
         server.SuppressReply = command => command.StartsWith(operation + " ", StringComparison.Ordinal);
+
         switch (shape)
         {
             case "string":
@@ -56,23 +57,33 @@ public class ClusterReadyReplyTests
                 await Verify(client.Strings.LengthAsync("ready"), "ConvertedPendingResponseSource",
                     ":5\r\n"u8.ToArray(), static value => value == 5);
                 break;
-            default: throw new ArgumentOutOfRangeException(nameof(shape));
+            default:
+                throw new ArgumentOutOfRangeException(nameof(shape));
         }
 
         async Task Verify<T>(ValueTask<T> response, string sourceName, byte[] reply, Func<T, bool> valid)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
             while (!server.ReceivedCommands.Any(command => command.StartsWith(operation + " ", StringComparison.Ordinal)))
+            {
                 await Task.Delay(1, timeout.Token);
+            }
+
             var index = Enumerable.Range(0, server.ReceivedCommands.Count).Single(i =>
                 server.ReceivedCommands[i].StartsWith(operation + " ", StringComparison.Ordinal));
+
             try
             {
                 // Admission is quiescent and the only response remains suppressed.
                 await Assert.That(connection.InspectForTests().Inflight.TryPeek(out var pending)).IsTrue();
                 // The normal HTML reporter enables tracing. Its lane must retain the full
                 // instrumented path; CI's reporter-disabled lane verifies specialized sources.
-                if (RespireTelemetry.IsOperationEnabled(operation)) sourceName = "PendingResponseSource";
+                if (RespireTelemetry.IsOperationEnabled(operation))
+                {
+                    sourceName = "PendingResponseSource";
+                }
+
                 await Assert.That(pending!.GetType().Name.Split('`')[0]).IsEqualTo(sourceName);
             }
             finally
@@ -103,6 +114,7 @@ public class ClusterReadyReplyTests
         var topologyReads = server.ReceivedCommands.Count(command => command == "CLUSTER SLOTS");
         var conversions = 0;
         Exception? actual = null;
+
         try
         {
             await client.ConvertResponseAsync<Cmd1, Exception, long>("GET", new(Verbs.Get, "ready"), timeout.Token,
@@ -140,15 +152,28 @@ public class ClusterReadyReplyTests
         var topology = Slots(source.Port);
         source.ReplyOverride = (_, command) =>
         {
-            if (command == "CLUSTER SLOTS") return topology;
-            if (command != operation + " ready") return null;
-            if (code != "ASK") topology = Slots(target.Port);
+            if (command == "CLUSTER SLOTS")
+            {
+                return topology;
+            }
+
+            if (command != operation + " ready")
+            {
+                return null;
+            }
+
+            if (code != "ASK")
+            {
+                topology = Slots(target.Port);
+            }
+
             return Encoding.ASCII.GetBytes($"-{code} {slot} 127.0.0.1:{target.Port}\r\n");
         };
 #pragma warning disable RESP010 // Test-owned client isolates ready-reply ownership and recovery state on the scripted endpoints.
         await using var client = await RespireClient.ConnectAsync(Options(source));
 #pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         switch (shape)
         {
             case "string":
@@ -160,7 +185,8 @@ public class ClusterReadyReplyTests
             case "integer":
                 await Assert.That(await client.Strings.LengthAsync("ready", timeout.Token)).IsEqualTo(5L);
                 break;
-            default: throw new ArgumentOutOfRangeException(nameof(shape));
+            default:
+                throw new ArgumentOutOfRangeException(nameof(shape));
         }
 
         await Assert.That(source.ReceivedCommands.Count(command => command == operation + " ready")).IsEqualTo(1);
@@ -192,6 +218,7 @@ public class ClusterReadyReplyTests
         await using var client = await RespireClient.ConnectAsync(Options(source));
 #pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         for (var round = 0; round < 4; round++)
         {
             var results = await Task.WhenAll(Enumerable.Range(0, 64)
@@ -219,12 +246,17 @@ public class ClusterReadyReplyTests
         var admissions = 0;
         var command = new AdmissionCommand(shape == "integer" ? Verbs.StrLen : Verbs.Get, () =>
         {
-            if (++admissions != 1) return;
+            if (++admissions != 1)
+            {
+                return;
+            }
+
             source.ReplyOverride = (_, received) => received == "CLUSTER SLOTS" ? Slots(target.Port) : null;
             var router = client.Core.Cluster!;
             router.SetSlotOwner(ClusterHash.GetSlot("ready"), router.GetMultiplexer(new("127.0.0.1", target.Port)));
             throw new RespireConnectionRetiredException("127.0.0.1", source.Port);
         });
+
         switch (shape)
         {
             case "string":
@@ -237,6 +269,7 @@ public class ClusterReadyReplyTests
                 await Assert.That(await client.IntegerAsync("STRLEN", command, timeout.Token)).IsEqualTo(5L);
                 break;
         }
+
         var operation = shape == "integer" ? "STRLEN ready" : "GET ready";
         await Assert.That(source.ReceivedCommands.Count(received => received == operation)).IsEqualTo(0);
         await Assert.That(target.ReceivedCommands.Count(received => received == operation)).IsEqualTo(1);
@@ -269,19 +302,25 @@ public class ClusterReadyReplyTests
     private readonly struct AdmissionCommand(Verb verb, Action admit) : IRespCommand
     {
         public ReadCommandKind ReadKind => verb.ReadKind;
+
         public void ValidateAdmission() => admit();
+
         public bool TryGetClusterSlot(out int slot)
         {
             slot = ClusterHash.GetSlot("ready");
             return true;
         }
+
         public void Write(ref RespWriter writer) => new Cmd1(verb, "ready").Write(ref writer);
     }
 
     private static RespireOptions Options(FakeRespServer server) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], UseCluster = true,
-        Protocol = RespireProtocol.Resp2, Connections = 1, ThreadPoolMonitoring = false,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        UseCluster = true,
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
     };
 
     private static FakeRespServer Primary()

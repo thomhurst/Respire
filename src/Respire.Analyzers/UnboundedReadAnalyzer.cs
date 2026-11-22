@@ -16,7 +16,10 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
         description: "Whole-collection reads can stall Redis and allocate large replies. Scan or read bounded pages instead.",
         helpLinkUri: "https://respire.tomlonghurst.dev/docs/diagnostics/RESP011");
 
-    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
+    public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
+    {
+        get;
+    } = ImmutableArray.Create(Rule);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -29,13 +32,23 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
     {
         var call = (IInvocationOperation)context.Operation;
         var name = call.TargetMethod.Name;
+
         if (name is not ("KeysAsync" or "MembersAsync" or "GetAllAsync"
-            or "RangeAsync" or "Range" or "RangeWithScoresAsync" or "RangeWithScores")) return;
+            or "RangeAsync" or "Range" or "RangeWithScoresAsync" or "RangeWithScores"))
+        {
+            return;
+        }
+
         var type = call.TargetMethod.ContainingType;
-        if (type.ContainingNamespace.ToDisplayString() != "Respire") return;
+
+        if (type.ContainingNamespace.ToDisplayString() != "Respire")
+        {
+            return;
+        }
 
         var command = "";
         var alternative = "";
+
         switch (type.Name)
         {
             case "RespireServerNode" when name == "KeysAsync":
@@ -51,15 +64,19 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
                 command = "HGETALL";
                 alternative = "HSCAN (Hashes.ScanAsync)";
                 break;
-            case "IRespireListCommands" or "ListCommands" or "IRespireBatchListCommands" or "BatchListCommands"
-                when name is "RangeAsync" or "Range":
-                if (!HasConstantArgument(call, "start", 0) || !HasConstantArgument(call, "stop", -1)) return;
+            case "IRespireListCommands" or "ListCommands" or "IRespireBatchListCommands" or "BatchListCommands" when name is "RangeAsync" or "Range":
+                if (!HasConstantArgument(call, "start", 0) || !HasConstantArgument(call, "stop", -1))
+                {
+                    return;
+                }
                 command = "LRANGE 0 -1";
                 alternative = "bounded LRANGE pages";
                 break;
-            case "IRespireSortedSetCommands" or "SortedSetCommands" or "IRespireBatchSortedSetCommands" or "BatchSortedSetCommands"
-                when name is "RangeAsync" or "Range" or "RangeWithScoresAsync" or "RangeWithScores":
-                if (!HasConstantArgument(call, "start", 0) || !HasConstantArgument(call, "stop", -1)) return;
+            case "IRespireSortedSetCommands" or "SortedSetCommands" or "IRespireBatchSortedSetCommands" or "BatchSortedSetCommands" when name is "RangeAsync" or "Range" or "RangeWithScoresAsync" or "RangeWithScores":
+                if (!HasConstantArgument(call, "start", 0) || !HasConstantArgument(call, "stop", -1))
+                {
+                    return;
+                }
                 command = "ZRANGE 0 -1";
                 alternative = name is "Range" or "RangeWithScores"
                     ? "bounded rank ranges" : "ZSCAN (SortedSets.ScanAsync) or bounded rank ranges";
@@ -67,7 +84,9 @@ public sealed class UnboundedReadAnalyzer : DiagnosticAnalyzer
         }
 
         if (command.Length != 0)
+        {
             context.ReportDiagnostic(Diagnostic.Create(Rule, call.Syntax.GetLocation(), command, alternative));
+        }
     }
 
     private static bool HasConstantArgument(IInvocationOperation call, string name, long expected)

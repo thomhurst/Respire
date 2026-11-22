@@ -10,7 +10,10 @@ namespace Respire.Analyzers.Tests;
 /// </summary>
 internal static class GeneratorTestReferences
 {
-    public static IReadOnlyList<MetadataReference> All { get; } = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")
+    public static IReadOnlyList<MetadataReference> All
+    {
+        get;
+    } = ((string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")
         ?? throw new InvalidOperationException("Missing runtime assembly references."))
         .Split(Path.PathSeparator)
         .Append(typeof(RespireCommand).Assembly.Location)

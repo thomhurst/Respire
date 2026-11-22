@@ -19,11 +19,18 @@ public class ServerNodeCommandTests
     {
         var options = new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Database = 4, ClientName = "configured", UseCluster = true,
-            ClientAvailabilityZone = "zone", ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            Database = 4,
+            ClientName = "configured",
+            UseCluster = true,
+            ClientAvailabilityZone = "zone",
+            ClientSideCache = new(),
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            Username = "user", Password = "password", UseTls = true,
-            ConnectTimeout = TimeSpan.FromSeconds(7), CommandTimeout = TimeSpan.FromSeconds(11),
+            Username = "user",
+            Password = "password",
+            UseTls = true,
+            ConnectTimeout = TimeSpan.FromSeconds(7),
+            CommandTimeout = TimeSpan.FromSeconds(11),
             ConnectionIdleReadTimeout = TimeSpan.FromSeconds(13),
         };
         var ordinary = options.ToConnectionOptions(enableClientTracking: true, enableMaintenanceNotifications: true);
@@ -58,12 +65,15 @@ public class ServerNodeCommandTests
 #pragma warning disable RESP010 // This endpoint test owns a lazy client with a redirected test transport to inspect Unix node setup from a TCP client.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 6379)], Protocol = RespireProtocol.Resp3, AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", 6379)],
+            Protocol = RespireProtocol.Resp3,
+            AllowAdmin = true,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             TestingStreamFactory = async (host, port, token) =>
             {
                 opened.TrySetResult(new(host, port));
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync("127.0.0.1", target.Port, token);
@@ -90,7 +100,11 @@ public class ServerNodeCommandTests
         var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = command =>
         {
-            if (!command.StartsWith("MIGRATE ", StringComparison.Ordinal)) return extend && command == "SCRIPT KILL";
+            if (!command.StartsWith("MIGRATE ", StringComparison.Ordinal))
+            {
+                return extend && command == "SCRIPT KILL";
+            }
+
             received.TrySetResult(target.ReceivedConnectionIds[^1]);
             return true;
         };
@@ -99,7 +113,9 @@ public class ServerNodeCommandTests
 #pragma warning disable RESP010 // This timeout test owns the client whose inherited budget must remain unchanged by a node MIGRATE override.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 6379)], Protocol = RespireProtocol.Resp2, AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", 6379)],
+            Protocol = RespireProtocol.Resp2,
+            AllowAdmin = true,
             CommandTimeout = extend ? shortBudget : longBudget,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
@@ -108,6 +124,7 @@ public class ServerNodeCommandTests
         var migration = node.MigrateAsync(new("destination", 6382), ["key"], 0, TimeSpan.FromSeconds(1),
             new() { CommandTimeout = extend ? longBudget : shortBudget }).AsTask();
         var connection = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (extend)
         {
             // A real inherited deadline expires before releasing the overridden migration.
@@ -122,6 +139,7 @@ public class ServerNodeCommandTests
             await Assert.That(error!.CommandName).IsEqualTo("MIGRATE");
             await node.ScriptKillAsync();
         }
+
         await Assert.That(client.Core.Options.CommandTimeout).IsEqualTo(extend ? shortBudget : longBudget);
         await Assert.That(target.ReceivedCommands).IsEquivalentTo([
             "MIGRATE destination 6382  0 1000 KEYS key", "SCRIPT KILL"]);
@@ -137,7 +155,8 @@ public class ServerNodeCommandTests
 #pragma warning disable RESP010 // This validation test creates an unconnected client to prove invalid MIGRATE timeouts never open a socket.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 6379)], AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", 6379)],
+            AllowAdmin = true,
         });
 #pragma warning restore RESP010
         var error = await Assert.That(async () => await client.Server.OnNode(new("127.0.0.1", target.Port))
@@ -152,12 +171,17 @@ public class ServerNodeCommandTests
     {
         await using var target = Server(1);
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        target.SuppressReply = _ => { received.TrySetResult(); return true; };
+        target.SuppressReply = _ =>
+        {
+            received.TrySetResult();
+            return true;
+        };
         var opened = new TaskCompletionSource<GatedWriteStream>(TaskCreationOptions.RunContinuationsAsynchronously);
 #pragma warning disable RESP010 // This shutdown test owns a client with a gated write transport to inspect completion and disposal ordering.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 6379)], AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", 6379)],
+            AllowAdmin = true,
             TestingStreamFactory = async (host, port, token) =>
             {
                 var stream = await GatedWriteStream.ConnectAsync(host, port, received.Task, token);
@@ -168,6 +192,7 @@ public class ServerNodeCommandTests
 #pragma warning restore RESP010
         var pending = client.Server.OnNode(new("127.0.0.1", target.Port)).SendShutdownAsync().AsTask();
         var transport = await opened.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         try
         {
             await transport.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -176,6 +201,7 @@ public class ServerNodeCommandTests
             await Assert.That(target.ReceivedCommands).IsEmpty();
         }
         finally { transport.ReleaseWrite.TrySetResult(); }
+
         await pending.WaitAsync(TimeSpan.FromSeconds(5));
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
@@ -193,14 +219,20 @@ public class ServerNodeCommandTests
         await using var client = await Connect(seed.Port, protocol, admin: true);
         await client.Server.OnNode(new("127.0.0.1", target.Port)).FailoverAsync(new()
         {
-            Target = new("replica", 6380), Force = true, Timeout = TimeSpan.FromMilliseconds(123),
+            Target = new("replica", 6380),
+            Force = true,
+            Timeout = TimeSpan.FromMilliseconds(123),
         });
         byte[][] expected = ["FAILOVER"u8.ToArray(), "TO"u8.ToArray(), "replica"u8.ToArray(), "6380"u8.ToArray(),
             "FORCE"u8.ToArray(), "TIMEOUT"u8.ToArray(), "123"u8.ToArray()];
         var actual = target.ReceivedArguments[^1];
         await Assert.That(actual.Length).IsEqualTo(expected.Length);
+
         for (var index = 0; index < expected.Length; index++)
+        {
             await Assert.That(actual[index].AsSpan().SequenceEqual(expected[index])).IsTrue();
+        }
+
         await Assert.That(Commands(seed)).IsEmpty();
     }
 
@@ -218,7 +250,11 @@ public class ServerNodeCommandTests
         await using var target = Server(1);
         target.ReplyOverride = (_, command) =>
         {
-            if (!command.StartsWith("MIGRATE ", StringComparison.Ordinal)) return null;
+            if (!command.StartsWith("MIGRATE ", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
             return fail ? "-ERR migration refused\r\n"u8.ToArray() : FakeRespServer.OkReply;
         };
         using var logger = new DiagnosticCapture();
@@ -226,8 +262,11 @@ public class ServerNodeCommandTests
 #pragma warning disable RESP010 // This telemetry test owns its client and logger to check MIGRATE credentials against captured diagnostics.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", seed.Port)], Connections = 1, Protocol = RespireProtocol.Resp2,
-            AllowAdmin = true, LoggerFactory = logger,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            AllowAdmin = true,
+            LoggerFactory = logger,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
 #pragma warning restore RESP010
@@ -239,7 +278,9 @@ public class ServerNodeCommandTests
             ActivityStopped = activity =>
             {
                 if (activity.GetTagItem("db.operation.name") as string == "MIGRATE" && TestTelemetry.IsFrom(activity, target.Port))
+                {
                     activities.Enqueue(activity);
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -248,23 +289,34 @@ public class ServerNodeCommandTests
         meter.InstrumentPublished = (instrument, owner) =>
         {
             if (instrument.Meter.Name == RespireTelemetry.Meter.Name && instrument.Name == "db.client.operation.duration")
+            {
                 owner.EnableMeasurementEvents(instrument);
+            }
         };
         meter.SetMeasurementEventCallback<double>((_, _, tags, _) =>
         {
             if (TestTelemetry.IsFrom(tags, target.Port))
+            {
                 measurements.Enqueue(string.Join('\n', tags.ToArray().Select(tag => $"{tag.Key}={tag.Value}")));
+            }
         });
         meter.Start();
         RespireServerException? error = null;
+
         try
         {
             await client.Server.OnNode(new("127.0.0.1", target.Port)).MigrateAsync(new("destination", 6382), ["key"],
                 0, TimeSpan.FromSeconds(1), new() { Password = password, Username = auth2 ? username : null });
         }
         catch (RespireServerException caught) { error = caught; }
+
         await Assert.That(error is not null).IsEqualTo(fail);
-        if (error is not null) await Assert.That(error.CommandName).IsEqualTo("MIGRATE");
+
+        if (error is not null)
+        {
+            await Assert.That(error.CommandName).IsEqualTo("MIGRATE");
+        }
+
         var activity = activities.Single();
         await Assert.That(activity.DisplayName).IsEqualTo("MIGRATE");
         await Assert.That(activity.Status).IsEqualTo(fail ? ActivityStatusCode.Error : ActivityStatusCode.Unset);
@@ -368,7 +420,11 @@ public class ServerNodeCommandTests
         var authenticating = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = command =>
         {
-            if (!command.StartsWith("AUTH ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("AUTH ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             authenticating.TrySetResult(target.ReceivedConnectionIds[^1]);
             return true;
         };
@@ -381,8 +437,12 @@ public class ServerNodeCommandTests
 #pragma warning disable RESP010 // This snapshot test owns an authenticated client whose node handshake is paused while binary inputs change.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", seed.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
-            Username = "user", Password = "password", AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Username = "user",
+            Password = "password",
+            AllowAdmin = true,
         });
 #pragma warning restore RESP010
         byte[] bytes = [255, 0];
@@ -403,8 +463,10 @@ public class ServerNodeCommandTests
 
 #pragma warning disable RESP011 // The fake node returns a fixed empty KEYS array; this probe checks input snapshots across its gated AUTH handshake.
         async Task ReadKeys() => _ = await node.KeysAsync(bytes);
+
 #pragma warning restore RESP011
         async Task ReadCommandKeys() => _ = await node.CommandGetKeysAndFlagsAsync("GET", [bytes]);
+
         async Task Migrate() => _ = await node.MigrateAsync(new("destination", 6379), [bytes], 0, TimeSpan.FromSeconds(1));
     }
 
@@ -417,15 +479,25 @@ public class ServerNodeCommandTests
         var parked = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (command != "INFO") return false;
+            if (command != "INFO")
+            {
+                return false;
+            }
+
             parked.TrySetResult(server.ReceivedConnectionIds[^1]);
             return true;
         };
 #pragma warning disable RESP010 // This busy-control test owns a configured client whose ordinary INFO socket is parked while a control socket runs.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Protocol = RespireProtocol.Resp3,
-            Database = 4, ClientName = "configured", Username = "default", Password = "password", AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            Database = 4,
+            ClientName = "configured",
+            Username = "default",
+            Password = "password",
+            AllowAdmin = true,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
 #pragma warning restore RESP010
@@ -450,15 +522,22 @@ public class ServerNodeCommandTests
         var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         target.SuppressReply = command =>
         {
-            if (!command.StartsWith("SWAPDB ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("SWAPDB ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             received.TrySetResult(target.ReceivedConnectionIds[^1]);
             return true;
         };
 #pragma warning disable RESP010 // This node-mutation test owns its cached client to isolate SWAPDB success and failure fences.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", seed.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
-            ClientSideCache = new(), AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ClientSideCache = new(),
+            AllowAdmin = true,
         });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
@@ -468,8 +547,16 @@ public class ServerNodeCommandTests
         await Assert.That(cache.Count).IsEqualTo(0);
         Insert();
         await target.SendRawAsync(fail ? "-ERR swap rejected\r\n"u8.ToArray() : FakeRespServer.OkReply, connection);
-        if (fail) await Assert.That(async () => await pending).ThrowsExactly<RespireServerException>();
-        else await pending;
+
+        if (fail)
+        {
+            await Assert.That(async () => await pending).ThrowsExactly<RespireServerException>();
+        }
+        else
+        {
+            await pending;
+        }
+
         await Assert.That(cache.Count).IsEqualTo(0);
 
         void Insert()
@@ -501,11 +588,17 @@ public class ServerNodeCommandTests
     {
         await using var target = Server(1);
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        target.SuppressReply = _ => { received.TrySetResult(); return true; };
+        target.SuppressReply = _ =>
+        {
+            received.TrySetResult();
+            return true;
+        };
 #pragma warning disable RESP010 // This shutdown test owns its client and test transport until the peer records the command without replying.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", target.Port)], Protocol = RespireProtocol.Resp3, AllowAdmin = true,
+            Endpoints = [new("127.0.0.1", target.Port)],
+            Protocol = RespireProtocol.Resp3,
+            AllowAdmin = true,
             TestingStreamFactory = async (host, port, token) =>
             {
                 var stream = await GatedWriteStream.ConnectAsync(host, port, received.Task, token);
@@ -533,15 +626,19 @@ public class ServerNodeCommandTests
                 target.ReadGate = releaseRead.Task;
                 return false;
             }
+
             received.TrySetResult();
             return true;
         };
 #pragma warning disable RESP010 // This shutdown test owns an authenticated client whose peer read is gated to distinguish local write completion.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", target.Port)], Protocol = RespireProtocol.Resp3,
-            AllowAdmin = true, Password = "password",
+            Endpoints = [new("127.0.0.1", target.Port)],
+            Protocol = RespireProtocol.Resp3,
+            AllowAdmin = true,
+            Password = "password",
         });
+
 #pragma warning restore RESP010
         try
         {
@@ -551,6 +648,7 @@ public class ServerNodeCommandTests
             await Assert.That(target.ReceivedCommands).IsEquivalentTo(["AUTH password"]);
         }
         finally { releaseRead.TrySetResult(); }
+
         await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
@@ -561,7 +659,8 @@ public class ServerNodeCommandTests
         await using var target = Server(1);
         await using var client = await Connect(seed.Port, 2, admin: true);
         var node = client.Server.OnNode(new("127.0.0.1", target.Port));
-        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
         await Assert.That(async () => await node.ScriptKillAsync(cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(async () => await node.AclGeneratePasswordAsync(0)).ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(async () => await node.AclGeneratePasswordAsync(1025)).ThrowsExactly<ArgumentOutOfRangeException>();
@@ -584,11 +683,16 @@ public class ServerNodeCommandTests
         await using var seed = Server(1);
         await using var target = Server(1);
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        target.SuppressReply = _ => { received.TrySetResult(); return true; };
+        target.SuppressReply = _ =>
+        {
+            received.TrySetResult();
+            return true;
+        };
         await using var client = await Connect(seed.Port, 2, admin: true);
         using var cancellation = new CancellationTokenSource();
         var pending = client.Server.OnNode(new("127.0.0.1", target.Port)).ScriptKillAsync(cancellation.Token).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (disposeClient)
         {
             await client.DisposeAsync();
@@ -599,21 +703,31 @@ public class ServerNodeCommandTests
             cancellation.Cancel();
             await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         }
+
         await target.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(target.ReceivedCommands).IsEquivalentTo(["SCRIPT KILL"]);
     }
 
     private static Task Mutate(RespireServerNode node, string operation) => operation switch
     {
-        "load" => node.AclLoadAsync().AsTask(), "save" => node.AclSaveAsync().AsTask(),
-        "shutdown" => node.SendShutdownAsync().AsTask(), "abort-shutdown" => node.AbortShutdownAsync().AsTask(),
-        "failover" => node.FailoverAsync().AsTask(), "abort-failover" => node.AbortFailoverAsync().AsTask(),
-        "replica" => node.ReplicaOfAsync(new("primary", 6379)).AsTask(), "promote" => node.PromoteToPrimaryAsync().AsTask(),
-        "swap" => node.SwapDatabasesAsync(0, 1).AsTask(), "module-load" => node.ModuleLoadAsync("/module.so", []).AsTask(),
-        "module-loadex" => node.ModuleLoadExtendedAsync("/module.so", [], []).AsTask(), "module-unload" => node.ModuleUnloadAsync("module").AsTask(),
-        "script-kill" => node.ScriptKillAsync().AsTask(), "function-kill" => node.FunctionKillAsync().AsTask(),
-        "backup-start" => node.BackupStartAsync().AsTask(), "backup-seal" => node.BackupSealAsync().AsTask(),
-        "backup-abort" => node.BackupAbortAsync().AsTask(), "backup-cleanup" => node.BackupCleanupAsync().AsTask(),
+        "load" => node.AclLoadAsync().AsTask(),
+        "save" => node.AclSaveAsync().AsTask(),
+        "shutdown" => node.SendShutdownAsync().AsTask(),
+        "abort-shutdown" => node.AbortShutdownAsync().AsTask(),
+        "failover" => node.FailoverAsync().AsTask(),
+        "abort-failover" => node.AbortFailoverAsync().AsTask(),
+        "replica" => node.ReplicaOfAsync(new("primary", 6379)).AsTask(),
+        "promote" => node.PromoteToPrimaryAsync().AsTask(),
+        "swap" => node.SwapDatabasesAsync(0, 1).AsTask(),
+        "module-load" => node.ModuleLoadAsync("/module.so", []).AsTask(),
+        "module-loadex" => node.ModuleLoadExtendedAsync("/module.so", [], []).AsTask(),
+        "module-unload" => node.ModuleUnloadAsync("module").AsTask(),
+        "script-kill" => node.ScriptKillAsync().AsTask(),
+        "function-kill" => node.FunctionKillAsync().AsTask(),
+        "backup-start" => node.BackupStartAsync().AsTask(),
+        "backup-seal" => node.BackupSealAsync().AsTask(),
+        "backup-abort" => node.BackupAbortAsync().AsTask(),
+        "backup-cleanup" => node.BackupCleanupAsync().AsTask(),
         _ => node.MigrateAsync(new("destination", 6379), ["key"], 0, TimeSpan.FromSeconds(1)).AsTask(),
     };
 
@@ -631,19 +745,34 @@ public class ServerNodeCommandTests
     private static ValueTask<RespireClient> Connect(int port, int protocol, bool admin)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", port)], Connections = 1, AllowAdmin = admin,
+            Endpoints = [new("127.0.0.1", port)],
+            Connections = 1,
+            AllowAdmin = admin,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
         });
 
     private sealed class DiagnosticCapture : ILoggerFactory, ILogger
     {
-        internal ConcurrentQueue<string> Messages { get; } = new();
+        internal ConcurrentQueue<string> Messages
+        {
+            get;
+        } = new();
+
         public ILogger CreateLogger(string categoryName) => this;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
             => Messages.Enqueue(formatter(state, exception) + exception?.ToString());
@@ -652,13 +781,25 @@ public class ServerNodeCommandTests
     // Single-command test connections only: no AUTH or HELLO setup writes before the observed command.
     private sealed class GatedWriteStream(Socket socket, Task received) : NetworkStream(socket, ownsSocket: true)
     {
-        internal TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource ReleaseWrite { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal bool Disposed { get; private set; }
+        internal TaskCompletionSource WriteStarted
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReleaseWrite
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal bool Disposed
+        {
+            get; private set;
+        }
 
         internal static async Task<GatedWriteStream> ConnectAsync(string host, int port, Task received, CancellationToken token)
         {
             var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
             try
             {
                 await socket.ConnectAsync(host, port, token);

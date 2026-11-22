@@ -14,7 +14,7 @@ public partial class ErrorMetricsTests
     public async Task DeferredObservationRetainsConcurrentRetriesWithoutDuplicateErrors([Matrix(false, true)] bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         using var capture = new Capture();
         var pending = new RespirePending<int>();
         var observation = pending.Observation;
@@ -30,8 +30,14 @@ public partial class ErrorMetricsTests
 
         Parallel.For(0, 128, index =>
         {
-            if (index % 2 == 0) observation.Retry();
-            else if (!observation.TryHandled(error)) throw new InvalidOperationException();
+            if (index % 2 == 0)
+            {
+                observation.Retry();
+            }
+            else if (!observation.TryHandled(error))
+            {
+                throw new InvalidOperationException();
+            }
         });
         await Assert.That(observation.Attempts).IsEqualTo(257);
         await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 65 : 0);
@@ -44,6 +50,7 @@ public partial class ErrorMetricsTests
         observation.Retry();
         await Assert.That(observation.Attempts).IsEqualTo(int.MaxValue);
         await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 66 : 0);
+
         if (enabled)
         {
             var measurements = capture.Items.ToArray();
@@ -57,7 +64,7 @@ public partial class ErrorMetricsTests
     public async Task DeferredObservationIgnoresExternalPendingMonitor([Matrix(false, true)] bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         using var capture = new Capture();
         var pending = new RespirePending<int>();
         var observation = pending.Observation;
@@ -65,6 +72,7 @@ public partial class ErrorMetricsTests
         using var completed = new ManualResetEventSlim();
         Task worker;
         bool completedWhileLocked;
+
         lock (pending)
         {
             worker = Task.Run(() =>
@@ -73,7 +81,12 @@ public partial class ErrorMetricsTests
                 {
                     observation.SetAttempts(2);
                     pending.Fail(error);
-                    if (!observation.TryHandled(error)) throw new InvalidOperationException();
+
+                    if (!observation.TryHandled(error))
+                    {
+                        throw new InvalidOperationException();
+                    }
+
                     pending.AddErrorAttempts(1);
                     _ = observation.Attempts;
                     _ = pending.ReportError();
@@ -82,12 +95,14 @@ public partial class ErrorMetricsTests
             });
             completedWhileLocked = completed.Wait(TimeSpan.FromSeconds(5));
         }
+
         await worker;
         await Assert.That(completedWhileLocked).IsTrue();
         await Assert.That(observation.Attempts).IsEqualTo(4);
         await Assert.That(pending.Error).IsSameReferenceAs(error);
         _ = pending.ReportError();
         await Assert.That(capture.Items.Count).IsEqualTo(enabled ? 2 : 0);
+
         if (enabled)
         {
             var final = capture.Items.Single(item => !(bool)item.Tags["redis.client.errors.internal"]!);
@@ -101,7 +116,7 @@ public partial class ErrorMetricsTests
         [Matrix(false, true)] bool enabled, [Matrix(false, true)] bool faulted)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         using var capture = new Capture();
         var pending = new RespirePending<int>();
         var observation = pending.Observation;
@@ -109,8 +124,16 @@ public partial class ErrorMetricsTests
         await Assert.That(observation.IsOpen).IsTrue();
         await Assert.That(observation.TryHandled(error)).IsTrue();
         await Assert.That(observation.Attempts).IsEqualTo(1);
-        if (faulted) pending.Fail(error);
-        else pending.Succeed(42);
+
+        if (faulted)
+        {
+            pending.Fail(error);
+        }
+        else
+        {
+            pending.Succeed(42);
+        }
+
         await Assert.That(pending.ReportError()).IsEqualTo(faulted);
 
         await Assert.That(observation.IsOpen).IsFalse();
@@ -121,8 +144,15 @@ public partial class ErrorMetricsTests
         await Assert.That(observation.Attempts).IsEqualTo(1);
         var expectedErrors = enabled ? 1 + (faulted ? 1 : 0) : 0;
         await Assert.That(capture.Items.Count).IsEqualTo(expectedErrors);
-        if (faulted) await Assert.That(pending.Error).IsSameReferenceAs(error);
-        else await Assert.That(pending.Result).IsEqualTo(42);
+
+        if (faulted)
+        {
+            await Assert.That(pending.Error).IsSameReferenceAs(error);
+        }
+        else
+        {
+            await Assert.That(pending.Result).IsEqualTo(42);
+        }
     }
 
     [Test]
@@ -130,10 +160,12 @@ public partial class ErrorMetricsTests
     public async Task DeferredInspectionCountsEachLifecycleFailureOnce([Matrix(false, true)] bool enabled)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         using var capture = new Capture(throwOnMeasurement: true);
         var pending = new RespirePending<long>();
+
         long Read() => pending.Result;
+
         await Assert.That(Read).Throws<RespirePendingNotReadyException>();
         await Assert.That(Read).Throws<RespirePendingNotReadyException>();
         pending.Succeed(42);
@@ -153,6 +185,7 @@ public partial class ErrorMetricsTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var capture = new Capture(throwOnMeasurement: true);
         RespirePending<bool> pending;
+
         if (transaction)
         {
             var queue = client.CreateTransaction();
@@ -165,6 +198,7 @@ public partial class ErrorMetricsTests
             pending = queue.Set("key", "value");
             queue.Dispose();
         }
+
         await Assert.That(capture.Items.Count).IsEqualTo(0);
         await Assert.That(() => pending.Result).Throws<RespireException>();
         await Assert.That(() => pending.Result).Throws<RespireException>();
@@ -187,8 +221,15 @@ public partial class ErrorMetricsTests
         {
             var replicas = negativeTimeout ? 1 : -1;
             var timeout = negativeTimeout ? TimeSpan.FromTicks(-1) : TimeSpan.Zero;
-            if (aof) await batch.ExecuteAndWaitForAofAsync(true, replicas, timeout);
-            else await batch.ExecuteAndWaitForReplicationAsync(replicas, timeout);
+
+            if (aof)
+            {
+                await batch.ExecuteAndWaitForAofAsync(true, replicas, timeout);
+            }
+            else
+            {
+                await batch.ExecuteAndWaitForReplicationAsync(replicas, timeout);
+            }
         }).Throws<ArgumentOutOfRangeException>();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
         await Assert.That(batch.IsSent).IsFalse();
@@ -223,9 +264,15 @@ public partial class ErrorMetricsTests
         {
             switch (operation)
             {
-                case "prepare": await session.PrepareAsync(default, ["field"]); break;
-                case "set": await session.SetAsync("key", default, ["value"]); break;
-                default: await session.DiscardAsync(default); break;
+                case "prepare":
+                    await session.PrepareAsync(default, ["field"]);
+                    break;
+                case "set":
+                    await session.SetAsync("key", default, ["value"]);
+                    break;
+                default:
+                    await session.DiscardAsync(default);
+                    break;
             }
         }).Throws<ArgumentException>();
         await Assert.That(capture.Items.Count).IsEqualTo(1);
@@ -247,7 +294,9 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            Connections = 1,
+            ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -255,14 +304,22 @@ public partial class ErrorMetricsTests
         using var capture = new Capture(throwOnMeasurement: true, onMeasurement: item =>
         {
             if (!(bool)item.Tags["redis.client.errors.internal"]!)
+            {
                 mutationsAtFinal = client.Core.ClientCache!.InspectForTests().ActiveMutationCount;
+            }
         });
         using var batch = client.CreateBatch();
         _ = batch.Set("key", "value");
         await Assert.That(async () =>
         {
-            if (aof) await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
-            else await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+            if (aof)
+            {
+                await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.Zero);
+            }
+            else
+            {
+                await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.Zero);
+            }
         }).Throws<RespireException>();
         await Assert.That(mutationsAtFinal).IsEqualTo(0);
         await Assert.That(capture.Items.Count).IsEqualTo(1);
@@ -275,7 +332,7 @@ public partial class ErrorMetricsTests
         [Matrix(2, 3)] int protocol)
     {
         using var configuration = new MetricConfigurationScope(new()
-            { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
+        { Groups = enabled ? RespireMetricGroups.Resiliency : RespireMetricGroups.None });
         using var capture = new Capture();
         await using var server = new FakeRespServer(8, FakeRespServer.OkReply)
         {
@@ -292,7 +349,8 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespireProtocol)protocol, Connections = 1,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -300,6 +358,7 @@ public partial class ErrorMetricsTests
         long legacyRentals = 0, failureRentals = 0;
         RespireTelemetry.ErrorObservation.RentalObserverForTests = () => Interlocked.Increment(ref legacyRentals);
         ErrorObservation.RentalObserverForTests = () => Interlocked.Increment(ref failureRentals);
+
         try
         {
             await ExecuteAsync();
@@ -308,7 +367,10 @@ public partial class ErrorMetricsTests
             await Assert.That(capture.Items).IsEmpty();
 
             // These controls detect rentals even when both pools return warmed storage.
-            using (RespireTelemetry.ErrorObservation.Rent(force: true)) { }
+            using (RespireTelemetry.ErrorObservation.Rent(force: true))
+            {
+            }
+
             await Assert.That(Interlocked.Read(ref legacyRentals)).IsEqualTo(1L);
             var owner = ErrorObservation.StartFailure();
             owner.Complete();
@@ -326,8 +388,16 @@ public partial class ErrorMetricsTests
             await using var multi = transaction ? client.CreateTransaction() : null;
             var increment = transaction ? multi!.Increment("counter") : batch!.Increment("counter");
             var get = transaction ? multi!.GetString("key") : batch!.GetString("key");
-            if (transaction) await multi!.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction)
+            {
+                await multi!.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
 #pragma warning disable RESP002 // Both branches above await their queue's flush; the analyzer cannot correlate the conditional transaction and batch aliases.
             await Assert.That(increment.Result).IsEqualTo(42L);
             await Assert.That(get.Result).IsEqualTo("value");
@@ -354,11 +424,20 @@ public partial class ErrorMetricsTests
     private static long MeasureDeferredSuccess(RespirePending<int> pending, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
-            if (pending.Result != 42 || pending.ReportError()) throw new InvalidOperationException();
-            if (allocate) Volatile.Write(ref _deferredAllocationAnchor, new byte[37]);
+            if (pending.Result != 42 || pending.ReportError())
+            {
+                throw new InvalidOperationException();
+            }
+
+            if (allocate)
+            {
+                Volatile.Write(ref _deferredAllocationAnchor, new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

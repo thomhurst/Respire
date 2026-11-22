@@ -17,7 +17,12 @@ public class CommandTimeoutCancellationTests
         using var initiator = new CancellationTokenSource();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(initiator.Token);
         using var unrelated = new CancellationTokenSource();
-        if (cancelInitiator) initiator.Cancel();
+
+        if (cancelInitiator)
+        {
+            initiator.Cancel();
+        }
+
         var error = new OperationCanceledException(matchesLink ? linked.Token : unrelated.Token);
         await Assert.That(CommandTimeoutCancellation.IsFromLinkedToken(error, initiator.Token, linked.Token))
             .IsEqualTo(cancelInitiator && matchesLink);
@@ -55,6 +60,7 @@ public class CommandTimeoutCancellationTests
         using var pool = new Reservoir.CancellationTokenSourcePool(1);
         using var caller = new CancellationTokenSource();
         CancellationToken firstToken;
+
         using (var first = pool.RentLinked(caller.Token))
         {
             firstToken = first.Token;

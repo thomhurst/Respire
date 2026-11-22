@@ -16,7 +16,10 @@ public class CoordinationAccessorTests
         Parallel.For(0, wrappers.Length, i => wrappers[i] = abstraction.Coordination);
 
         foreach (var wrapper in wrappers)
+        {
             await Assert.That(wrapper).IsSameReferenceAs(client.Coordination);
+        }
+
         await Assert.That(client.Coordination.RateLimiters).IsSameReferenceAs(abstraction.Coordination.RateLimiters);
         await Assert.That(client.IsConnected).IsFalse();
     }
@@ -71,6 +74,7 @@ public class CoordinationAccessorTests
             ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var semaphore = client.WithKeyPrefix("tenant:").Coordination.CreateSemaphore("permits", 4);
+
         await using (var attempt = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(30)))
         {
             await Assert.That(attempt.Acquired).IsTrue();

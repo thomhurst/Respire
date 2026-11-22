@@ -24,7 +24,8 @@ public class DiagnosticsPipelineBenchmarks
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint(_redis.Hostname, _redis.GetMappedPublicPort(6379)) },
-            Connections = 1, CommandTimeout = TimeSpan.FromSeconds(5)
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromSeconds(5)
         });
         await _client.SetAsync(_key, "value");
         await _errorMetrics.WarmAsync(_client, _key);
@@ -33,7 +34,11 @@ public class DiagnosticsPipelineBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        if (_client is not null) await _client.DisposeAsync();
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
         await _redis.DisposeAsync();
         _errorMetrics.Dispose();
     }
@@ -43,7 +48,12 @@ public class DiagnosticsPipelineBenchmarks
     public async Task<long> PipelinedBatch()
     {
         using var batch = _client.CreateBatch();
-        for (var i = 0; i < CommandCount; i++) _pending[i] = batch.Strings.Length(_key);
+
+        for (var i = 0; i < CommandCount; i++)
+        {
+            _pending[i] = batch.Strings.Length(_key);
+        }
+
         await batch.ExecuteAsync();
         return ReadResults();
     }
@@ -52,7 +62,12 @@ public class DiagnosticsPipelineBenchmarks
     public async Task<long> TimedTransaction()
     {
         await using var transaction = _client.CreateTransaction();
-        for (var i = 0; i < CommandCount; i++) _pending[i] = transaction.Strings.Length(_key);
+
+        for (var i = 0; i < CommandCount; i++)
+        {
+            _pending[i] = transaction.Strings.Length(_key);
+        }
+
         await transaction.CommitAsync();
         return ReadResults();
     }
@@ -61,16 +76,34 @@ public class DiagnosticsPipelineBenchmarks
     public async Task<int> PipelinedBatchServerErrors()
     {
         using var batch = _client.CreateBatch();
-        for (var i = 0; i < CommandCount; i++) _pending[i] = batch.Strings.Increment(_key);
-        try { await batch.ExecuteAsync(); }
+
+        for (var i = 0; i < CommandCount; i++)
+        {
+            _pending[i] = batch.Strings.Increment(_key);
+        }
+
+        try
+        {
+            await batch.ExecuteAsync();
+        }
         catch (RespireServerException error) when (error.Code == "ERR") { }
+
         var errors = 0;
+
         foreach (var pending in _pending)
         {
-            try { _ = pending.Result; }
+            try
+            {
+                _ = pending.Result;
+            }
             catch (RespireServerException error) when (error.Code == "ERR") { errors++; }
         }
-        if (errors != CommandCount) throw new InvalidOperationException("Expected one Redis ERR per command.");
+
+        if (errors != CommandCount)
+        {
+            throw new InvalidOperationException("Expected one Redis ERR per command.");
+        }
+
         return errors;
     }
 
@@ -80,15 +113,29 @@ public class DiagnosticsPipelineBenchmarks
     public async Task<int> TimedTransactionServerErrors()
     {
         await using var transaction = _client.CreateTransaction();
-        for (var i = 0; i < CommandCount; i++) _pending[i] = transaction.Strings.Increment(_key);
+
+        for (var i = 0; i < CommandCount; i++)
+        {
+            _pending[i] = transaction.Strings.Increment(_key);
+        }
+
         await transaction.CommitAsync();
         var errors = 0;
+
         foreach (var pending in _pending)
         {
-            try { _ = pending.Result; }
+            try
+            {
+                _ = pending.Result;
+            }
             catch (RespireServerException error) when (error.Code == "ERR") { errors++; }
         }
-        if (errors != CommandCount) throw new InvalidOperationException("Expected one Redis ERR per command.");
+
+        if (errors != CommandCount)
+        {
+            throw new InvalidOperationException("Expected one Redis ERR per command.");
+        }
+
         return errors;
     }
 
@@ -102,22 +149,40 @@ public class DiagnosticsPipelineBenchmarks
         var pending = new RespirePending<long>();
         var observation = pending.Observation;
         observation.Retry();
-        if (handled) observation.Handled(_retryError);
+
+        if (handled)
+        {
+            observation.Handled(_retryError);
+        }
+
         pending.AddErrorAttempts(_additionalAttempts);
         observation.Retry();
         pending.Succeed(5);
         pending.ReportError();
         var attempts = observation.Attempts;
+
         if (attempts != _additionalAttempts + (handled ? 3 : 2))
+        {
             throw new InvalidOperationException("Deferred retry history was lost.");
+        }
+
         return attempts;
     }
 
     private long ReadResults()
     {
         long total = 0;
-        foreach (var result in _pending) total += result.Result;
-        if (total != CommandCount * 5) throw new InvalidOperationException("Unexpected Redis result.");
+
+        foreach (var result in _pending)
+        {
+            total += result.Result;
+        }
+
+        if (total != CommandCount * 5)
+        {
+            throw new InvalidOperationException("Unexpected Redis result.");
+        }
+
         return total;
     }
 }

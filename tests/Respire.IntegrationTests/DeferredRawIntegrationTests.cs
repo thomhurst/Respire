@@ -33,8 +33,16 @@ public class DeferredRawIntegrationTests(RedisTestContainer fixture)
         var echo = queue.Execute("ECHO", "key");
         Array.Fill(key, (byte)'x');
         Array.Fill(value, (byte)'x');
-        if (transaction is not null) await transaction.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         using var storedResult = stored.Result;
         using var readResult = read.Result;
         using var missingResult = missing.Result;

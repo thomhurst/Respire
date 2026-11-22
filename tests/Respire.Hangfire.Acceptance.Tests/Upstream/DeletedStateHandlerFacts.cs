@@ -10,49 +10,48 @@ using Moq;
 using TUnit.Core;
 using Assert = Xunit.Assert;
 
-namespace Hangfire.Redis.Tests
+namespace Hangfire.Redis.Tests;
+
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+[NotInParallel]
+public class DeletedStateHandlerFacts : UpstreamRedisTest
 {
-    [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-    [NotInParallel]
-    public class DeletedStateHandlerFacts : UpstreamRedisTest
+    private const string JobId = "1";
+
+    private readonly ApplyStateContextMock _context;
+    private readonly Mock<IWriteOnlyTransaction> _transaction;
+
+    public DeletedStateHandlerFacts(RedisTestContainer fixture) : base(fixture)
     {
-        private const string JobId = "1";
+        _context = new ApplyStateContextMock(JobId);
+        _transaction = new Mock<IWriteOnlyTransaction>();
+    }
 
-        private readonly ApplyStateContextMock _context;
-        private readonly Mock<IWriteOnlyTransaction> _transaction;
+    [Test]
+    public void StateName_ShouldBeEqualToSucceededState()
+    {
+        var handler = new DeletedStateHandler();
+        Assert.Equal(DeletedState.StateName, handler.StateName);
+    }
 
-        public DeletedStateHandlerFacts(RedisTestContainer fixture) : base(fixture)
-        {
-            _context = new ApplyStateContextMock(JobId);
-            _transaction = new Mock<IWriteOnlyTransaction>();
-        }
+    [Test]
+    public void Apply_ShouldInsertTheJob_ToTheBeginningOfTheSucceededList_AndTrimIt()
+    {
+        var handler = new DeletedStateHandler();
+        handler.Apply(_context.Object, _transaction.Object);
 
-        [Test]
-        public void StateName_ShouldBeEqualToSucceededState()
-        {
-            var handler = new DeletedStateHandler();
-            Assert.Equal(DeletedState.StateName, handler.StateName);
-        }
+        _transaction.Verify(x => x.InsertToList(
+            "deleted", JobId));
+        _transaction.Verify(x => x.TrimList(
+            "deleted", 0, 499));
+    }
 
-        [Test]
-        public void Apply_ShouldInsertTheJob_ToTheBeginningOfTheSucceededList_AndTrimIt()
-        {
-            var handler = new DeletedStateHandler();
-            handler.Apply(_context.Object, _transaction.Object);
+    [Test]
+    public void Unapply_ShouldRemoveTheJob_FromTheSucceededList()
+    {
+        var handler = new DeletedStateHandler();
+        handler.Unapply(_context.Object, _transaction.Object);
 
-            _transaction.Verify(x => x.InsertToList(
-                "deleted", JobId));
-            _transaction.Verify(x => x.TrimList(
-                "deleted", 0, 499));
-        }
-
-        [Test]
-        public void Unapply_ShouldRemoveTheJob_FromTheSucceededList()
-        {
-            var handler = new DeletedStateHandler();
-            handler.Unapply(_context.Object, _transaction.Object);
-
-            _transaction.Verify(x => x.RemoveFromList("deleted", JobId));
-        }
+        _transaction.Verify(x => x.RemoveFromList("deleted", JobId));
     }
 }

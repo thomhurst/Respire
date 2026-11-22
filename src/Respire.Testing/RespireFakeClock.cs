@@ -16,12 +16,21 @@ public sealed class RespireFakeClock : TimeProvider
     public void Advance(TimeSpan elapsed)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(elapsed, TimeSpan.Zero);
+
         while (true)
         {
             var old = Interlocked.Read(ref _ticks);
             var next = checked(old + elapsed.Ticks);
-            if (next > DateTimeOffset.MaxValue.Ticks) throw new ArgumentOutOfRangeException(nameof(elapsed));
-            if (Interlocked.CompareExchange(ref _ticks, next, old) == old) return;
+
+            if (next > DateTimeOffset.MaxValue.Ticks)
+            {
+                throw new ArgumentOutOfRangeException(nameof(elapsed));
+            }
+
+            if (Interlocked.CompareExchange(ref _ticks, next, old) == old)
+            {
+                return;
+            }
         }
     }
 }

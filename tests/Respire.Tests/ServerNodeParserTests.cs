@@ -1,5 +1,5 @@
-using Respire.Protocol;
 using System.Text;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -14,7 +14,8 @@ public class ServerNodeParserTests
         byte[] bytes = [255, 0, 128];
         var reply = RespValue.Array(RespValue.Array(RespValue.BulkString(bytes), RespValue.Array(Text("RO"), Text("future"))));
         var result = ServerNodeParser.KeysAndFlags(in reply);
-        reply.Dispose(); bytes.AsSpan().Clear();
+        reply.Dispose();
+        bytes.AsSpan().Clear();
         await Assert.That(result.Single().Key).IsEquivalentTo(new byte[] { 255, 0, 128 });
         await Assert.That(result.Single().Flags).IsEquivalentTo(["RO", "future"]);
     }
@@ -28,20 +29,33 @@ public class ServerNodeParserTests
     {
         var fields = new[] { Text("state"), Text("future-state"), Text("error"), Text(""), Text("start_time"), Text("1720000000"),
             Text("end_time"), Text("0"), Text("future"), Text("value") };
-        if (integerTimestamps) { fields[5] = RespValue.Integer(1720000000); fields[7] = RespValue.Integer(0); }
+
+        if (integerTimestamps)
+        {
+            fields[5] = RespValue.Integer(1720000000);
+            fields[7] = RespValue.Integer(0);
+        }
+
         var reply = RespValue.Array(fields);
+
         if (map)
         {
             var wire = Encoding.UTF8.GetBytes("%5\r\n" + string.Concat(fields.Select(field =>
             {
-                if (field.Type == RespireDataType.Integer) return $":{field.AsInteger()}\r\n";
+                if (field.Type == RespireDataType.Integer)
+                {
+                    return $":{field.AsInteger()}\r\n";
+                }
+
                 var text = field.AsString();
                 return $"${Encoding.UTF8.GetByteCount(text)}\r\n{text}\r\n";
             })));
             var position = 0;
             await Assert.That(RespParser.TryParseValue(wire, ref position, out reply)).IsEqualTo(RespParseStatus.Done);
         }
-        var result = ServerNodeParser.BackupStatus(in reply); reply.Dispose();
+
+        var result = ServerNodeParser.BackupStatus(in reply);
+        reply.Dispose();
         await Assert.That(result.State).IsEqualTo("future-state");
         await Assert.That(result.StartTime).IsEqualTo(DateTimeOffset.FromUnixTimeSeconds(1720000000));
         await Assert.That(result.EndTime).IsNull();

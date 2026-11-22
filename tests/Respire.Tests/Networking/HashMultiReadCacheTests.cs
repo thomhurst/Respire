@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
-using Respire.Protocol;
 using Respire.Internal;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -24,8 +24,10 @@ public class HashMultiReadCacheTests
         });
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
         await client.Hashes.GetStringAsync("hash", "a");
         await client.Hashes.GetManyAsync("hash", "a", "b");
@@ -50,6 +52,7 @@ public class HashMultiReadCacheTests
         await using var client = await ConnectAsync(server);
         await Assert.That(await client.Hashes.GetStringAsync("hash", "a")).IsEqualTo("A");
         string?[] values;
+
         if (raw)
         {
             using var response = await client.ExecuteAsync("HMGET", "hash", "a", "b", "missing", "b");
@@ -58,7 +61,11 @@ public class HashMultiReadCacheTests
             MemoryMarshal.GetReference(response[1].AsSpan()) = (byte)'X';
             await Assert.That(response[3].AsString()).IsEqualTo("B");
         }
-        else values = await client.Hashes.GetManyAsync("hash", "a", "b", "missing", "b");
+        else
+        {
+            values = await client.Hashes.GetManyAsync("hash", "a", "b", "missing", "b");
+        }
+
         await Assert.That(values).IsEquivalentTo(new string?[] { "A", "B", null, "B" });
         values[1] = "changed";
         await Assert.That(await client.Hashes.GetManyAsync("hash", "missing", "b", "a"))
@@ -116,12 +123,17 @@ public class HashMultiReadCacheTests
         await using var client = await ConnectAsync(server);
         var pending = client.Hashes.GetManyAsync("hash", "a", "b").AsTask();
         await WaitUntilAsync(() => server.ReceivedCommands.Contains("HMGET hash a b"));
-        if (clear) client.ClientSideCache!.Clear();
+
+        if (clear)
+        {
+            client.ClientSideCache!.Clear();
+        }
         else
         {
             await server.SendRawAsync(">2\r\n+invalidate\r\n*1\r\n$4\r\nhash\r\n"u8.ToArray());
             await WaitUntilAsync(() => client.ClientSideCache!.GetStatistics().Invalidations == 1);
         }
+
         await server.SendRawAsync("*2\r\n$1\r\nA\r\n$1\r\nB\r\n"u8.ToArray());
         await Assert.That(await pending.WaitAsync(Limit)).IsEquivalentTo(new string?[] { "A", "B" });
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
@@ -141,6 +153,7 @@ public class HashMultiReadCacheTests
                 changed = true;
                 return ":1\r\n"u8.ToArray();
             }
+
             return Encoding.ASCII.GetBytes(changed
                 ? "*2\r\n$1\r\nC\r\n$1\r\nB\r\n"
                 : "*2\r\n$1\r\nA\r\n$1\r\nB\r\n");
@@ -193,12 +206,20 @@ public class HashMultiReadCacheTests
             : Encoding.ASCII.GetBytes($"-{(moved ? "MOVED" : "ASK")} {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Endpoints = { new("127.0.0.1", seed.Port) },
-            Connections = 1, Protocol = RespireProtocol.Resp3, ClientSideCache = new() { ReuseHashFields = true }, CommandTimeout = Limit,
+            UseCluster = true,
+            Endpoints = { new("127.0.0.1", seed.Port) },
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { ReuseHashFields = true },
+            CommandTimeout = Limit,
         });
+
         for (var read = 0; read < 2; read++)
+        {
             await Assert.That(await client.Hashes.GetManyAsync("hash", "a", "b"))
                 .IsEquivalentTo(new string?[] { "A", "B" });
+        }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(2);
         await Assert.That(target.ReceivedCommands.Count(command => command == "HMGET hash a b")).IsEqualTo(1);
         await Assert.That(target.ReceivedCommands.Count(command => command == "ASKING")).IsEqualTo(moved ? 0 : 1);
@@ -213,8 +234,10 @@ public class HashMultiReadCacheTests
         await using var server = Server(_ => "*2\r\n$1\r\nA\r\n$-1\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1,
-            Protocol = RespireProtocol.Resp3, CommandTimeout = Limit,
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            CommandTimeout = Limit,
             ClientSideCache = new()
             {
                 ReuseHashFields = true,
@@ -222,9 +245,13 @@ public class HashMultiReadCacheTests
                 KeyPrefixes = [covered ? "hash" : "other:"],
             },
         });
+
         for (var read = 0; read < 2; read++)
+        {
             await Assert.That(await client.Hashes.GetManyAsync("hash", "a", "b"))
                 .IsEquivalentTo(new string?[] { "A", null });
+        }
+
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(covered ? 2 : 0);
         await Assert.That(server.ReceivedCommands.Count(command => command == "HMGET hash a b"))
             .IsEqualTo(covered ? 1 : 2);
@@ -251,8 +278,12 @@ public class HashMultiReadCacheTests
             : "$1\r\nA\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1,
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { ReuseHashFields = true }, CommandTimeout = Limit,
+            UseCluster = true,
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { ReuseHashFields = true },
+            CommandTimeout = Limit,
         });
         await client.GetStringAsync("{a}");
         await client.GetStringAsync("{b}");
@@ -275,7 +306,11 @@ public class HashMultiReadCacheTests
         var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("HMGET ")) return false;
+            if (!command.StartsWith("HMGET "))
+            {
+                return false;
+            }
+
             accepted.TrySetResult();
             return true;
         };
@@ -288,16 +323,19 @@ public class HashMultiReadCacheTests
         var follower = client.ExecuteAsync("HMGET", "hash", "b", "c", "b").AsTask();
         var typed = client.Hashes.GetManyAsync("hash", "b", "c", "b").AsTask();
         await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(1);
+
         if (cancelLeader)
         {
             cancellation.Cancel();
             await Assert.That(async () => await leader).Throws<OperationCanceledException>();
             await Assert.That(follower.IsCompleted).IsFalse();
         }
+
         await server.SendRawAsync("*2\r\n$1\r\nB\r\n$1\r\nB\r\n"u8.ToArray());
         using var second = await follower.WaitAsync(Limit);
         await Assert.That(await typed.WaitAsync(Limit)).IsEquivalentTo(new string?[] { "B", "C", "B" });
         await Assert.That(second.Select(value => value.AsString()).ToArray()).IsEquivalentTo(new[] { "B", "C", "B" });
+
         if (!cancelLeader)
         {
             using var first = await leader.WaitAsync(Limit);
@@ -306,6 +344,7 @@ public class HashMultiReadCacheTests
             await Assert.That(first[2].AsString()).IsEqualTo("B");
             await Assert.That(second[0].AsString()).IsEqualTo("B");
         }
+
         await Assert.That(await client.Hashes.GetStringAsync("hash", "b")).IsEqualTo("B");
         await Assert.That(server.ReceivedCommands.Where(command => command.StartsWith("HMGET ")))
             .IsEquivalentTo(["HMGET hash b b"]);
@@ -322,16 +361,36 @@ public class HashMultiReadCacheTests
         var count = 0;
         server.SuppressReply = command =>
         {
-            if (command == "CLIENT CACHING YES") return true;
-            if (!command.StartsWith("HMGET ")) return false;
-            if (Interlocked.Increment(ref count) == 1) firstAccepted.TrySetResult();
-            else secondAccepted.TrySetResult();
+            if (command == "CLIENT CACHING YES")
+            {
+                return true;
+            }
+
+            if (!command.StartsWith("HMGET "))
+            {
+                return false;
+            }
+
+            if (Interlocked.Increment(ref count) == 1)
+            {
+                firstAccepted.TrySetResult();
+            }
+            else
+            {
+                secondAccepted.TrySetResult();
+            }
+
             return true;
         };
         await using var client = await ConnectAsync(server, coalesce: true);
         var first = client.Hashes.GetManyAsync("hash", "a").AsTask();
         await firstAccepted.Task.WaitAsync(Limit);
-        if (invalidate) client.ClientSideCache!.Clear();
+
+        if (invalidate)
+        {
+            client.ClientSideCache!.Clear();
+        }
+
         var second = client.Hashes.GetManyAsync("hash", invalidate ? "a" : "b").AsTask();
         await secondAccepted.Task.WaitAsync(Limit);
         await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(2);
@@ -355,13 +414,21 @@ public class HashMultiReadCacheTests
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server, bool coalesce = false)
         => RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1,
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new() { ReuseHashFields = true, CoalesceConcurrentMisses = coalesce }, CommandTimeout = Limit, ConnectTimeout = Limit,
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new() { ReuseHashFields = true, CoalesceConcurrentMisses = coalesce },
+            CommandTimeout = Limit,
+            ConnectTimeout = Limit,
         });
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(Limit);
-        while (!condition()) await Task.Delay(5, timeout.Token);
+
+        while (!condition())
+        {
+            await Task.Delay(5, timeout.Token);
+        }
     }
 }

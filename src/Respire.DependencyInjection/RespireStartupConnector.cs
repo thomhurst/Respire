@@ -30,9 +30,11 @@ internal sealed partial class RespireStartupConnector(
     public Task StartAsync(CancellationToken cancellationToken)
     {
         List<Task>? connecting = null;
+
         foreach (var registration in registrations)
         {
             var startup = options.Get(registration.ServiceKey ?? Options.DefaultName);
+
             if (startup.ConnectOnStart)
             {
                 (connecting ??= []).Add(Task.Run(() => ConnectAsync(registration, startup, _stopping.Token)));
@@ -58,6 +60,7 @@ internal sealed partial class RespireStartupConnector(
     {
         var name = registration.ServiceKey ?? "default";
         RespireClient client;
+
         try
         {
             client = registration.ServiceKey is null
@@ -72,6 +75,7 @@ internal sealed partial class RespireStartupConnector(
         }
 
         var delay = startup.InitialRetryDelay;
+
         for (var attempt = 1; ; attempt++)
         {
             // Application traffic may have connected the client already.

@@ -23,12 +23,18 @@ public class ServerHotKeysTests
                 "HOTKEYS GET" => WireSnapshot(protocol == 3),
                 _ => null,
             };
-            if (reply is null) return false;
-            _ = server.SendRawAsync(reply, server.ReceivedConnectionIds[^1]); return true;
+
+            if (reply is null)
+            {
+                return false;
+            }
+
+            _ = server.SendRawAsync(reply, server.ReceivedConnectionIds[^1]);
+            return true;
         };
 #pragma warning disable RESP010 // This tracker test owns two connections and protocol/cache options to check pinning and results after disposal.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
-            { Connections = 2, Protocol = (RespireProtocol)protocol, ClientSideCache = protocol == 3 ? new() : null });
+        { Connections = 2, Protocol = (RespireProtocol)protocol, ClientSideCache = protocol == 3 ? new() : null });
 #pragma warning restore RESP010
         var tracker = await client.WithKeyPrefix("ignored:").Server.GetHotKeysTrackerAsync();
         var second = await client.Server.GetHotKeysTrackerAsync();
@@ -37,17 +43,36 @@ public class ServerHotKeysTests
         slots[0] = 9;
         await second.StartAsync(new() { Metrics = RespireHotKeysMetrics.Network });
         var cache = client.Core.ClientCache;
+
         if (cache is not null)
         {
-            RespireKey key = "cached"; var token = cache.BeginRead(in key); var value = RespValue.BulkString("v");
+            RespireKey key = "cached";
+            var token = cache.BeginRead(in key);
+            var value = RespValue.BulkString("v");
             cache.CompleteRead(in token, in value, allowInsert: true);
         }
+
         var snapshot = (await tracker.GetAsync())!.Single();
-        if (cache is not null) await Assert.That(cache.Count).IsEqualTo(1);
+
+        if (cache is not null)
+        {
+            await Assert.That(cache.Count).IsEqualTo(1);
+        }
+
         await Assert.That(await tracker.StopAsync()).IsTrue();
-        if (cache is not null) await Assert.That(cache.Count).IsEqualTo(1);
+
+        if (cache is not null)
+        {
+            await Assert.That(cache.Count).IsEqualTo(1);
+        }
+
         await tracker.ResetAsync();
-        if (cache is not null) await Assert.That(cache.Count).IsEqualTo(1);
+
+        if (cache is not null)
+        {
+            await Assert.That(cache.Count).IsEqualTo(1);
+        }
+
         var commands = server.ReceivedCommands.Select((command, index) => (command, socket: server.ReceivedConnectionIds[index]))
             .Where(row => row.command.StartsWith("HOTKEYS ")).ToArray();
         await Assert.That(commands.Select(x => x.command)).IsEquivalentTo([
@@ -75,15 +100,22 @@ public class ServerHotKeysTests
         await using var server = new FakeRespServer(5, "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), FakeRespServer.OkReply);
         server.SuppressReply = command =>
         {
-            if (command != "HOTKEYS GET") return false;
-            _ = server.SendRawAsync(WireSnapshot(true), server.ReceivedConnectionIds[^1]); return true;
+            if (command != "HOTKEYS GET")
+            {
+                return false;
+            }
+
+            _ = server.SendRawAsync(WireSnapshot(true), server.ReceivedConnectionIds[^1]);
+            return true;
         };
 #pragma warning disable RESP010 // This diagnostic test owns its populated cache while exercising pinned, fan-out and raw HOTKEYS controls.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
-            { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
+        { Protocol = RespireProtocol.Resp3, ClientSideCache = new() });
 #pragma warning restore RESP010
         var cache = client.Core.ClientCache!;
-        RespireKey key = "cached"; var token = cache.BeginRead(in key); var value = RespValue.BulkString("retained");
+        RespireKey key = "cached";
+        var token = cache.BeginRead(in key);
+        var value = RespValue.BulkString("retained");
         cache.CompleteRead(in token, in value, allowInsert: true);
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         Func<Task>[] operations = surface switch
@@ -94,16 +126,30 @@ public class ServerHotKeysTests
                 async () => await Assert.That((await client.Server.GetHotKeysOnAllNodesAsync()).Single().Value![0].TrackingActive).IsTrue(),
                 async () => await Assert.That((await client.Server.StopHotKeysOnAllNodesAsync()).Single().Value).IsTrue(),
                 async () => await Assert.That((await client.Server.ResetHotKeysOnAllNodesAsync()).Single().Value).IsTrue()],
-            _ => [async () => { using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_START, "METRICS", 1, "CPU"); },
-                async () => { using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_GET); },
-                async () => { using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_STOP); },
-                async () => { using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_RESET); }],
+            _ => [async () =>
+                {
+                    using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_START, "METRICS", 1, "CPU");
+                },
+                async () =>
+                {
+                    using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_GET);
+                },
+                async () =>
+                {
+                    using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_STOP);
+                },
+                async () =>
+                {
+                    using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_RESET);
+                }],
         };
+
         foreach (var operation in operations)
         {
             await operation();
             await Assert.That(cache.Count).IsEqualTo(1);
         }
+
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("HOTKEYS "))).IsEqualTo(4);
     }
 
@@ -114,7 +160,8 @@ public class ServerHotKeysTests
         var fields = Fields(key);
         var source = RespValue.Array(RespValue.Array(fields));
         var result = HotKeysParser.Parse(in source)!.Single();
-        source.Dispose(); key.AsSpan().Clear();
+        source.Dispose();
+        key.AsSpan().Clear();
         await Assert.That(result.ByNetworkBytes![0].Key).IsEquivalentTo(new byte[] { 255, 0 });
         await Assert.That(HotKeysParser.Parse(RespValue.Null)).IsNull();
         await Assert.That(HotKeysParser.Stopped(RespValue.Null)).IsFalse();
@@ -122,7 +169,12 @@ public class ServerHotKeysTests
         RespValue[] bad = [RespValue.Integer(1), RespValue.Array(RespValue.Integer(1)), RespValue.Array(RespValue.Array()),
             RespValue.Array(RespValue.Array([.. fields, RespValue.BulkString("extra")])),
             RespValue.Array(RespValue.Array([.. fields, fields[0], fields[1]]))];
-        foreach (var value in bad) await Assert.That(() => HotKeysParser.Parse(in value)).Throws<RespireProtocolException>();
+
+        foreach (var value in bad)
+        {
+            await Assert.That(() => HotKeysParser.Parse(in value)).Throws<RespireProtocolException>();
+        }
+
         foreach (var (name, value) in new (string, RespValue)[]
         {
             ("tracking-active", RespValue.Integer(2)), ("sample-ratio", RespValue.Integer(0)),
@@ -133,7 +185,15 @@ public class ServerHotKeysTests
         })
         {
             var changed = Fields([1]);
-            for (var index = 0; index < changed.Length; index += 2) if (changed[index].AsString() == name) changed[index + 1] = value;
+
+            for (var index = 0; index < changed.Length; index += 2)
+            {
+                if (changed[index].AsString() == name)
+                {
+                    changed[index + 1] = value;
+                }
+            }
+
             var malformed = RespValue.Array(RespValue.Array(changed));
             await Assert.That(() => HotKeysParser.Parse(in malformed)).Throws<RespireProtocolException>();
         }
@@ -148,13 +208,24 @@ public class ServerHotKeysTests
 #pragma warning restore RESP010
         Func<Task>[] denied = [async () => await client.Server.StartHotKeysOnAllNodesAsync(new()),
             async () => await client.Server.StopHotKeysOnAllNodesAsync(), async () => await client.Server.ResetHotKeysOnAllNodesAsync()];
-        foreach (var action in denied) await Assert.That(action).Throws<NotSupportedException>();
-        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+
+        foreach (var action in denied)
+        {
+            await Assert.That(action).Throws<NotSupportedException>();
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
         await Assert.That(async () => await client.Server.GetHotKeysTrackerAsync(cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(async () => await client.Server.GetHotKeysOnAllNodesAsync(cancellation.Token)).Throws<OperationCanceledException>();
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         Func<Task>[] pinnedDenied = [async () => await tracker.StartAsync(new()), async () => await tracker.StopAsync(), async () => await tracker.ResetAsync()];
-        foreach (var action in pinnedDenied) await Assert.That(action).Throws<NotSupportedException>();
+
+        foreach (var action in pinnedDenied)
+        {
+            await Assert.That(action).Throws<NotSupportedException>();
+        }
+
 #pragma warning disable RESP010 // This validation test owns a separate admin client so invalid options and pre-cancellation reach their own checks.
         await using var admin = await RespireClient.ConnectAsync(Options(server.Port));
 #pragma warning restore RESP010
@@ -162,16 +233,23 @@ public class ServerHotKeysTests
         RespireHotKeysOptions[] invalid = [new() { Metrics = 0 }, new() { Metrics = (RespireHotKeysMetrics)4 },
             new() { Count = 0 }, new() { Count = 65 }, new() { DurationSeconds = 0 }, new() { DurationSeconds = 1_000_001 },
             new() { SampleRatio = 0 }, new() { Slots = new[] { -1 } }, new() { Slots = new[] { 16384 } }, new() { Slots = new[] { 1, 1 } }];
+
         foreach (var options in invalid)
         {
             await Assert.That(async () => await allowed.StartAsync(options)).Throws<ArgumentException>();
             await Assert.That(async () => await admin.Server.StartHotKeysOnAllNodesAsync(options)).Throws<ArgumentException>();
         }
+
         Func<Task>[] cancelled = [async () => await allowed.StartAsync(new(), cancellation.Token),
             async () => await allowed.GetAsync(cancellation.Token), async () => await allowed.StopAsync(cancellation.Token),
             async () => await allowed.ResetAsync(cancellation.Token), async () => await admin.Server.StartHotKeysOnAllNodesAsync(new(), cancellation.Token),
             async () => await admin.Server.StopHotKeysOnAllNodesAsync(cancellation.Token), async () => await admin.Server.ResetHotKeysOnAllNodesAsync(cancellation.Token)];
-        foreach (var action in cancelled) await Assert.That(action).Throws<OperationCanceledException>();
+
+        foreach (var action in cancelled)
+        {
+            await Assert.That(action).Throws<OperationCanceledException>();
+        }
+
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }
 
@@ -219,10 +297,17 @@ public class ServerHotKeysTests
             {
                 "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
                 "CLUSTER NODES" => Bulk(Encoding.ASCII.GetBytes($"self 127.0.0.1:{seed.Port}@1 myself,master - 0 0 1 connected\nreplica 127.0.0.1:{replica.Port}@2 slave self 0 0 1 connected\n")),
-                "HOTKEYS GET" => WireSnapshot(false), _ => null,
+                "HOTKEYS GET" => WireSnapshot(false),
+                _ => null,
             };
-            if (reply is null) return false;
-            _ = seed.SendRawAsync(reply, seed.ReceivedConnectionIds[^1]); return true;
+
+            if (reply is null)
+            {
+                return false;
+            }
+
+            _ = seed.SendRawAsync(reply, seed.ReceivedConnectionIds[^1]);
+            return true;
         };
 #pragma warning disable RESP010 // This HOTKEYS fan-out test owns its cluster client and scripted seed/replica outcomes.
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { UseCluster = true });
@@ -231,12 +316,14 @@ public class ServerHotKeysTests
         var get = await client.Server.GetHotKeysOnAllNodesAsync();
         var stop = await client.Server.StopHotKeysOnAllNodesAsync();
         var reset = await client.Server.ResetHotKeysOnAllNodesAsync();
+
         foreach (var results in new[] { start, stop, reset })
         {
             await Assert.That(results.Length).IsEqualTo(2);
             await Assert.That(results.Single(x => x.Endpoint.Port == seed.Port).Value).IsTrue();
             await Assert.That(results.Single(x => x.Endpoint.Port == replica.Port).Error).IsTypeOf<RespireServerException>();
         }
+
         await Assert.That(get.Single(x => x.Endpoint.Port == seed.Port).Value![0].TrackingActive).IsTrue();
         await Assert.That(get.Single(x => x.Endpoint.Port == replica.Port).Error).IsTypeOf<RespireServerException>();
     }
@@ -248,16 +335,29 @@ public class ServerHotKeysTests
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
-        { SuppressReply = command => { if (!command.StartsWith("HOTKEYS ")) return false; received.TrySetResult(); return true; } };
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("HOTKEYS "))
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            }
+        };
 #pragma warning disable RESP010 // This cancellation test owns the client whose HOTKEYS reply is withheld to detect replay after dispatch.
         await using var client = await RespireClient.ConnectAsync(Options(server.Port));
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         var task = allNodes ? AllNodes() : tracker.StartAsync(new(), cancellation.Token).AsTask();
-        await received.Task.WaitAsync(TimeSpan.FromSeconds(5)); cancellation.Cancel();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
         await Assert.That(async () => await task.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
         await Assert.That(server.ReceivedCommands.Count(x => x.StartsWith("HOTKEYS "))).IsEqualTo(1);
+
         async Task AllNodes()
         {
             var results = await client.Server.StartHotKeysOnAllNodesAsync(new(), cancellation.Token);
@@ -267,6 +367,7 @@ public class ServerHotKeysTests
     }
 
     private static RespireOptions Options(int port) => new() { Endpoints = [new("127.0.0.1", port)], Connections = 1, Protocol = RespireProtocol.Resp2, AllowAdmin = true };
+
     private static RespValue[] Fields(byte[] key) => [
         RespValue.BulkString("tracking-active"), RespValue.Integer(1), RespValue.BulkString("sample-ratio"), RespValue.Integer(1),
         RespValue.BulkString("selected-slots"), RespValue.Array(RespValue.Array(RespValue.Integer(0), RespValue.Integer(16383))),
@@ -276,18 +377,22 @@ public class ServerHotKeysTests
         RespValue.BulkString("by-cpu-time-us"), RespValue.Array(RespValue.BulkString(key), RespValue.Integer(7)),
         RespValue.BulkString("by-net-bytes"), RespValue.Array(RespValue.BulkString(key), RespValue.Integer(100)),
         RespValue.BulkString("future"), RespValue.Array(RespValue.BulkString(new byte[] { 254, 0 }))];
+
     private static byte[] WireSnapshot(bool resp3)
     {
         var fields = Fields([255, 0]);
         return Sequence('*', Sequence(resp3 ? '%' : '*', fields.Select(Encode).ToArray()));
     }
+
     private static byte[] Encode(RespValue value) => value.Type switch
     {
         RespireDataType.Integer => Encoding.ASCII.GetBytes($":{value.AsInteger()}\r\n"),
         RespireDataType.Array => Sequence('*', value.AsArray().ToArray().Select(Encode).ToArray()),
         _ => Bulk(value.AsSpan().ToArray()),
     };
+
     private static byte[] Bulk(byte[] bytes) => [.. Encoding.ASCII.GetBytes($"${bytes.Length}\r\n"), .. bytes, 13, 10];
+
     private static byte[] Sequence(char type, params byte[][] items)
         => [.. Encoding.ASCII.GetBytes($"{type}{(type == '%' ? items.Length / 2 : items.Length)}\r\n"), .. items.SelectMany(x => x)];
 }

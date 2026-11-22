@@ -85,6 +85,7 @@ internal readonly struct ClientCacheCommandKey : IEquatable<ClientCacheCommandKe
     internal ClientCacheCommandKey Snapshot()
     {
         var arguments = new RespireValue[ArgumentCount];
+
         for (var index = 0; index < arguments.Length; index++)
         {
             arguments[index] = GetArgument(index).Snapshot();
@@ -98,6 +99,7 @@ internal readonly struct ClientCacheCommandKey : IEquatable<ClientCacheCommandKe
         get
         {
             long size = 32 + _operation.Length * sizeof(char);
+
             for (var index = 0; index < ArgumentCount; index++)
             {
                 size += GetArgument(index).GetWireLength();
@@ -133,6 +135,7 @@ internal readonly struct ClientCacheCommandKey : IEquatable<ClientCacheCommandKe
         var hash = new HashCode();
         hash.Add(_operation, StringComparer.Ordinal);
         hash.Add(ArgumentCount);
+
         for (var index = 0; index < ArgumentCount; index++)
         {
             hash.Add(GetArgument(index));

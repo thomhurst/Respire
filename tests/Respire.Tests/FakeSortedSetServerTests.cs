@@ -18,7 +18,11 @@ public class FakeSortedSetServerTests
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
 #pragma warning restore RESP010
         await client.SortedSets.AddAsync("key", ("a", 1), ("b", 2));
-        using (var expiry = await client.ExecuteAsync("PEXPIRE", "key", 1000)) { }
+
+        using (var expiry = await client.ExecuteAsync("PEXPIRE", "key", 1000))
+        {
+        }
+
         await client.SortedSets.AddAsync("key", "a", 3);
         await client.SortedSets.IncrementAsync("key", "b", 2);
         await client.SortedSets.RemoveAsync("key", "a");
@@ -27,10 +31,15 @@ public class FakeSortedSetServerTests
         await Assert.That(await client.SortedSets.CountAsync("key")).IsEqualTo(1);
         clock.Advance(TimeSpan.FromMilliseconds(1));
         await Assert.That(await client.SortedSets.CountAsync("key")).IsEqualTo(0);
+
         foreach (var command in new[] { "ZREM", "ZPOPMIN", "ZPOPMAX", "ZREMRANGEBYRANK", "ZREMRANGEBYSCORE", "ZREMRANGEBYLEX" })
         {
             await client.SortedSets.AddAsync("key", "a", 1);
-            using (var expiry = await client.ExecuteAsync("PEXPIRE", "key", 1000)) { }
+
+            using (var expiry = await client.ExecuteAsync("PEXPIRE", "key", 1000))
+            {
+            }
+
             RespireValue[] args = command switch
             {
                 "ZREM" => ["key", "a"],
@@ -39,7 +48,11 @@ public class FakeSortedSetServerTests
                 "ZREMRANGEBYSCORE" => ["key", "-inf", "+inf"],
                 _ => ["key", "-", "+"],
             };
-            using (var removed = await client.ExecuteAsync(command, args)) { }
+
+            using (var removed = await client.ExecuteAsync(command, args))
+            {
+            }
+
             await Assert.That(await client.ExistsAsync("key")).IsFalse();
             await client.SortedSets.AddAsync("key", "a", 1);
             await Assert.That(await Number(client, "PTTL", "key")).IsEqualTo(-1);
@@ -73,6 +86,7 @@ public class FakeSortedSetServerTests
         await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
 #pragma warning restore RESP010
         await client.SortedSets.AddAsync("key", "member", 1);
+
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
             ("ZRANDMEMBER", ["key"]), ("ZMPOP", [1, "key", "MIN"]),
@@ -82,10 +96,17 @@ public class FakeSortedSetServerTests
             ("ZDIFFSTORE", ["destination", 1, "key"]), ("ZRANGESTORE", ["destination", "key", 0, -1]),
         })
         {
-            var error = await Assert.That(async () => { using var ignored = await client.ExecuteAsync(command, args); }).Throws<RespireServerException>();
+            var error = await Assert.That(async () =>
+            {
+                using var ignored = await client.ExecuteAsync(command, args);
+            }).Throws<RespireServerException>();
             await Assert.That(error!.Message).Contains(command);
         }
-        await Assert.That(async () => { using var ignored = await client.ExecuteAsync("ZRANK", "key", "member", "INVALID"); }).Throws<RespireServerException>();
+
+        await Assert.That(async () =>
+        {
+            using var ignored = await client.ExecuteAsync("ZRANK", "key", "member", "INVALID");
+        }).Throws<RespireServerException>();
         await Assert.That(await client.SortedSets.ScoreAsync("key", "member")).IsEqualTo(1);
         await Assert.That(await client.ExistsAsync("destination")).IsFalse();
     }

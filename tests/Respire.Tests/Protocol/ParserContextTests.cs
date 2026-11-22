@@ -22,9 +22,11 @@ public class ParserContextTests
         var status = resumable
             ? parser.TryParseResumable(bytes, ref pos, out var value, out _)
             : RespParser.TryParseValue(bytes, ref pos, out value);
+
         using (value)
         {
             await Assert.That(status).IsEqualTo(depth <= 512 ? RespParseStatus.Done : RespParseStatus.InvalidData);
+
             if (status == RespParseStatus.Done)
             {
                 await Assert.That(pos).IsEqualTo(bytes.Length);
@@ -38,18 +40,22 @@ public class ParserContextTests
     public async Task RestartedNestedAttributesCommitOnlyCompleteReplies()
     {
         var bytes = "*2\r\n|1\r\n+k\r\n*2\r\n:1\r\n:2\r\n:42\r\n%1\r\n+k\r\n~1\r\n:7\r\n"u8.ToArray();
+
         for (var end = 0; end < bytes.Length; end++)
         {
             var pos = 0;
             var status = RespParser.TryParseValue(bytes.AsSpan(0, end), ref pos, out var value);
+
             using (value)
             {
                 await Assert.That(status).IsEqualTo(RespParseStatus.NeedMoreData);
                 await Assert.That(pos).IsEqualTo(0);
             }
         }
+
         var finalPos = 0;
         await Assert.That(RespParser.TryParseValue(bytes, ref finalPos, out var complete)).IsEqualTo(RespParseStatus.Done);
+
         using (complete)
         {
             await Assert.That(finalPos).IsEqualTo(bytes.Length);

@@ -20,8 +20,19 @@ public class ClusterReplicaDiscoveryTests
         var baseline = new ConcurrentDictionary<int, ClusterReplicaSet>();
         var baselineReads = Enumerable.Range(0, 256).Select(slot => baseline
             .GetOrAdd(slot, static _ => new([], TimeSpan.Zero))
-            .JoinOrStartRefresh(() => { baselineCommands++; return reply.Task; })!).ToArray();
-        var coordinator = new ClusterReplicaDiscovery(_ => { commands++; return reply.Task; }, _ => covered);
+            .JoinOrStartRefresh(() =>
+            {
+                baselineCommands++;
+                return reply.Task;
+            })!).ToArray();
+        var coordinator = new ClusterReplicaDiscovery(
+            _ =>
+            {
+                commands++;
+                return reply.Task;
+            },
+            _ => covered
+        );
         var reads = Enumerable.Range(0, 256).Select(slot => coordinator.DiscoverAsync(slot, default).AsTask()).ToArray();
         covered = true;
         reply.SetResult();
@@ -42,7 +53,12 @@ public class ClusterReplicaDiscoveryTests
         var coordinator = new ClusterReplicaDiscovery(slot =>
         {
             Interlocked.Increment(ref commands);
-            if (slot == 0) return first.Task;
+
+            if (slot == 0)
+            {
+                return first.Task;
+            }
+
             secondStarted.SetResult();
             return second.Task;
         }, slot => Volatile.Read(ref covered[slot]));
@@ -65,7 +81,14 @@ public class ClusterReplicaDiscoveryTests
         var reply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var commands = 0;
         var covered = false;
-        var coordinator = new ClusterReplicaDiscovery(_ => { commands++; return reply.Task; }, _ => covered);
+        var coordinator = new ClusterReplicaDiscovery(
+            _ =>
+            {
+                commands++;
+                return reply.Task;
+            },
+            _ => covered
+        );
         using var cancellation = new CancellationTokenSource();
         var canceled = coordinator.DiscoverAsync(0, cancellation.Token).AsTask();
         var survivor = coordinator.DiscoverAsync(1, default).AsTask();
@@ -83,9 +106,24 @@ public class ClusterReplicaDiscoveryTests
     {
         long now = 10;
         var commands = 0;
-        var coordinator = new ClusterReplicaDiscovery(_ => { commands++; return Task.CompletedTask; }, _ => false, () => now);
+        var coordinator = new ClusterReplicaDiscovery(
+            _ =>
+            {
+                commands++;
+                return Task.CompletedTask;
+            },
+            _ => false,
+            () => now
+        );
+
         for (var repeat = 0; repeat < 3; repeat++)
-            for (var slot = 0; slot < 128; slot++) await coordinator.DiscoverAsync(slot, default);
+        {
+            for (var slot = 0; slot < 128; slot++)
+            {
+                await coordinator.DiscoverAsync(slot, default);
+            }
+        }
+
         await Assert.That(commands).IsEqualTo(128);
         coordinator.Invalidate(3);
         await coordinator.DiscoverAsync(3, default);
@@ -103,7 +141,11 @@ public class ClusterReplicaDiscoveryTests
         var covered = false;
         var coordinator = new ClusterReplicaDiscovery(_ =>
         {
-            if (++commands == 1) return first.Task;
+            if (++commands == 1)
+            {
+                return first.Task;
+            }
+
             covered = true;
             return Task.CompletedTask;
         }, _ => covered);
@@ -143,19 +185,25 @@ public class ClusterReplicaDiscoveryTests
         var covered = false;
         var coordinator = new ClusterReplicaDiscovery(_ =>
         {
-            if (Interlocked.Increment(ref commands) == 1) return first.Task;
+            if (Interlocked.Increment(ref commands) == 1)
+            {
+                return first.Task;
+            }
+
             Volatile.Write(ref covered, true);
             return Task.CompletedTask;
         }, _ => Volatile.Read(ref covered));
         var pending = coordinator.DiscoverAsync(1, default).AsTask();
         var gate = coordinator.TestingGate;
         bool completed;
+
         lock (gate)
         {
             first.SetResult();
             completed = coordinator.TestingCurrentProbe!.IsCompleted;
             coordinator.Invalidate(1);
         }
+
         await pending.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(completed).IsTrue();
         await Assert.That(commands).IsEqualTo(2);
@@ -176,11 +224,13 @@ public class ClusterReplicaDiscoveryTests
         var pending = coordinator.DiscoverAsync(1, default).AsTask();
         var gate = coordinator.TestingGate;
         Task other;
+
         lock (gate)
         {
             first.SetResult();
             other = coordinator.DiscoverAsync(2, default).AsTask();
         }
+
         try
         {
             await pending.WaitAsync(TimeSpan.FromSeconds(2));
@@ -206,6 +256,7 @@ public class ClusterReplicaDiscoveryTests
         }, _ => false, () => 10);
         var version = await coordinator.DiscoverAsync(1, default);
         var other = coordinator.DiscoverAsync(2, default).AsTask();
+
         try
         {
             var repeated = await coordinator.DiscoverAsync(1, default).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
@@ -225,9 +276,18 @@ public class ClusterReplicaDiscoveryTests
     {
         var reply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var commands = 0;
-        var coordinator = new ClusterReplicaDiscovery(_ => { commands++; return reply.Task; }, _ => false, () => 10);
+        var coordinator = new ClusterReplicaDiscovery(
+            _ =>
+            {
+                commands++;
+                return reply.Task;
+            },
+            _ => false,
+            () => 10
+        );
         var first = coordinator.DiscoverAsync(1, default).AsTask();
         var joined = coordinator.DiscoverAsync(1, default).AsTask();
+
         try
         {
             await Assert.That(joined.IsCompleted).IsFalse();
@@ -238,6 +298,7 @@ public class ClusterReplicaDiscoveryTests
             reply.TrySetResult();
             await Task.WhenAll(first, joined).WaitAsync(TimeSpan.FromSeconds(5));
         }
+
         await Assert.That(await joined).IsEqualTo(await first);
     }
 
@@ -258,24 +319,35 @@ public class ClusterReplicaDiscoveryTests
     private static long MeasureBookkeeping(bool shared)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         if (shared)
         {
             var coordinator = new ClusterReplicaDiscovery(static _ => Task.CompletedTask, static _ => false);
+
 #pragma warning disable RESP009 // Completed refresh callbacks keep this allocation probe on the measuring thread.
-            for (var slot = 0; slot < 256; slot++) coordinator.DiscoverAsync(slot, default).GetAwaiter().GetResult();
+            for (var slot = 0; slot < 256; slot++)
+            {
+                coordinator.DiscoverAsync(slot, default).GetAwaiter().GetResult();
+            }
+
 #pragma warning restore RESP009
             GC.KeepAlive(coordinator);
         }
         else
         {
             var routes = new ConcurrentDictionary<int, ClusterReplicaSet>();
+
             for (var slot = 0; slot < 256; slot++)
+            {
 #pragma warning disable RESP009 // Completed refresh callbacks keep this allocation probe on the measuring thread.
                 routes.GetOrAdd(slot, static _ => new([], TimeSpan.Zero))
                     .JoinOrStartRefresh(static () => Task.CompletedTask)!.GetAwaiter().GetResult();
+            }
+
 #pragma warning restore RESP009
             GC.KeepAlive(routes);
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -296,13 +368,19 @@ public class ClusterReplicaDiscoveryTests
     private static long MeasureCovered(ClusterReplicaDiscovery coordinator, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var slot = 0; slot < 1_000; slot++)
         {
 #pragma warning disable RESP009 // Covered-slot discovery completes inline; consume it on the allocation-measurement thread.
             coordinator.DiscoverAsync(slot, default).GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
-            if (allocate) GC.KeepAlive(new byte[37]);
+            if (allocate)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

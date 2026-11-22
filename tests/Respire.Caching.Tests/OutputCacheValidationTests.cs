@@ -15,16 +15,21 @@ public class OutputCacheValidationTests
     {
         await using var server = new FakeRespServer();
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", server.Port)] });
+
         foreach (var prefix in new string?[] { null, "", "plain:", "{}:", "{}{valid}:", "{unclosed:" })
         {
             await Assert.That(() => new RespireOutputCacheStore(client, new()
             { InstanceName = prefix, TaggingMode = RespireOutputCacheTaggingMode.GenerationAware })).Throws<ArgumentException>();
             var services = new ServiceCollection();
             services.AddRespireOutputCache(options =>
-            { options.InstanceName = prefix; options.TaggingMode = RespireOutputCacheTaggingMode.GenerationAware; });
+            {
+                options.InstanceName = prefix;
+                options.TaggingMode = RespireOutputCacheTaggingMode.GenerationAware;
+            });
             await using var provider = services.BuildServiceProvider();
             await Assert.That(async () => await provider.GetRequiredService<IAsyncStartupValidator>().ValidateAsync(CancellationToken.None)).ThrowsExactly<OptionsValidationException>();
         }
+
         await Assert.That(() => new RespireOutputCacheStore(client, new() { TaggingMode = (RespireOutputCacheTaggingMode)999 }))
             .ThrowsExactly<ArgumentOutOfRangeException>();
         var invalidModeServices = new ServiceCollection();
@@ -60,7 +65,10 @@ public class OutputCacheValidationTests
             ReplyOverride = (_, command) =>
             {
                 if (IsTagRegistration(command, $"output:__MSOCT_{failingTag}"))
+                {
                     return "-WRONGTYPE invalid tag index\r\n"u8.ToArray();
+                }
+
                 return command.StartsWith("SET ", StringComparison.Ordinal) ? FakeRespServer.OkReply : ":1\r\n"u8.ToArray();
             },
         };
@@ -80,7 +88,11 @@ public class OutputCacheValidationTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (IsTagRegistration(command, "__MSOCT_tag")) cancellation.Cancel();
+                if (IsTagRegistration(command, "__MSOCT_tag"))
+                {
+                    cancellation.Cancel();
+                }
+
                 return command.StartsWith("SET ", StringComparison.Ordinal) ? FakeRespServer.OkReply : ":1\r\n"u8.ToArray();
             },
         };
@@ -99,7 +111,11 @@ public class OutputCacheValidationTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (IsTagRegistration(command, "output:__MSOCT_tag")) clock.Advance(10_000);
+                if (IsTagRegistration(command, "output:__MSOCT_tag"))
+                {
+                    clock.Advance(10_000);
+                }
+
                 return command.StartsWith("SET ", StringComparison.Ordinal) ? FakeRespServer.OkReply : ":1\r\n"u8.ToArray();
             },
         };
@@ -142,7 +158,9 @@ public class OutputCacheValidationTests
     private sealed class TestClock(long milliseconds) : TimeProvider
     {
         private long _milliseconds = milliseconds;
+
         public override DateTimeOffset GetUtcNow() => DateTimeOffset.FromUnixTimeMilliseconds(Volatile.Read(ref _milliseconds));
+
         public void Advance(long milliseconds) => Interlocked.Add(ref _milliseconds, milliseconds);
     }
 }

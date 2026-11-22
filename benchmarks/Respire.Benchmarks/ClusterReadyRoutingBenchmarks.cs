@@ -33,8 +33,10 @@ public class ClusterReadyRoutingBenchmarks
         var port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var configured) ? configured : 6380;
         var options = new RespireOptions
         {
-            Endpoints = [new(host, port)], Protocol = RespireProtocol.Resp2,
-            Connections = 1, ThreadPoolMonitoring = false,
+            Endpoints = [new(host, port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
         };
         _cluster = await RespireClient.ConnectAsync(options with { UseCluster = true }).ConfigureAwait(false);
         _standalone = await RespireClient.ConnectAsync(options).ConfigureAwait(false);
@@ -42,13 +44,22 @@ public class ClusterReadyRoutingBenchmarks
         // The workflow copies this fixture to the baseline revision, where this opt-in may not exist.
         typeof(RespireOptions).GetProperty("SplitCrossSlotCommands")?.SetValue(splitOptions, true);
         _splitCluster = await RespireClient.ConnectAsync(splitOptions).ConfigureAwait(false);
+
         if (!await _cluster.Strings.SetManyAsync(_manyPairs).ConfigureAwait(false)
             || !(await _splitCluster.Strings.GetManyAsync(_manyKeys).ConfigureAwait(false)).SequenceEqual(new[] { "one", "two" }))
+        {
             throw new InvalidOperationException("Same-slot multi-key benchmark setup failed.");
+        }
+
         if (RespireTelemetry.IsOperationEnabled("GET") || RespireTelemetry.IsOperationEnabled("STRLEN"))
+        {
             throw new InvalidOperationException("Cluster ready benchmarks require uninstrumented command dispatch.");
+        }
+
         if (!await _standalone.Strings.SetAsync(_key, _payload).ConfigureAwait(false))
+        {
             throw new InvalidOperationException("Failed to initialize the cluster benchmark payload.");
+        }
 
         for (var index = 0; index < 50; index++)
         {
@@ -57,12 +68,18 @@ public class ClusterReadyRoutingBenchmarks
                 || await _cluster.Strings.LengthAsync(_key).ConfigureAwait(false) != _payload.Length
                 || await _standalone.Strings.GetStringAsync(_key).ConfigureAwait(false) != _payload
                 || await _standalone.Strings.LengthAsync(_key).ConfigureAwait(false) != _payload.Length)
+            {
                 throw new InvalidOperationException("A stable cluster benchmark returned an unexpected reply.");
+            }
         }
+
         if ((await ClusterStringConcurrent50().ConfigureAwait(false)).Any(value => value != _payload)
             || (await ClusterBytesConcurrent50().ConfigureAwait(false)).Any(value => value?.Length != _payload.Length)
             || (await ClusterIntegerConcurrent50().ConfigureAwait(false)).Any(value => value != _payload.Length))
+        {
             throw new InvalidOperationException("A concurrent cluster benchmark returned an unexpected reply.");
+        }
+
         _operation = null;
         _operations = 0;
         _process.Refresh();
@@ -95,8 +112,12 @@ public class ClusterReadyRoutingBenchmarks
     public Task<string?[]> ClusterStringConcurrent50()
     {
         Count(nameof(ClusterStringConcurrent50), 50);
+
         for (var index = 0; index < _strings.Length; index++)
+        {
             _strings[index] = _cluster.Strings.GetStringAsync(_key).AsTask();
+        }
+
         return Task.WhenAll(_strings);
     }
 
@@ -104,8 +125,12 @@ public class ClusterReadyRoutingBenchmarks
     public Task<byte[]?[]> ClusterBytesConcurrent50()
     {
         Count(nameof(ClusterBytesConcurrent50), 50);
+
         for (var index = 0; index < _bytes.Length; index++)
+        {
             _bytes[index] = _cluster.Strings.GetBytesAsync(_key).AsTask();
+        }
+
         return Task.WhenAll(_bytes);
     }
 
@@ -113,8 +138,12 @@ public class ClusterReadyRoutingBenchmarks
     public Task<long[]> ClusterIntegerConcurrent50()
     {
         Count(nameof(ClusterIntegerConcurrent50), 50);
+
         for (var index = 0; index < _integers.Length; index++)
+        {
             _integers[index] = _cluster.Strings.LengthAsync(_key).AsTask();
+        }
+
         return Task.WhenAll(_integers);
     }
 
@@ -174,17 +203,32 @@ public class ClusterReadyRoutingBenchmarks
         // each launch's raw counters; compare identical fixtures and both baseline controls.
         Console.WriteLine("CLUSTER_READY_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
-            operation = _operation, operations = _operations,
+            operation = _operation,
+            operations = _operations,
             cpuMilliseconds = (_process.TotalProcessorTime - _cpuAt).TotalMilliseconds,
             elapsedSeconds = Stopwatch.GetElapsedTime(_startedAt).TotalSeconds,
         }));
-        try { if (_cluster is not null) await _cluster.DisposeAsync().ConfigureAwait(false); }
+
+        try
+        {
+            if (_cluster is not null)
+            {
+                await _cluster.DisposeAsync().ConfigureAwait(false);
+            }
+        }
         finally
         {
             try
             {
-                if (_standalone is not null) await _standalone.DisposeAsync().ConfigureAwait(false);
-                if (_splitCluster is not null) await _splitCluster.DisposeAsync().ConfigureAwait(false);
+                if (_standalone is not null)
+                {
+                    await _standalone.DisposeAsync().ConfigureAwait(false);
+                }
+
+                if (_splitCluster is not null)
+                {
+                    await _splitCluster.DisposeAsync().ConfigureAwait(false);
+                }
             }
             finally { _process.Dispose(); }
         }

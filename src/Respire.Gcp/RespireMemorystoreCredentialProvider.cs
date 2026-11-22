@@ -24,10 +24,16 @@ public sealed class RespireMemorystoreCredentialProvider : IRespireCredentialPro
         ArgumentNullException.ThrowIfNull(credential);
         // Memorystore requires OAuth access tokens, not locally signed service account JWTs.
         if (credential.UnderlyingCredential is ServiceAccountCredential serviceAccount)
+        {
             credential = serviceAccount.WithUseJwtAccessWithScopes(false).ToGoogleCredential();
+        }
+
         _credential = credential.CreateScoped(Scope);
+
         if (_credential.UnderlyingCredential is not (ServiceCredential or UserCredential))
+        {
             throw new ArgumentException("A renewable Google OAuth credential is required.", nameof(credential));
+        }
     }
 
     /// <inheritdoc />
@@ -44,8 +50,11 @@ public sealed class RespireMemorystoreCredentialProvider : IRespireCredentialPro
             UserCredential user => user.Token,
             _ => null,
         };
+
         if (token is null || string.IsNullOrEmpty(token.AccessToken) || token.ExpiresInSeconds is not > 0)
+        {
             throw new InvalidOperationException("Google did not return an access token with an expiry.");
+        }
 
         var expiry = new DateTimeOffset(token.IssuedUtc, TimeSpan.Zero).AddSeconds(token.ExpiresInSeconds.Value);
         return new RespireCredentials(null, token.AccessToken, expiry);

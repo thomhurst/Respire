@@ -89,11 +89,17 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
         var original = (await queue.ReceiveAsync(TimeSpan.FromMilliseconds(100))).Single();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         RespireQueueMessage<string>[] redelivered;
+
         do
         {
             redelivered = await queue.ReceiveAsync(TimeSpan.FromMinutes(1), cancellationToken: deadline.Token);
-            if (redelivered.Length == 0) await Task.Delay(10, deadline.Token);
+
+            if (redelivered.Length == 0)
+            {
+                await Task.Delay(10, deadline.Token);
+            }
         } while (redelivered.Length == 0);
+
         var current = redelivered.Single();
         await Assert.That(current.Id).IsEqualTo(original.Id);
         await Assert.That(current.Payload).IsEqualTo(original.Payload);
@@ -110,18 +116,30 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
     public async Task InvalidArgumentsAndCancellationDoNotMutateQueue(int protocol)
     {
         await using var client = await ConnectAsync(protocol);
+
         foreach (var name in new[] { "", " ", "queue{tag}", "queue}" })
+        {
             await Assert.That(() => Queue(client, name)).Throws<ArgumentException>();
+        }
+
         foreach (var limit in new[] { 0, -1 })
+        {
             await Assert.That(() => Queue(client, deliveryLimit: limit)).Throws<ArgumentOutOfRangeException>();
+        }
+
         var queue = Queue(client);
+
         foreach (var duration in new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(-1), TimeSpan.FromMilliseconds((long)int.MaxValue + 1) })
         {
             await Assert.That(async () => await queue.ReceiveAsync(duration)).Throws<ArgumentOutOfRangeException>();
             await Assert.That(async () => await queue.SendAsync("payload", "id", duration)).Throws<ArgumentOutOfRangeException>();
         }
+
         foreach (var max in new[] { 0, -1, 1001 })
+        {
             await Assert.That(async () => await queue.ReceiveAsync(TimeSpan.FromMinutes(1), max)).Throws<ArgumentOutOfRangeException>();
+        }
+
         var cancellationBeforeSerialization = new RespireReliableQueue<string>(client, "queue",
             static _ => throw new InvalidOperationException("Serialization should not run."), Encoding.UTF8.GetString);
         await Assert.That(async () => await cancellationBeforeSerialization.SendAsync("payload", cancellationToken: new(true)))
@@ -132,8 +150,12 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
             .Throws<OperationCanceledException>();
         var message = (await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Single();
         await Assert.That(message.DeliveryCount).IsEqualTo(1);
+
         foreach (var delay in new[] { TimeSpan.FromMilliseconds(-1), TimeSpan.FromMilliseconds((long)int.MaxValue + 1) })
+        {
             await Assert.That(async () => await queue.NackAsync(message, delay)).Throws<ArgumentOutOfRangeException>();
+        }
+
         await Assert.That(await queue.AckAsync(message)).IsTrue();
     }
 
@@ -190,15 +212,22 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
         await using var client = await ConnectAsync(protocol);
         var queue = Queue(client, deliveryLimit: 2);
         var id = await queue.SendAsync("poison");
+
         for (var attempt = 1; attempt <= 2; attempt++)
         {
             var message = (await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Single();
             await Assert.That(message.DeliveryCount).IsEqualTo(attempt);
-            if (nack) await Assert.That(await queue.NackAsync(message, TimeSpan.FromMinutes(1))).IsTrue();
+
+            if (nack)
+            {
+                await Assert.That(await queue.NackAsync(message, TimeSpan.FromMinutes(1))).IsTrue();
+            }
+
             await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(0);
             await Assert.That((await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Length).IsEqualTo(0);
             await MakeDue(client, queue, id);
         }
+
         await Assert.That((await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Length).IsEqualTo(0);
         await Assert.That((await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Length).IsEqualTo(0);
         var dead = (await client.Streams.ReadAsync(queue.DeadLetterStreamKey)).Single();
@@ -285,7 +314,11 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
         await Assert.That(await queue.SendAsync("replacement", "application-id", TimeSpan.FromDays(1))).IsEqualTo(id);
         using var retryDeadline = await client.ExecuteAsync("PEXPIRETIME", [key]);
         await Assert.That(retryDeadline.AsInteger()).IsEqualTo(firstDeadline.AsInteger());
-        using (await client.ExecuteAsync("PEXPIREAT", [key, 1])) { }
+
+        using (await client.ExecuteAsync("PEXPIREAT", [key, 1]))
+        {
+        }
+
         var nextId = await queue.SendAsync("next", "application-id");
         await Assert.That(nextId).IsNotEqualTo(id);
         var messages = await queue.ReceiveAsync(TimeSpan.FromMinutes(1), max: 2);
@@ -330,11 +363,21 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
         var metadataKey = queue.StreamKey + suffix;
         using var exists = await client.ExecuteAsync("EXISTS", [metadataKey]);
         var hadMetadata = exists.AsInteger() != 0;
-        if (hadMetadata) { using var moved = await client.ExecuteAsync("RENAME", [metadataKey, metadataKey + ":backup"]); }
+
+        if (hadMetadata)
+        {
+            using var moved = await client.ExecuteAsync("RENAME", [metadataKey, metadataKey + ":backup"]);
+        }
+
         await client.Strings.SetAsync(metadataKey, "wrong type");
         await Assert.That(async () => await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Throws<RespireServerException>();
         await client.Keys.DeleteAsync(metadataKey);
-        if (hadMetadata) { using var restored = await client.ExecuteAsync("RENAME", [metadataKey + ":backup", metadataKey]); }
+
+        if (hadMetadata)
+        {
+            using var restored = await client.ExecuteAsync("RENAME", [metadataKey + ":backup", metadataKey]);
+        }
+
         var message = (await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Single();
         await Assert.That(message.Id).IsEqualTo(id);
         await Assert.That(message.DeliveryCount).IsEqualTo(1);
@@ -371,15 +414,19 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
     public async Task DeniedWriteLeavesOperationRetryable(int protocol, string operation, string deniedCommand)
     {
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-            with { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
+            with
+        { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
         var username = "reliable-" + Guid.NewGuid().ToString("N");
         var queue = Queue(admin);
         await admin.Server.AclSetUserAsync(username, ["on", ">queue-password", "~*", "+@all", "-" + deniedCommand]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Protocol = (RespireProtocol)protocol, Username = username, Password = "queue-password" });
+                with
+            { Protocol = (RespireProtocol)protocol, Username = username, Password = "queue-password" });
             var restrictedQueue = Queue(restricted);
+
             if (operation == "send")
             {
                 await Assert.That(async () => await restrictedQueue.SendAsync("payload", "id")).Throws<RespireServerException>();
@@ -408,6 +455,7 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
                 await Assert.That(await (operation == "ack"
                     ? restrictedQueue.AckAsync(message) : restrictedQueue.NackAsync(message))).IsTrue();
                 await Assert.That(await restrictedQueue.AckAsync(message)).IsFalse();
+
                 if (operation == "nack")
                 {
                     var redelivered = (await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Single();
@@ -427,18 +475,27 @@ public class ReliableQueueIntegrationTests(RedisTestContainer redis)
     public async Task DeniedOptionalCapabilityUsesCompatibleAcknowledgement(int protocol, string deniedCommand)
     {
         await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-            with { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
+            with
+        { Protocol = (RespireProtocol)protocol, AllowAdmin = true });
+
         if (deniedCommand == "xackdel")
         {
             using var command = await admin.ExecuteAsync("COMMAND INFO", ["XACKDEL"]);
-            if (command[0].IsNull) return;
+
+            if (command[0].IsNull)
+            {
+                return;
+            }
         }
+
         var username = "reliable-fallback-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">queue-password", "~*", "+@all", "-" + deniedCommand]);
+
         try
         {
             await using var restricted = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with { Protocol = (RespireProtocol)protocol, Username = username, Password = "queue-password" });
+                with
+            { Protocol = (RespireProtocol)protocol, Username = username, Password = "queue-password" });
             var queue = Queue(restricted, deliveryLimit: 1);
             await queue.SendAsync("acknowledge");
             await Assert.That(await queue.AckAsync((await queue.ReceiveAsync(TimeSpan.FromMinutes(1))).Single())).IsTrue();

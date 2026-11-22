@@ -25,6 +25,7 @@ internal sealed class ClusterReplicaSet
     internal const long RefreshIntervalMilliseconds = 1_000;
 
     private readonly Func<long>? _clock;
+
     private long Now => _clock?.Invoke() ?? Environment.TickCount64;
 
     private int _cursor;
@@ -40,7 +41,10 @@ internal sealed class ClusterReplicaSet
         MarkValidated(revalidationInterval);
     }
 
-    internal RespireConnectionMultiplexer[] Nodes { get; }
+    internal RespireConnectionMultiplexer[] Nodes
+    {
+        get;
+    }
 
     /// <summary>True once the routes are older than the revalidation interval.</summary>
     internal bool IsDueForRevalidation => Now >= Volatile.Read(ref _revalidateAt);
@@ -70,10 +74,21 @@ internal sealed class ClusterReplicaSet
         while (true)
         {
             var current = Volatile.Read(ref _refresh);
-            if (current is { IsCompleted: false }) return current;
+
+            if (current is { IsCompleted: false })
+            {
+                return current;
+            }
+
             var now = Now;
-            if (now < Volatile.Read(ref _refreshNotBefore)) return null;
+
+            if (now < Volatile.Read(ref _refreshNotBefore))
+            {
+                return null;
+            }
+
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
             if (!ReferenceEquals(Interlocked.CompareExchange(ref _refresh, completion.Task, current), current))
             {
                 continue;
@@ -105,11 +120,22 @@ internal sealed class ClusterReplicaSet
 
     internal bool HasSameNodes(RespireConnectionMultiplexer[] nodes)
     {
-        if (ReferenceEquals(Nodes, nodes)) return true;
-        if (Nodes.Length != nodes.Length) return false;
+        if (ReferenceEquals(Nodes, nodes))
+        {
+            return true;
+        }
+
+        if (Nodes.Length != nodes.Length)
+        {
+            return false;
+        }
+
         for (var index = 0; index < nodes.Length; index++)
         {
-            if (!ReferenceEquals(Nodes[index], nodes[index])) return false;
+            if (!ReferenceEquals(Nodes[index], nodes[index]))
+            {
+                return false;
+            }
         }
 
         return true;

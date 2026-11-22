@@ -1,6 +1,6 @@
 using Respire.Commands;
-using Respire.Internal;
 using Respire.Infrastructure;
+using Respire.Internal;
 using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -19,8 +19,16 @@ public class AskingPrefixTests
         {
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
-                if (Interlocked.Increment(ref received) == 2) full.TrySetResult();
+                if (command != "PING")
+                {
+                    return false;
+                }
+
+                if (Interlocked.Increment(ref received) == 2)
+                {
+                    full.TrySetResult();
+                }
+
                 return true;
             },
         };
@@ -63,12 +71,14 @@ public class AskingPrefixTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         var command = new Cmd1(Verbs.Get, "key");
         RespireServerException? observed = null;
+
         try
         {
             using var reply = await ClusterRouter.SendAskingAsync(connection, command,
                 CancellationToken.None, "GET", pinToConnection: pinned);
         }
         catch (RespireServerException error) { observed = error; }
+
         await Assert.That(observed?.Message).IsEqualTo("NOPERM ASKING denied");
         using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
         await Assert.That(pong.AsString()).IsEqualTo("PONG");

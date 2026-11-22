@@ -22,21 +22,35 @@ internal sealed class WakeTrace(int wakes)
         var allocating = 0;
         int minWorkers = int.MaxValue, maxWorkers = int.MinValue;
         var listed = new StringBuilder();
+
         for (var i = 0; i < AllocatedAfterWake.Length; i++)
         {
             var delta = AllocatedAfterWake[i] - previous;
             previous = AllocatedAfterWake[i];
             minWorkers = Math.Min(minWorkers, WorkersAfterWake[i]);
             maxWorkers = Math.Max(maxWorkers, WorkersAfterWake[i]);
-            if (delta == 0) continue;
+
+            if (delta == 0)
+            {
+                continue;
+            }
+
             if (allocating++ < maxWakes)
+            {
                 listed.Append($"{Environment.NewLine}    wake {i}: +{delta} bytes, workers after wake {WorkersAfterWake[i]}");
+            }
         }
+
         text.Append($"{allocating} of {AllocatedAfterWake.Length} wakes allocated, {previous} bytes in total; ")
             .Append($"workers after each wake {minWorkers}..{maxWorkers}; ")
             .Append($"interval {StartedUtc:HH:mm:ss.ffffff}-{EndedUtc:HH:mm:ss.ffffff} UTC.");
         text.Append(listed);
-        if (allocating > maxWakes) text.Append($"{Environment.NewLine}    ... {allocating - maxWakes} more allocating wakes");
+
+        if (allocating > maxWakes)
+        {
+            text.Append($"{Environment.NewLine}    ... {allocating - maxWakes} more allocating wakes");
+        }
+
         return text.ToString();
     }
 }
@@ -80,7 +94,9 @@ internal sealed class DispatchedWakeEventLog : EventListener
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void CalibrationProbe() { }
+    private static void CalibrationProbe()
+    {
+    }
 
     public long MarkMeasuringThread()
     {
@@ -91,8 +107,14 @@ internal sealed class DispatchedWakeEventLog : EventListener
 
     protected override void OnEventSourceCreated(EventSource eventSource)
     {
-        if (eventSource.Name == RuntimeProvider) EnableEvents(eventSource, EventLevel.Verbose, RuntimeKeywords);
-        else if (eventSource.Name == ProbeMarkers.SourceName) EnableEvents(eventSource, EventLevel.Verbose);
+        if (eventSource.Name == RuntimeProvider)
+        {
+            EnableEvents(eventSource, EventLevel.Verbose, RuntimeKeywords);
+        }
+        else if (eventSource.Name == ProbeMarkers.SourceName)
+        {
+            EnableEvents(eventSource, EventLevel.Verbose);
+        }
     }
 
     protected override void OnEventWritten(EventWrittenEventArgs eventData)
@@ -104,15 +126,30 @@ internal sealed class DispatchedWakeEventLog : EventListener
             return;
         }
         // Runtime events arrive on the dispatcher thread; mark it so its own JIT and GC work is filtered out.
-        if (Interlocked.Exchange(ref _dispatcherMarked, 1) == 0) ProbeMarkers.Log.DispatcherThread();
+        if (Interlocked.Exchange(ref _dispatcherMarked, 1) == 0)
+        {
+            ProbeMarkers.Log.DispatcherThread();
+        }
+
         var payload = new StringBuilder();
+
         if (eventData.Payload is { } values && eventData.PayloadNames is { } names)
+        {
             for (var i = 0; i < values.Count && i < names.Count && payload.Length < 240; i++)
+            {
                 if (names[i] is not ("ClrInstanceID" or "MethodID" or "ModuleID" or "MethodToken" or "MethodStartAddress"))
+                {
                     payload.Append(' ').Append(names[i]).Append('=').Append(values[i]);
+                }
+            }
+        }
+
         _entries.Enqueue(new Entry(eventData.TimeStamp.ToUniversalTime(), eventData.OSThreadId,
             eventData.EventName ?? eventData.EventId.ToString(), payload.ToString()));
-        while (_entries.Count > Capacity && _entries.TryDequeue(out _)) { }
+
+        while (_entries.Count > Capacity && _entries.TryDequeue(out _))
+        {
+        }
     }
 
     // Runtime events reach the listener asynchronously; give the dispatcher time to drain.
@@ -131,6 +168,7 @@ internal sealed class DispatchedWakeEventLog : EventListener
         // event inside the interval is never dropped; neighbours may appear at the edges instead.
         TimeSpan margin;
         var text = new StringBuilder($"measuring OS thread {measuringThread}, listener dispatcher {dispatcher}; ");
+
         if (calibration.Name is null)
         {
             margin = TimeSpan.FromMilliseconds(5);
@@ -144,6 +182,7 @@ internal sealed class DispatchedWakeEventLog : EventListener
             text.Append($"event clock offset {offset.TotalMilliseconds:F3} ms "
                 + $"(+/- {halfWidth.TotalMilliseconds:F3} ms)");
         }
+
         var from = boundaries.Min(b => b.Utc) + offset - margin;
         var to = boundaries.Max(b => b.Utc) + offset + margin;
         var interval = entries.Where(e => e.TimestampUtc >= from && e.TimestampUtc <= to).ToList();
@@ -151,13 +190,18 @@ internal sealed class DispatchedWakeEventLog : EventListener
             .Select(e => (e.TimestampUtc, Line: $"os={e.OsThreadId}{(e.OsThreadId == measuringThread ? " (measuring)" : "")} {e.Name}{e.Payload}"))
             .ToList();
         text.Append($"; {interval.Count} events in the interval widened by {margin.TotalMilliseconds:F3} ms each side.");
+
         foreach (var (utc, line) in lines.Concat(boundaries.Select(b => (b.Utc + offset, Line: $"--- {b.Name}")))
                      .OrderBy(l => l.Item1))
         {
             text.Append($"{Environment.NewLine}    {utc:HH:mm:ss.ffffff} {(line.Length > 260 ? line[..260] : line)}");
         }
+
         if (interval.Count > lines.Count)
+        {
             text.Append($"{Environment.NewLine}    ... {interval.Count - lines.Count} more events from other threads");
+        }
+
         return text.ToString();
     }
 
@@ -167,9 +211,14 @@ internal sealed class DispatchedWakeEventLog : EventListener
         long measuringThread, int maxOtherThreadEvents)
     {
         var otherThreadEvents = 0;
+
         foreach (var entry in entries)
+        {
             if (entry.OsThreadId == measuringThread || otherThreadEvents++ < maxOtherThreadEvents)
+            {
                 yield return entry;
+            }
+        }
     }
 
     // Code-heap bookkeeping repeats each JIT event without adding information.

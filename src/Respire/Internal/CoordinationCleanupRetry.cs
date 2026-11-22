@@ -15,23 +15,32 @@ internal static class CoordinationCleanupRetry
         CleanupRetryPolicy policy, Func<bool>? shouldContinue = null, Action<string>? onAbandoned = null)
     {
         var delay = policy.InitialDelay;
+
         while (shouldContinue is null || shouldContinue())
         {
             var outcome = await attempt().ConfigureAwait(false);
-            if (outcome == CleanupAttemptResult.Succeeded) return true;
+
+            if (outcome == CleanupAttemptResult.Succeeded)
+            {
+                return true;
+            }
+
             if (outcome == CleanupAttemptResult.Abandoned)
             {
                 onAbandoned?.Invoke("client_disposed");
                 return false;
             }
+
             if (Stopwatch.GetElapsedTime(started) >= policy.Limit)
             {
                 onAbandoned?.Invoke("exhausted");
                 return false;
             }
+
             await Task.Delay(WithJitter(delay)).ConfigureAwait(false);
             delay = NextDelay(delay, policy.MaximumDelay);
         }
+
         return false;
     }
 }

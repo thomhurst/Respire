@@ -34,11 +34,17 @@ public class PrefixedKeyTests
     private static long MeasureDeferredView(RespireClient view, bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             GC.KeepAlive(view.ForDeferredBatch());
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -67,8 +73,12 @@ public class PrefixedKeyTests
         var owned = variants.Select(variant => variant.ResolveKey(source)).ToArray();
         var borrowed = view.ResolveKey(source);
         source[0] = (byte)'X';
+
         for (var index = 0; index < owned.Length; index++)
+        {
             await Assert.That(owned[index].ToString()).IsEqualTo(index == owned.Length - 1 ? "tenant:next:source" : "tenant:source");
+        }
+
         await Assert.That(borrowed.ToString()).IsEqualTo("tenant:Xource");
     }
 
@@ -78,7 +88,8 @@ public class PrefixedKeyTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", 1)], ReplicaEndpoints = [new("127.0.0.1", 2)],
+            Endpoints = [new("127.0.0.1", 1)],
+            ReplicaEndpoints = [new("127.0.0.1", 2)],
             ClientSideCache = new(),
         });
 #pragma warning restore RESP010
@@ -95,8 +106,17 @@ public class PrefixedKeyTests
         var owned = variants.Select(variant => variant.ResolveKey(resolved)).ToArray();
         var borrowed = variants.Select(variant => variant.ResolveKey(bytes)).ToArray();
         bytes[0] = (byte)'X';
-        foreach (var key in owned) await Assert.That(key.ToString()).IsEqualTo("tenant:source");
-        foreach (var key in borrowed) await Assert.That(key.ToString()).IsEqualTo("Xource");
+
+        foreach (var key in owned)
+        {
+            await Assert.That(key.ToString()).IsEqualTo("tenant:source");
+        }
+
+        foreach (var key in borrowed)
+        {
+            await Assert.That(key.ToString()).IsEqualTo("Xource");
+        }
+
         await Assert.That(resolved.ToString()).IsEqualTo("tenant:Xource");
     }
 
@@ -129,8 +149,16 @@ public class PrefixedKeyTests
         var delete = queue.Keys.Delete(sourceKey, destinationKey);
         source[0] = (byte)'X';
         destination[0] = (byte)'Y';
-        if (tx is not null) await tx.CommitAsync();
-        else await batch!.ExecuteAsync();
+
+        if (tx is not null)
+        {
+            await tx.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
         await Assert.That(set.Result).IsTrue();
         await Assert.That(get.Result).IsEqualTo("value");
         _ = rename.Result;
@@ -186,6 +214,7 @@ public class PrefixedKeyTests
         await using var client = RespireClient.Create("localhost");
 #pragma warning restore RESP010
         var view = (RespireClient)client.WithKeyPrefix(prefix);
+
         foreach (var binary in new[] { false, true })
         {
             RespireKey input = binary ? new RespireKey(Encoding.UTF8.GetBytes(text)) : new RespireKey(text);
@@ -195,6 +224,7 @@ public class PrefixedKeyTests
             var resolved = view.ResolveKey(input);
             var value = view.Key(in input);
             var buffer = new WriteBuffer(expected.Length + 64);
+
             try
             {
                 var writer = new RespWriter(buffer);
@@ -274,6 +304,7 @@ public class PrefixedKeyTests
         var view = (RespireClient)client.WithKeyPrefix("tenant:");
         RespireKey key = binary ? new RespireKey("key"u8.ToArray()) : new RespireKey("key");
         var buffer = new WriteBuffer(256);
+
         try
         {
             _ = Measure(client, key, buffer, false);
@@ -294,6 +325,7 @@ public class PrefixedKeyTests
     private static long Measure(RespireClient client, RespireKey key, WriteBuffer buffer, bool control)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1000; index++)
         {
             buffer.Reset();
@@ -301,8 +333,13 @@ public class PrefixedKeyTests
             var command = new Cmd1(RespireCommands.String.GET.Verb, client.Key(in key));
             command.Write(ref writer);
             writer.Complete();
-            if (control) GC.KeepAlive(new byte[37]);
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -316,7 +353,9 @@ public class PrefixedKeyTests
 #pragma warning restore RESP010
         var first = client.WithKeyPrefix("first:");
         var second = client.WithKeyPrefix("second:");
+
         object Facet(IRespireClient view) => arrays ? view.Arrays : view.Strings;
+
         var facets = await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(() => Facet(first))));
         await Assert.That(facets.All(facet => ReferenceEquals(facet, Facet(first)))).IsTrue();
         await Assert.That(ReferenceEquals(Facet(first), Facet(second))).IsFalse();
@@ -347,7 +386,11 @@ public class PrefixedKeyTests
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
         var view = client.WithKeyPrefix("tenant:");
-        if (arraysOnly) GC.KeepAlive(view.Arrays);
+
+        if (arraysOnly)
+        {
+            GC.KeepAlive(view.Arrays);
+        }
         else if (facets)
         {
             GC.KeepAlive(view.Strings);
@@ -367,6 +410,7 @@ public class PrefixedKeyTests
             GC.KeepAlive(view.Functions);
             GC.KeepAlive(view.Server);
         }
+
         GC.KeepAlive(view);
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
@@ -422,12 +466,24 @@ public class PrefixedKeyTests
     private sealed class GuardedSuffix : MemoryManager<byte>
     {
         private readonly byte[] _bytes = new byte[8192];
-        internal bool RejectReads { get; set; }
+
+        internal bool RejectReads
+        {
+            get; set;
+        }
+
         public override Span<byte> GetSpan()
             => RejectReads ? throw new InvalidOperationException("The unused suffix was read.") : _bytes;
+
         public override MemoryHandle Pin(int elementIndex = 0) => throw new NotSupportedException();
-        public override void Unpin() { }
-        protected override void Dispose(bool disposing) { }
+
+        public override void Unpin()
+        {
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+        }
     }
 
     [Test]
@@ -438,6 +494,7 @@ public class PrefixedKeyTests
 #pragma warning restore RESP010
         var key = client.WithKeyPrefix("tenant:").ResolveKey("ascii-£-𐍈");
         var buffer = new WriteBuffer(16);
+
         try
         {
             var writer = new RespWriter(buffer);

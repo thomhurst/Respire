@@ -10,7 +10,9 @@ internal sealed class MaintenanceTimeoutState(long maximumWindowMilliseconds)
     private readonly List<(string Family, long Sequence)> _order = new(MaximumOperations);
     private long _overflowUntil;
     private ActiveWindow? _active;
+
     private readonly record struct Window(long Expires, bool Completed);
+
     internal sealed record ActiveWindow(long Started, long Expires);
 
     /// <summary>Applies the notification and reports a new start, including zero-grace MOVING.</summary>
@@ -20,8 +22,14 @@ internal sealed class MaintenanceTimeoutState(long maximumWindowMilliseconds)
         {
             var started = ApplyUnderLock(notification, now);
             var expires = _overflowUntil;
+
             foreach (var window in _windows.Values)
-                if (!window.Completed) expires = Math.Max(expires, window.Expires);
+            {
+                if (!window.Completed)
+                {
+                    expires = Math.Max(expires, window.Expires);
+                }
+            }
             // Preserve the cutoff across overlapping operations, but never across a gap.
             // Publish the pair atomically; deadline readers neither lock nor scan the history.
             var active = expires > now
@@ -35,9 +43,14 @@ internal sealed class MaintenanceTimeoutState(long maximumWindowMilliseconds)
     private bool ApplyUnderLock(MaintenanceNotification notification, long now)
     {
         var key = (notification.Family, notification.SequenceId);
+
         if (_windows.TryGetValue(key, out var existing))
         {
-            if (notification.IsCompletion) _windows[key] = existing with { Completed = true };
+            if (notification.IsCompletion)
+            {
+                _windows[key] = existing with { Completed = true };
+            }
+
             return false; // Duplicate starts cannot extend an existing window or reopen a completion.
         }
         // Parse supplies grace for MOVING; an internally constructed incomplete value must
@@ -45,6 +58,7 @@ internal sealed class MaintenanceTimeoutState(long maximumWindowMilliseconds)
         var duration = notification.Kind == "MOVING"
             ? Math.Min(maximumWindowMilliseconds, Math.Min(notification.Seconds.GetValueOrDefault(), maximumWindowMilliseconds / 1000 + 1) * 1000)
             : maximumWindowMilliseconds;
+
         if (_windows.Count == MaximumOperations)
         {
             // Retain completed/expired identities until capacity pressure requires eviction,
@@ -53,19 +67,30 @@ internal sealed class MaintenanceTimeoutState(long maximumWindowMilliseconds)
             {
                 var candidate = _order[i];
                 var window = _windows[candidate];
-                if (window.Expires > now && !window.Completed) continue;
+
+                if (window.Expires > now && !window.Completed)
+                {
+                    continue;
+                }
+
                 _windows.Remove(candidate);
                 _order.RemoveAt(i);
                 break;
             }
         }
+
         if (_windows.Count == MaximumOperations)
         {
             // Keep memory bounded under a burst of unique operations. Conservatively retain
             // relaxation until this bounded window expires; no unbounded identity history.
-            if (!notification.IsCompletion) _overflowUntil = Math.Max(_overflowUntil, now + duration);
+            if (!notification.IsCompletion)
+            {
+                _overflowUntil = Math.Max(_overflowUntil, now + duration);
+            }
+
             return !notification.IsCompletion;
         }
+
         _windows.Add(key, new(now + duration, notification.IsCompletion));
         _order.Add(key);
         return !notification.IsCompletion;

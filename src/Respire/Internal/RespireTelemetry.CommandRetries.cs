@@ -10,6 +10,7 @@ internal static partial class RespireTelemetry
         private static readonly Lazy<Counter<long>> Instrument = new(static () => Meter.CreateCounter<long>(
             "respire.command.retries", "{retry}", "Accepted retry attempts and logical retry outcomes."),
             LazyThreadSafetyMode.PublicationOnly);
+
         internal static Counter<long> Retries => Instrument.Value;
     }
 
@@ -18,7 +19,12 @@ internal static partial class RespireTelemetry
         try
         {
             var instrument = CommandRetryInstruments.Retries;
-            if (!IsMetricEnabled(RespireMetricGroups.Resiliency, instrument)) return;
+
+            if (!IsMetricEnabled(RespireMetricGroups.Resiliency, instrument))
+            {
+                return;
+            }
+
             var tags = new TagList { LibraryTag, SystemTag,
                 new("respire.command.retry.category", category.ToString()), new("respire.command.retry.outcome", outcome) };
             instrument.Add(1, in tags);

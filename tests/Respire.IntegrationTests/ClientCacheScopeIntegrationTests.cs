@@ -59,7 +59,10 @@ public class ClientCacheScopeIntegrationTests(RedisTestContainer fixture)
     private static async Task UntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (!condition())
+        {
             await Task.Delay(10, timeout.Token);
+        }
     }
 }

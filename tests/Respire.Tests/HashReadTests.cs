@@ -19,6 +19,7 @@ public class HashReadTests
     {
         var expiry = RespireExpiryTimeResult.FromRedis(timestamp, RespireExpiryTimePrecision.Milliseconds);
         await Assert.That(expiry.TryGetExpiresAt(out var instant)).IsEqualTo(convertible);
+
         if (convertible)
         {
             await Assert.That(instant.ToUnixTimeMilliseconds()).IsEqualTo(timestamp);
@@ -27,6 +28,7 @@ public class HashReadTests
         {
             await Assert.That(instant).IsEqualTo(default(DateTimeOffset));
         }
+
         await Assert.That(expiry.UnixTimeMilliseconds).IsEqualTo(timestamp < 0 ? null : (long?)timestamp);
     }
 
@@ -53,6 +55,7 @@ public class HashReadTests
     public async Task RandomPairs_PreserveDuplicateFieldsAndDetachStrings(bool nested)
     {
         KeyValuePair<string, string>[] result;
+
         using (var reply = nested
             ? RespValue.Array(RespValue.Array(RespValue.BulkString("a"), RespValue.BulkString("é")),
                 RespValue.Array(RespValue.BulkString("a"), RespValue.BulkString("é")))
@@ -61,6 +64,7 @@ public class HashReadTests
         {
             result = HashCommands.ParseRandomPairs(in reply);
         }
+
         await Assert.That(result).IsEquivalentTo(new[]
         {
             new KeyValuePair<string, string>("a", "é"),
@@ -104,6 +108,7 @@ public class HashReadTests
         await Assert.That(() => RespireExpiryTimeResult.FromRedis(long.MaxValue, RespireExpiryTimePrecision.Seconds))
             .Throws<RespireProtocolException>();
     }
+
     [Test]
     public async Task ExpiryTime_RejectsUnexpectedNegativeSentinels()
     {
@@ -124,6 +129,7 @@ public class HashReadTests
         await Assert.That(async () => await client.Hashes.ExpiryTimeAsync("hash", RespireExpiryTimePrecision.Seconds)).Throws<ArgumentException>();
         await Assert.That(async () => await client.Hashes.ExpiryTimeAsync("hash", (RespireExpiryTimePrecision)99, "field"))
             .Throws<ArgumentOutOfRangeException>();
+
         foreach (var hashes in new[] { batch.Hashes, transaction.Hashes })
         {
             await Assert.That(() => hashes.ExpiryTime("hash")).Throws<ArgumentException>();
@@ -131,6 +137,7 @@ public class HashReadTests
             await Assert.That(() => hashes.ExpiryTime("hash", (RespireExpiryTimePrecision)99, "field"))
                 .Throws<ArgumentOutOfRangeException>();
         }
+
         await Assert.That(batch.Count).IsEqualTo(0);
     }
 }

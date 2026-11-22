@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.Extensions.Logging;
-using Respire.Internal;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 using TUnit.Assertions;
@@ -64,11 +64,13 @@ public class ClusterShardedPubSubTests
         await cluster.SendAsync(cluster.First, "bar", "one");
         await cluster.SendAsync(cluster.Second, "foo", "two");
         var received = new HashSet<string>();
+
         for (var i = 0; i < 2; i++)
         {
             await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Deadline)).IsTrue();
             received.Add(reader.Current.Text!);
         }
+
         await Assert.That(received).IsEquivalentTo(["one", "two"]);
         await duplicate.DisposeAsync();
         await Assert.That(cluster.First.ReceivedCommands.Any(command => command == "SUNSUBSCRIBE bar")).IsFalse();
@@ -107,7 +109,9 @@ public class ClusterShardedPubSubTests
         // pub/sub recovery exceed the deadline below.
         await using var client = cluster.CreateClient(new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0,
         });
         await using var subscription = await client.SubscribeShardedAsync("foo").AsTask().WaitAsync(Deadline);
         await using var added = await client.SubscribeShardedAsync("bar").AsTask().WaitAsync(Deadline);
@@ -125,7 +129,9 @@ public class ClusterShardedPubSubTests
             ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
         await using var client = cluster.CreateClient(new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0,
         });
         await using var subscription = await client.SubscribeShardedAsync("foo").AsTask().WaitAsync(Deadline);
         var commands = cluster.First.ReceivedCommands;
@@ -154,8 +160,10 @@ public class ClusterShardedPubSubTests
             ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.Second.Port}\r\n") : null;
         await using var client = cluster.CreateClient(new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
-            JitterRatio = 0, MaxAttempts = exhaust ? 1 : 2,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0,
+            MaxAttempts = exhaust ? 1 : 2,
         });
         using var deadline = new CancellationTokenSource(Deadline);
         await client.Core.Cluster!.EnsureConnectedAsync(deadline.Token, discovery: null, observation: default);
@@ -164,21 +172,26 @@ public class ClusterShardedPubSubTests
         {
             if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery
                 && (exhaust ? change.ReconnectExhausted : change.NextReconnectDelay is not null))
+            {
                 scheduled.TrySetResult(change);
+            }
         };
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var pending = client.SubscribeShardedAsync("foo", cancellationToken: caller.Token).AsTask();
+
         if (exhaust)
         {
             // Redirect discovery preserves the last server rejection for the caller.
             var rejection = await Assert.That(async () => await pending).ThrowsExactly<RespireServerException>();
             await Assert.That(rejection!.Code).IsEqualTo(code);
         }
+
         var change = await scheduled.Task.WaitAsync(deadline.Token);
         await Assert.That(change.ReconnectAttempt).IsEqualTo(exhaust ? 1 : 2);
         await Assert.That(change.ReconnectEpisodeId is > 0).IsTrue();
         await Assert.That(cluster.Second.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
         await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
+
         if (!exhaust)
         {
             await Assert.That(change.NextReconnectDelay).IsEqualTo(TimeSpan.FromSeconds(30));
@@ -206,7 +219,9 @@ public class ClusterShardedPubSubTests
         cluster.First.SuppressReply = command => cancel && command == "SSUBSCRIBE foo";
         await using var client = cluster.CreateClient(new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0,
         });
         using var deadline = new CancellationTokenSource(Deadline);
         var router = client.Core.Cluster!;
@@ -217,11 +232,15 @@ public class ClusterShardedPubSubTests
         router.DiscoveryStateChanged += change =>
         {
             changes.Enqueue(change);
+
             if (change.Endpoint == barrierEndpoint && change.SourceState == RespireConnectionState.Connected)
+            {
                 barrier.TrySetResult();
+            }
         };
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var pending = client.SubscribeShardedAsync("foo", cancellationToken: caller.Token).AsTask();
+
         if (cancel)
         {
             await WaitAsync(() => cluster.First.ReceivedCommands.Contains("SSUBSCRIBE foo"));
@@ -259,14 +278,19 @@ public class ClusterShardedPubSubTests
             ? Encoding.ASCII.GetBytes($"-{code} {ClusterHash.GetSlot("foo")} 127.0.0.1:{unavailable.Port}\r\n") : null;
         await using var client = cluster.CreateClient(new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0,
         });
         using var deadline = new CancellationTokenSource(Deadline);
         await client.Core.Cluster!.EnsureConnectedAsync(deadline.Token, discovery: null, observation: default);
         var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.Core.Cluster.DiscoveryStateChanged += change =>
         {
-            if (change.SourceState == RespireConnectionState.Disconnected) terminal.TrySetResult(change);
+            if (change.SourceState == RespireConnectionState.Disconnected)
+            {
+                terminal.TrySetResult(change);
+            }
         };
         await Assert.That(async () => await client.SubscribeShardedAsync("foo", cancellationToken: deadline.Token))
             .ThrowsExactly<RespireServerException>();
@@ -325,7 +349,9 @@ public class ClusterShardedPubSubTests
             ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
         await using var client = cluster.CreateClient(new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0,
         });
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
@@ -358,7 +384,9 @@ public class ClusterShardedPubSubTests
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource == RespireReconnectSource.PubSub && change.SourceState == RespireConnectionState.Connected)
+            {
                 recovered.TrySetResult();
+            }
         };
         router.SetSlotOwner(ClusterHash.GetSlot("foo"), second);
         var retry = await clock.NextAsync();
@@ -395,7 +423,9 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(protocol);
         await using var client = cluster.CreateClient(new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0,
         });
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
@@ -460,11 +490,13 @@ public class ClusterShardedPubSubTests
         await cluster.SendAsync(cluster.Second, "foo", "healthy");
         await using var reader = subscription.GetAsyncEnumerator();
         var messages = new List<RespireMessage>();
+
         for (var i = 0; i < 2; i++)
         {
             await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Deadline)).IsTrue();
             messages.Add(reader.Current);
         }
+
         await Assert.That(messages.Count(message => message.Kind == RespireMessageKind.Gap)).IsEqualTo(1);
         await Assert.That(messages.Count(message => message.Text == "healthy")).IsEqualTo(1);
         await Assert.That(cluster.Second.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
@@ -479,8 +511,10 @@ public class ClusterShardedPubSubTests
         using var logger = new ThrowingRecoveryLogger();
         await using var client = cluster.CreateClient(new()
         {
-            InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10),
-            JitterRatio = 0, MaxAttempts = 2,
+            InitialDelay = TimeSpan.FromMilliseconds(10),
+            MaxDelay = TimeSpan.FromMilliseconds(10),
+            JitterRatio = 0,
+            MaxAttempts = 2,
         }, throwingLogger ? logger : null);
         await using var subscription = await client.SubscribeShardedAsync("bar");
         cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE bar" ? "-ERR denied\r\n"u8.ToArray() : null;
@@ -522,8 +556,10 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(2);
         await using var client = cluster.CreateClient(new()
         {
-            InitialDelay = TimeSpan.FromSeconds(1), MaxDelay = TimeSpan.FromSeconds(1),
-            JitterRatio = 0, MaxAttempts = 3,
+            InitialDelay = TimeSpan.FromSeconds(1),
+            MaxDelay = TimeSpan.FromSeconds(1),
+            JitterRatio = 0,
+            MaxAttempts = 3,
         });
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
@@ -532,7 +568,10 @@ public class ClusterShardedPubSubTests
         var changes = new System.Collections.Concurrent.ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource == RespireReconnectSource.PubSub) changes.Enqueue(change);
+            if (change.ReconnectSource == RespireReconnectSource.PubSub)
+            {
+                changes.Enqueue(change);
+            }
         };
         cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE bar" ? "-ERR denied\r\n"u8.ToArray() : null;
         cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo" ? "-ERR denied\r\n"u8.ToArray() : null;
@@ -552,7 +591,12 @@ public class ClusterShardedPubSubTests
         var third = await clock.NextAsync();
         await WaitAsync(() => changes.Count(change => change.ReconnectAttempt == 3 && change.NextReconnectDelay is not null) == 2);
         await Assert.That(changes.Any(change => change.State == RespireConnectionState.Connected)).IsFalse();
-        if (!exhaust) cluster.SecondOverride = null;
+
+        if (!exhaust)
+        {
+            cluster.SecondOverride = null;
+        }
+
         third.Fire();
         await WaitAsync(() => changes.Count(change => change.NextReconnectDelay is null) == 2);
         var terminal = changes.Where(change => change.NextReconnectDelay is null).ToArray();
@@ -560,8 +604,11 @@ public class ClusterShardedPubSubTests
         await Assert.That(terminal.All(change => change.State == (exhaust
             ? RespireConnectionState.Disconnected : RespireConnectionState.Connected))).IsTrue();
         await Assert.That(terminal.All(change => change.ReconnectExhausted == exhaust)).IsTrue();
+
         if (exhaust)
+        {
             await Assert.That(await subscription.Completion.WaitAsync(Deadline)).IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        }
 
     }
 
@@ -573,8 +620,10 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(2);
         await using var client = cluster.CreateClient(configured ? new()
         {
-            InitialDelay = TimeSpan.FromSeconds(1), MaxDelay = TimeSpan.FromSeconds(1),
-            JitterRatio = 0, MaxAttempts = 3,
+            InitialDelay = TimeSpan.FromSeconds(1),
+            MaxDelay = TimeSpan.FromSeconds(1),
+            JitterRatio = 0,
+            MaxAttempts = 3,
         } : null);
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
@@ -583,7 +632,9 @@ public class ClusterShardedPubSubTests
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource == RespireReconnectSource.PubSub && change.State == RespireConnectionState.Connected)
+            {
                 recovered.TrySetResult();
+            }
         };
         cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE bar" ? "-ERR denied\r\n"u8.ToArray() : null;
         await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
@@ -606,7 +657,9 @@ public class ClusterShardedPubSubTests
         await using var cluster = new Cluster(protocol);
         await using var client = cluster.CreateClient(new()
         {
-            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+            InitialDelay = TimeSpan.FromSeconds(30),
+            MaxDelay = TimeSpan.FromSeconds(30),
+            JitterRatio = 0,
         });
         var clock = new RecoveryClock();
         await using var hub = new SubscriptionHub(client.Core, clock);
@@ -626,7 +679,9 @@ public class ClusterShardedPubSubTests
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource == RespireReconnectSource.PubSub && change.SourceState == RespireConnectionState.Connected)
+            {
                 recovered.TrySetResult();
+            }
         };
         // A subscribed slot changing owner still starts recovery and migrates its route.
         router.SetSlotOwner(ClusterHash.GetSlot("bar"), second);
@@ -650,6 +705,7 @@ public class ClusterShardedPubSubTests
         await using var hub = new SubscriptionHub(client.Core);
         await using var subscription = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
         cluster.First.SuppressReply = command => command == "SSUBSCRIBE bar";
+
         try
         {
             await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
@@ -677,6 +733,7 @@ public class ClusterShardedPubSubTests
         var hub = new SubscriptionHub(client.Core);
         await using var sharded = await hub.SubscribeAsync(RespireSubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
         cluster.First.SuppressReply = command => command == "SSUBSCRIBE bar";
+
         try
         {
             await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
@@ -702,8 +759,10 @@ public class ClusterShardedPubSubTests
         var router = client.Core.Cluster!;
         var topologyEvent = router.GetType().GetField("TopologyChanged",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+
         bool IsAttached() => ((Delegate?)topologyEvent.GetValue(router))?.GetInvocationList()
             .Any(handler => ReferenceEquals(handler.Target, hub)) == true;
+
         await Assert.That(IsAttached()).IsTrue();
         await hub.DisposeAsync().AsTask().WaitAsync(Deadline);
         await Assert.That(IsAttached()).IsFalse();
@@ -743,22 +802,38 @@ public class ClusterShardedPubSubTests
     {
         private readonly System.Threading.Channels.Channel<RecoveryTimer> _timers =
             global::System.Threading.Channels.Channel.CreateUnbounded<RecoveryTimer>();
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new RecoveryTimer(callback, state);
             _timers.Writer.TryWrite(timer);
             return timer;
         }
+
         internal Task<RecoveryTimer> NextAsync() => _timers.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
     }
 
     private sealed class RecoveryTimer(TimerCallback callback, object? state) : ITimer
     {
         private int _finished;
-        internal void Fire() { if (Interlocked.Exchange(ref _finished, 1) == 0) callback(state); }
+
+        internal void Fire()
+        {
+            if (Interlocked.Exchange(ref _finished, 1) == 0)
+            {
+                callback(state);
+            }
+        }
+
         public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _finished) == 0;
+
         public void Dispose() => Interlocked.Exchange(ref _finished, 1);
-        public ValueTask DisposeAsync() { Dispose(); return default; }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return default;
+        }
     }
 
     [Test]
@@ -810,7 +885,11 @@ public class ClusterShardedPubSubTests
                 PushHandler = (in RespValue _) => observed.TrySetResult(),
                 SubscriptionPushFilter = (in RespValue _, bool pending) =>
                 {
-                    if (!pending) Interlocked.Increment(ref unsolicited);
+                    if (!pending)
+                    {
+                        Interlocked.Increment(ref unsolicited);
+                    }
+
                     return !pending;
                 },
             });
@@ -853,21 +932,39 @@ public class ClusterShardedPubSubTests
     private static async Task WaitAsync(Func<bool> predicate)
     {
         using var deadline = new CancellationTokenSource(Deadline);
-        while (!predicate()) await Task.Delay(5, deadline.Token);
+
+        while (!predicate())
+        {
+            await Task.Delay(5, deadline.Token);
+        }
     }
 
     private sealed class ThrowingRecoveryLogger : ILoggerFactory, ILogger
     {
         internal int Failures;
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (!formatter(state, exception).StartsWith("Sharded pub/sub recovery attempt", StringComparison.Ordinal)) return;
+            if (!formatter(state, exception).StartsWith("Sharded pub/sub recovery attempt", StringComparison.Ordinal))
+            {
+                return;
+            }
+
             Interlocked.Increment(ref Failures);
             throw new InvalidOperationException("Test logger failure");
         }
@@ -887,36 +984,67 @@ public class ClusterShardedPubSubTests
             First.ReplyOverride = (id, command) => FirstOverride?.Invoke(id, command) ?? Reply(command);
             Second.ReplyOverride = (id, command) => SecondOverride?.Invoke(id, command) ?? Reply(command);
         }
+
         internal RespireClient CreateClient(
             RespireReconnectPolicy? policy = null, ILoggerFactory? logger = null,
             int maxInflightCommands = 16 * 1024, IRespireCredentialProvider? credentialProvider = null)
             => RespireClient.Create(new RespireOptions
-        {
-            UseCluster = true, Protocol = (RespireProtocol)_protocol, Connections = 1, ReconnectPolicy = policy,
-            LoggerFactory = logger, MaxInflightCommands = maxInflightCommands, CredentialProvider = credentialProvider,
-            Endpoints = { new RespireEndpoint("127.0.0.1", First.Port) }, ConnectTimeout = TimeSpan.FromSeconds(1),
-        });
+            {
+                UseCluster = true,
+                Protocol = (RespireProtocol)_protocol,
+                Connections = 1,
+                ReconnectPolicy = policy,
+                LoggerFactory = logger,
+                MaxInflightCommands = maxInflightCommands,
+                CredentialProvider = credentialProvider,
+                Endpoints = { new RespireEndpoint("127.0.0.1", First.Port) },
+                ConnectTimeout = TimeSpan.FromSeconds(1),
+            });
+
         private byte[] Reply(string command)
         {
-            if (command.StartsWith("HELLO ")) return "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
-            if (command == "ASKING") return "+OK\r\n"u8.ToArray();
-            if (command == "CLUSTER SLOTS") return Encoding.ASCII.GetBytes(
+            if (command.StartsWith("HELLO "))
+            {
+                return "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
+            }
+
+            if (command == "ASKING")
+            {
+                return "+OK\r\n"u8.ToArray();
+            }
+
+            if (command == "CLUSTER SLOTS")
+            {
+                return Encoding.ASCII.GetBytes(
                 $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{First.Port}\r\n" +
                 $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{Second.Port}\r\n");
+            }
+
             var parts = command.Split(' ', 2);
+
             if (parts[0] is "SSUBSCRIBE" or "SUNSUBSCRIBE" or "SUBSCRIBE" or "UNSUBSCRIBE")
+            {
                 return Confirmation(parts[0].ToLowerInvariant(), parts[1]);
+            }
+
             return ":1\r\n"u8.ToArray();
         }
+
         internal byte[] Confirmation(string verb, string channel) => Frame(Encoding.UTF8.GetBytes(verb), Encoding.UTF8.GetBytes(channel), null);
+
         internal byte[] Message(string channel, string text) => Frame("smessage"u8.ToArray(), Encoding.UTF8.GetBytes(channel), Encoding.UTF8.GetBytes(text));
+
         private byte[] Frame(byte[] verb, byte[] channel, byte[]? payload)
         {
             using var stream = new MemoryStream();
             stream.Write(Encoding.ASCII.GetBytes(_protocol == 3 ? ">3\r\n" : "*3\r\n"));
+
             foreach (var value in new[] { verb, channel, payload })
             {
-                if (value is null) stream.Write(":1\r\n"u8);
+                if (value is null)
+                {
+                    stream.Write(":1\r\n"u8);
+                }
                 else
                 {
                     stream.Write(Encoding.ASCII.GetBytes($"${value.Length}\r\n"));
@@ -924,10 +1052,13 @@ public class ClusterShardedPubSubTests
                     stream.Write("\r\n"u8);
                 }
             }
+
             return stream.ToArray();
         }
+
         internal Task SendAsync(FakeRespServer server, string channel, string text)
             => server.SendRawAsync(Message(channel, text), ControlIds(server).Last());
+
         public async ValueTask DisposeAsync()
         {
             await First.DisposeAsync();

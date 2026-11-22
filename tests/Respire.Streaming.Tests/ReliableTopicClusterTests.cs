@@ -14,9 +14,11 @@ public class ReliableTopicClusterTests
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()
         {
-            Topology = RespireContainerTopology.Cluster, Image = "redis:7.4-alpine",
+            Topology = RespireContainerTopology.Cluster,
+            Image = "redis:7.4-alpine",
         });
         await using var root = await RespireClient.ConnectAsync(fixture.CreateOptions());
+
         foreach (var prefix in new[] { "tenant:", "{tenant}:" })
         {
             var client = root.WithKeyPrefix(prefix);

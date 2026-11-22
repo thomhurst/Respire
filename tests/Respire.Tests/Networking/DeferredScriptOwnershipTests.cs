@@ -145,20 +145,24 @@ public class DeferredScriptOwnershipTests
         await using var server = new FakeRespServer(NestedReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         RespirePending<RespireResult> discarded;
+
         await using (var batch = client.CreateBatch())
         {
             discarded = batch.Execute("MGET", "key");
         }
+
         await Assert.That(() => discarded.Result).ThrowsExactly<RespireBatchDiscardedException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
 
         RespirePending<RespireResult> completed;
+
         await using (var batch = client.CreateBatch())
         {
             completed = batch.Execute("MGET", "key");
             await batch.ExecuteAsync();
             await batch.DisposeAsync();
         }
+
         await Assert.That(completed.Result[1][0].AsString()).IsEqualTo("inner");
         await Assert.That(OwnsPooledStorage(completed.Result)).IsFalse();
     }

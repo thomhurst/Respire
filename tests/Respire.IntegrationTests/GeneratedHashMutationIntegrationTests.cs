@@ -27,11 +27,15 @@ public class GeneratedHashMutationIntegrationTests(ModernRedisTestContainer fixt
         await tracker.UpdateAsync(value);
         var ttl = await client.Hashes.ExpiryAsync(key, "Token");
         await Assert.That(ttl[0].HasExpiry && ttl[0].TimeToLive!.Value.TotalMilliseconds <= 500).IsTrue();
+
         using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
         {
             while (await client.Hashes.GetStringAsync(key, "Token", deadline.Token) is not null)
+            {
                 await Task.Delay(25, deadline.Token);
+            }
         }
+
         await tracker.UpdateAsync(value);
         await Assert.That(await client.Hashes.GetStringAsync(key, "Token")).IsNull();
         await Assert.That(await client.Hashes.GetStringAsync(key, "Id")).IsEqualTo("id");
@@ -44,16 +48,20 @@ public class GeneratedHashMutationIntegrationTests(ModernRedisTestContainer fixt
         var key = "retry:" + username;
         await using var admin = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(fixture.Host, fixture.Port)], AllowAdmin = true,
+            Endpoints = [new(fixture.Host, fixture.Port)],
+            AllowAdmin = true,
         });
         await admin.Server.AclSetUserAsync(username, ["on", "nopass", "~" + key, "+@all", "-hdel"]);
+
         try
         {
             var first = new StoredHashModel("id", "name", 0, "old", 1);
             await StoredHashModelHashMapper.SetAsync(admin, key, first);
             await using var restricted = await RespireClient.ConnectAsync(new RespireOptions
             {
-                Endpoints = [new(fixture.Host, fixture.Port)], Username = username, Password = "",
+                Endpoints = [new(fixture.Host, fixture.Port)],
+                Username = username,
+                Password = "",
             });
             await using var monitor = await HashMutationMonitor.ConnectAsync(fixture.Host, fixture.Port);
             var tracker = StoredHashModelHashMapper.Track(restricted, key, first);
@@ -120,6 +128,7 @@ public class GeneratedHashMutationUnsupportedTests(HashExpiryRedis70Container fi
 }
 
 public sealed class HashExpiryRedis74Container() : StandaloneRedisTestContainer("redis:7.4-alpine");
+
 public sealed class HashExpiryRedis70Container() : StandaloneRedisTestContainer("redis:7.0.15");
 
 [RespireHash("short:{Id}")]
@@ -131,7 +140,9 @@ internal static class GeneratedHashMutationControls
     {
         await using var root = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(host, port)], Protocol = protocol, Connections = 1,
+            Endpoints = [new(host, port)],
+            Protocol = protocol,
+            Connections = 1,
         });
         var client = root.WithKeyPrefix("prefix:");
         var key = "mutation:" + Guid.NewGuid().ToString("N");
@@ -174,13 +185,18 @@ internal sealed class HashMutationMonitor(TcpClient socket, StreamReader reader)
     internal static async Task<HashMutationMonitor> ConnectAsync(string host, int port)
     {
         var socket = new TcpClient();
+
         try
         {
             await socket.ConnectAsync(host, port);
             var reader = new StreamReader(socket.GetStream(), Encoding.UTF8, leaveOpen: true);
             await socket.GetStream().WriteAsync("*1\r\n$7\r\nMONITOR\r\n"u8.ToArray());
+
             if (await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10)) != "+OK")
+            {
                 throw new InvalidOperationException("Redis MONITOR was not accepted.");
+            }
+
             return new HashMutationMonitor(socket, reader);
         }
         catch { socket.Dispose(); throw; }
@@ -192,17 +208,32 @@ internal sealed class HashMutationMonitor(TcpClient socket, StreamReader reader)
         using var reply = await client.ExecuteAsync(RespireCommands.Connection.ECHO, [marker]);
         var commands = new List<string>();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         while (await reader.ReadLineAsync(timeout.Token) is { } line)
         {
-            if (line.Contains(marker, StringComparison.Ordinal)) return commands.ToArray();
+            if (line.Contains(marker, StringComparison.Ordinal))
+            {
+                return commands.ToArray();
+            }
+
             var start = line.IndexOf('"');
-            if (start < 0 || !line.Contains("\"" + key + "\"", StringComparison.Ordinal)) continue;
+
+            if (start < 0 || !line.Contains("\"" + key + "\"", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             var command = line[start..];
+
             if (command.StartsWith("\"HSET\"", StringComparison.OrdinalIgnoreCase)
                 || command.StartsWith("\"HSETEX\"", StringComparison.OrdinalIgnoreCase)
                 || command.StartsWith("\"HDEL\"", StringComparison.OrdinalIgnoreCase)
-                || command.StartsWith("\"HPEXPIRE\"", StringComparison.OrdinalIgnoreCase)) commands.Add(command);
+                || command.StartsWith("\"HPEXPIRE\"", StringComparison.OrdinalIgnoreCase))
+            {
+                commands.Add(command);
+            }
         }
+
         throw new InvalidOperationException("Redis MONITOR ended before its barrier.");
     }
 

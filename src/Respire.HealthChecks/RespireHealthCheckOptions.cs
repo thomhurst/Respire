@@ -5,32 +5,58 @@ public sealed record RespireHealthCheckOptions
 {
     /// <summary>Probe every known data node, including replicas. The default probes one primary.</summary>
     /// <remarks>Known nodes without an open usable connection fail the check. No connection is opened.</remarks>
-    public bool ProbeAllNodes { get; init; }
+    public bool ProbeAllNodes
+    {
+        get; init;
+    }
 
     /// <summary>Maximum concurrent node probes. Defaults to eight.</summary>
-    public int MaxConcurrentProbes { get; init; } = 8;
+    public int MaxConcurrentProbes
+    {
+        get; init;
+    } = 8;
 
     /// <summary>Maximum time for a probe round. Defaults to two seconds.</summary>
     /// <remarks>Capability providers receive up to 250 milliseconds of additional completion grace, capped at the timer limit. Caller cancellation remains immediate.</remarks>
-    public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(2);
+    public TimeSpan ProbeTimeout
+    {
+        get; init;
+    } = TimeSpan.FromSeconds(2);
 
     /// <summary>Report degraded when any successful PING reaches this latency. Null disables the threshold.</summary>
-    public TimeSpan? DegradedLatency { get; init; }
+    public TimeSpan? DegradedLatency
+    {
+        get; init;
+    }
 
     /// <summary>Include a snapshot of client-side cache statistics when enabled. Defaults to true.</summary>
-    public bool IncludeClientSideCache { get; init; } = true;
+    public bool IncludeClientSideCache
+    {
+        get; init;
+    } = true;
 
     /// <summary>Report degraded when a failover candidate is unhealthy. Defaults to true.</summary>
-    public bool DegradeOnFailover { get; init; } = true;
+    public bool DegradeOnFailover
+    {
+        get; init;
+    } = true;
 
     internal void Validate()
     {
         if (MaxConcurrentProbes <= 0)
+        {
             throw new ArgumentOutOfRangeException(nameof(MaxConcurrentProbes));
+        }
+
         if (ProbeTimeout <= TimeSpan.Zero || ProbeTimeout.TotalMilliseconds > uint.MaxValue - 1d)
+        {
             throw new ArgumentOutOfRangeException(nameof(ProbeTimeout));
+        }
+
         if (DegradedLatency is { } latency && latency <= TimeSpan.Zero)
+        {
             throw new ArgumentOutOfRangeException(nameof(DegradedLatency));
+        }
     }
 }
 

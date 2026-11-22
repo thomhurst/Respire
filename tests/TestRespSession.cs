@@ -19,11 +19,15 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
         var endpoint = options.Endpoints[0];
         TcpClient? socket = null;
         Stream stream;
+
         if (options.ConnectionFactory is { } factory)
+        {
             stream = await factory(endpoint, deadline.Token);
+        }
         else
         {
             socket = new TcpClient();
+
             try
             {
                 await socket.ConnectAsync(endpoint.Host, endpoint.Port, deadline.Token);
@@ -31,18 +35,30 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
             }
             catch { socket.Dispose(); throw; }
         }
+
         var session = new TestRespSession(stream, socket);
+
         try
         {
             // These parity fixtures support RESP3; Auto requests the preferred wire protocol.
             var protocol = options.Protocol == RespireProtocol.Auto ? RespireProtocol.Resp3 : options.Protocol;
             using var hello = await session.CommandAsync(deadline.Token, "HELLO", ((int)protocol).ToString());
-            if (hello.IsError) throw new IOException(hello.GetErrorMessage());
+
+            if (hello.IsError)
+            {
+                throw new IOException(hello.GetErrorMessage());
+            }
+
             if (options.Database != 0)
             {
                 using var selected = await session.CommandAsync(deadline.Token, "SELECT", options.Database.ToString());
-                if (selected.IsError) throw new IOException(selected.GetErrorMessage());
+
+                if (selected.IsError)
+                {
+                    throw new IOException(selected.GetErrorMessage());
+                }
             }
+
             return session;
         }
         catch { await session.DisposeAsync(); throw; }
@@ -71,12 +87,14 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
         deadline.CancelAfter(Limit);
         var writer = new ArrayBufferWriter<byte>();
         writer.Write(Encoding.ASCII.GetBytes($"*{arguments.Length}\r\n"));
+
         foreach (var argument in arguments)
         {
             writer.Write(Encoding.ASCII.GetBytes($"${argument.Length}\r\n"));
             writer.Write(argument);
             writer.Write("\r\n"u8);
         }
+
         await stream.WriteAsync(writer.WrittenMemory, deadline.Token);
     }
 
@@ -84,10 +102,12 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(Limit);
+
         while (true)
         {
             var consumed = 0;
             var status = RespParser.TryParseValue(_buffer.AsSpan(0, _length), ref consumed, out var value);
+
             if (status == RespParseStatus.Done)
             {
                 // The returned reply may reference its original payload storage.
@@ -97,17 +117,34 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
                 _buffer = remaining;
                 return value;
             }
-            if (status != RespParseStatus.NeedMoreData) throw new IOException("Invalid RESP response.");
-            if (_length == _buffer.Length) Array.Resize(ref _buffer, _buffer.Length * 2);
+
+            if (status != RespParseStatus.NeedMoreData)
+            {
+                throw new IOException("Invalid RESP response.");
+            }
+
+            if (_length == _buffer.Length)
+            {
+                Array.Resize(ref _buffer, _buffer.Length * 2);
+            }
+
             var read = await stream.ReadAsync(_buffer.AsMemory(_length), deadline.Token);
-            if (read == 0) throw new EndOfStreamException();
+
+            if (read == 0)
+            {
+                throw new EndOfStreamException();
+            }
+
             _length += read;
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        try { await stream.DisposeAsync(); }
+        try
+        {
+            await stream.DisposeAsync();
+        }
         finally { socket?.Dispose(); }
     }
 }

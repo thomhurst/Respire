@@ -36,6 +36,7 @@ public class ImmediateRawKeyLayoutIntegrationTests(ModernRedisTestContainer fixt
             ("TS.DELETERULE", ["first", "second"]),
             ("TS.RANGE", ["first", "-", "+", "COUNT", 1]),
         ];
+
         foreach (var (name, args) in cases)
         {
             RawCommandKeyLayouts.TryGetLayout(name, args, out var layout).Should().BeTrue();

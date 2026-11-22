@@ -25,7 +25,11 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
         await view.Streams.AddAsync("other", new RespireStreamAddOptions { Id = "3-0" }, ("value", "third"));
         (RespireKey Key, RespireStreamId After)[] streams = [("missing", "0"), (key, "0"), ("other", "0")];
         RespireStreamReadResult[] result;
-        if (surface == 0) result = await view.Streams.ReadAsync(streams, count: 1);
+
+        if (surface == 0)
+        {
+            result = await view.Streams.ReadAsync(streams, count: 1);
+        }
         else
         {
             using var batch = surface == 1 ? view.CreateBatch() : null;
@@ -34,12 +38,21 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
             var pending = queue.Streams.Read(streams, count: 1);
             var single = queue.Streams.Read(key, "1-0");
             var missing = queue.Streams.Read("missing");
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             result = pending.Result;
             single.Result.Should().ContainSingle().Which.Id.Should().Be((RespireStreamId)"2-0");
             missing.Result.Should().BeEmpty();
         }
+
         (await view.Streams.ReadAsync(key, "1-0")).Should().ContainSingle().Which.Id.Should().Be((RespireStreamId)"2-0");
         (await view.Streams.ReadAsync("missing")).Should().BeEmpty();
         (await view.Streams.ReadAsync("missing", waitFor: TimeSpan.FromMilliseconds(1))).Should().BeEmpty();
@@ -87,6 +100,7 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
         await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("value", "first"));
+
         await using (var reader = client.Streams.ReadAllAsync("events", cancellationToken: timeout.Token).GetAsyncEnumerator())
         {
             (await reader.MoveNextAsync()).Should().BeTrue();
@@ -102,6 +116,7 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
             (await reader.MoveNextAsync()).Should().BeTrue();
             reader.Current.Id.Should().Be((RespireStreamId)"3-0");
         }
+
         (await client.Streams.ReadAsync("events", after: "2-0", waitFor: TimeSpan.FromSeconds(1), cancellationToken: timeout.Token))
             .Should().ContainSingle().Which.Id.Should().Be((RespireStreamId)"3-0");
     }
@@ -112,7 +127,12 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
         {
             var clients = await observer.Server.ClientsAsync(cancellationToken);
             var blocked = clients.FirstOrDefault(x => x.Name == name && x.Flags.Contains('b') && x.Command == "xread");
-            if (blocked is not null) return blocked;
+
+            if (blocked is not null)
+            {
+                return blocked;
+            }
+
             await Task.Delay(10, cancellationToken);
         }
     }

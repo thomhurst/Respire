@@ -27,6 +27,7 @@ public class OutputCacheConcurrencyTests(RedisTestContainer fixture)
         var shorter = new RespireOutputCacheStore(secondClient, options);
 
         var longWrite = longer.SetAsync("key", new byte[] { 1 }, ["shared"], TimeSpan.FromHours(1)).AsTask();
+
         try
         {
             // The long writer has registered its tags, but has not published its value yet.
@@ -49,14 +50,28 @@ public class OutputCacheConcurrencyTests(RedisTestContainer fixture)
 
     public class PublicationBarrier : DispatchProxy
     {
-        public IRespireClient Client { get; set; } = null!;
-        public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public IRespireClient Client
+        {
+            get; set;
+        } = null!;
+
+        public TaskCompletionSource Reached
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             if (targetMethod!.Name == nameof(IRespireClient.SetAsync) && !targetMethod.IsGenericMethod)
+            {
                 return PublishAfterReleaseAsync(targetMethod, args);
+            }
+
             return targetMethod.Invoke(Client, args);
         }
 
@@ -70,7 +85,11 @@ public class OutputCacheConcurrencyTests(RedisTestContainer fixture)
 
     private sealed class TestClock(DateTimeOffset now) : TimeProvider
     {
-        public DateTimeOffset Now { get; set; } = now;
+        public DateTimeOffset Now
+        {
+            get; set;
+        } = now;
+
         public override DateTimeOffset GetUtcNow() => Now;
     }
 }

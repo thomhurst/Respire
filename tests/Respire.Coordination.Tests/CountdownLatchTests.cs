@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using System.Text;
+using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Respire.Tests.Networking;
 
 namespace Respire.Coordination.Tests;
 
@@ -11,7 +11,10 @@ namespace Respire.Coordination.Tests;
 public class CountdownLatchTests(RedisTestContainer fixture)
 {
     [ClassDataSource<SharedRedis74Cluster>(Shared = SharedType.PerTestSession)]
-    public required SharedRedis74Cluster Cluster { get; init; }
+    public required SharedRedis74Cluster Cluster
+    {
+        get; init;
+    }
 
     [Test]
     public async Task ConcurrentSignalsReleaseWaitersExactlyAtZero()
@@ -140,9 +143,14 @@ public class CountdownLatchTests(RedisTestContainer fixture)
         var username = $"latch-no-publish-{Guid.NewGuid():N}";
         const string password = "latch-test-password";
         (await admin.ExecuteAsync("ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all", "-publish")).Dispose();
+
         using (var dryRun = await admin.ExecuteAsync("ACL", "DRYRUN", username, "PUBLISH", "channel", "payload"))
+        {
             await Assert.That(dryRun.AsString().Contains("publish", StringComparison.OrdinalIgnoreCase)).IsTrue();
+        }
+
         RespireClient? restricted = null;
+
         try
         {
             restricted = await RespireClient.ConnectAsync(new RespireOptions
@@ -155,23 +163,37 @@ public class CountdownLatchTests(RedisTestContainer fixture)
             });
             var coordination = new RespireCoordination(restricted);
             RespireServerException? resetError = null;
-            try { _ = await coordination.ResetCountdownLatchAsync(key, 2); }
+
+            try
+            {
+                _ = await coordination.ResetCountdownLatchAsync(key, 2);
+            }
             catch (RespireServerException error) { resetError = error; }
+
             await Assert.That(IsPublishPermissionError(resetError)).IsTrue();
 
             var stillCurrent = await new RespireCoordination(admin).JoinCountdownLatchAsync(key);
             await Assert.That(stillCurrent?.Generation).IsEqualTo(original.Generation);
             var restrictedLatch = await coordination.JoinCountdownLatchAsync(key);
             RespireServerException? countDownError = null;
-            try { _ = await restrictedLatch!.CountDownAsync(); }
+
+            try
+            {
+                _ = await restrictedLatch!.CountDownAsync();
+            }
             catch (RespireServerException error) { countDownError = error; }
+
             await Assert.That(IsPublishPermissionError(countDownError)).IsTrue();
             using var remaining = await admin.ExecuteAsync("HGET", key, "remaining");
             await Assert.That(remaining.AsString()).IsEqualTo("1");
         }
         finally
         {
-            if (restricted is not null) await restricted.DisposeAsync();
+            if (restricted is not null)
+            {
+                await restricted.DisposeAsync();
+            }
+
             (await admin.ExecuteAsync("ACL", "DELUSER", username)).Dispose();
         }
     }
@@ -254,7 +276,9 @@ public class CountdownLatchTests(RedisTestContainer fixture)
             {
                 if (activity.GetTagItem("db.operation.name") is "SUBSCRIBE"
                     && activity.GetTagItem("server.port") is int port && ports.Contains(port))
+                {
                     confirmed.TrySetResult();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -268,8 +292,10 @@ public class CountdownLatchTests(RedisTestContainer fixture)
 
     private ValueTask<RespireClient> ConnectAsync() => RespireClient.ConnectAsync(new RespireOptions
     {
-        Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.IsolatedDatabase,
-        Connections = 2, Protocol = RespireProtocol.Resp3,
+        Endpoints = [new(fixture.Host, fixture.Port)],
+        Database = fixture.IsolatedDatabase,
+        Connections = 2,
+        Protocol = RespireProtocol.Resp3,
     });
 
     private static RespireKey Key() => $"{{{Guid.NewGuid():N}}}:latch";

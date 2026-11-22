@@ -30,10 +30,17 @@ public sealed class RespireLeaderElection : BackgroundService
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(options.OnElected);
         _ = RespireCoordination.ValidateAcquisition(key, fencingCounterKey, options.LeaseDuration);
+
         if (options.LeaseDuration > TimeSpan.FromMilliseconds(uint.MaxValue - 1d))
+        {
             throw new ArgumentOutOfRangeException(nameof(options), "Lease duration exceeds the timer limit.");
+        }
+
         if (options.RetryDelay <= TimeSpan.Zero || options.RetryDelay > options.LeaseDuration)
+        {
             throw new ArgumentOutOfRangeException(nameof(options), "Retry delay must be positive and no longer than the lease.");
+        }
+
         _coordination = new(client, clock);
         _key = key.Snapshot();
         _counter = fencingCounterKey.Snapshot();
@@ -60,6 +67,7 @@ public sealed class RespireLeaderElection : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             RespireFencedLockAttempt attempt;
+
             try
             {
                 using var deadline = new CancellationTokenSource(_options.LeaseDuration, _clock);
@@ -83,8 +91,11 @@ public sealed class RespireLeaderElection : BackgroundService
             await using (attempt.ConfigureAwait(false))
             {
                 if (attempt.Acquired && !stoppingToken.IsCancellationRequested)
+                {
                     await RunTermAsync(attempt.Lock, stoppingToken).ConfigureAwait(false);
+                }
             }
+
             await Task.Delay(_options.RetryDelay, _clock, stoppingToken).ConfigureAwait(false);
         }
     }
@@ -93,12 +104,22 @@ public sealed class RespireLeaderElection : BackgroundService
     {
         using var termStop = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         RespireLockKeepAlive keepAlive;
-        try { keepAlive = await lease.KeepAliveAsync(termStop.Token).ConfigureAwait(false); }
+
+        try
+        {
+            keepAlive = await lease.KeepAliveAsync(termStop.Token).ConfigureAwait(false);
+        }
         catch (InvalidOperationException) when (lease.IsReleased) { return; }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
+
         await using var renewal = keepAlive;
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, renewal.CancellationToken);
-        if (lifetime.IsCancellationRequested || lease.IsReleased) return;
+
+        if (lifetime.IsCancellationRequested || lease.IsReleased)
+        {
+            return;
+        }
+
         var term = new RespireLeadership(lease.FencingToken, lifetime.Token);
         Volatile.Write(ref _current, term);
         Publish(term, true);
@@ -106,6 +127,7 @@ public sealed class RespireLeaderElection : BackgroundService
         var work = Task.Run(() => _options.OnElected(term), CancellationToken.None);
         var revoked = Task.Delay(Timeout.InfiniteTimeSpan, lifetime.Token);
         var wasRevoked = false;
+
         try
         {
             await Task.WhenAny(work, revoked).ConfigureAwait(false);
@@ -116,23 +138,32 @@ public sealed class RespireLeaderElection : BackgroundService
         {
             try
             {
-                try { await termStop.CancelAsync().ConfigureAwait(false); }
+                try
+                {
+                    await termStop.CancelAsync().ConfigureAwait(false);
+                }
                 finally { await lifetime.CancelAsync().ConfigureAwait(false); }
             }
             finally
             {
                 Volatile.Write(ref _current, null);
                 Publish(term, false);
+
                 try
                 {
                     if (_options.OnRevoked is { } onRevoked)
+                    {
                         await onRevoked(term).ConfigureAwait(false);
+                    }
                 }
                 finally
                 {
                     // Never start another term while this instance's previous work is still running.
                     // Observe callback faults after revocation; unwinding then disposes renewal and the lease.
-                    try { await work.ConfigureAwait(false); }
+                    try
+                    {
+                        await work.ConfigureAwait(false);
+                    }
                     catch (OperationCanceledException) when (wasRevoked) { }
                 }
             }
@@ -143,11 +174,20 @@ public sealed class RespireLeaderElection : BackgroundService
     {
         LeaderElectionMetrics.Changed(elected);
         var handlers = LeadershipChanged;
-        if (handlers is null) return;
+
+        if (handlers is null)
+        {
+            return;
+        }
+
         var args = new RespireLeadershipChangedEventArgs(term, elected);
+
         foreach (EventHandler<RespireLeadershipChangedEventArgs> handler in handlers.GetInvocationList())
         {
-            try { handler(this, args); }
+            try
+            {
+                handler(this, args);
+            }
             catch (Exception) { /* Observers cannot change an ownership decision. */ }
         }
     }

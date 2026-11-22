@@ -80,6 +80,7 @@ public class ClusterNodeIdentityTests
         var command = new StreamedSetCommand((RespireValue)"upload", payload, payload.Length, default, RespireSetWhen.Always);
         var upload = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await payload.Paused.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         try
         {
             var retirement = node.RetireAsync();
@@ -87,11 +88,24 @@ public class ClusterNodeIdentityTests
             // Expire the deadline only after the barrier PING is parked behind the paused upload,
             // so the timeout path under test is the unanswered barrier, not a pre-canceled send.
             using (var parked = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-                while (!connection.HasOutstandingMaintenanceBarrier) await Task.Delay(10, parked.Token);
+            {
+                while (!connection.HasOutstandingMaintenanceBarrier)
+                {
+                    await Task.Delay(10, parked.Token);
+                }
+            }
+
             await Assert.That(server.ReceivedCommands.Contains("PING")).IsFalse();
             barrierTimer.Fire();
+
             using (var released = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-                while (connection.HasOutstandingMaintenanceBarrier) await Task.Delay(10, released.Token);
+            {
+                while (connection.HasOutstandingMaintenanceBarrier)
+                {
+                    await Task.Delay(10, released.Token);
+                }
+            }
+
             await Task.Delay(300);
             await Assert.That(connection.IsConnected).IsTrue();
             await Assert.That(retirement.IsCompleted).IsFalse();
@@ -105,8 +119,16 @@ public class ClusterNodeIdentityTests
 
     private sealed class PausedUploadStream() : MemoryStream(new byte[RespireConnection.StreamChunkSize * 2])
     {
-        internal TaskCompletionSource Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Paused
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Resume
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             if (Position > 0)
@@ -114,6 +136,7 @@ public class ClusterNodeIdentityTests
                 Paused.TrySetResult();
                 await Resume.Task.WaitAsync(cancellationToken);
             }
+
             return await base.ReadAsync(buffer, cancellationToken);
         }
     }
@@ -179,7 +202,12 @@ public class ClusterNodeIdentityTests
 
         var retirement = node.RetireAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!server.ReceivedCommands.Contains("PING")) await Task.Delay(10, timeout.Token);
+
+        while (!server.ReceivedCommands.Contains("PING"))
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         releaseWrite.TrySetResult();
 
         await Assert.That(async () => await send).ThrowsExactly<RespireConnectionRetiredException>();
@@ -226,12 +254,23 @@ public class ClusterNodeIdentityTests
         var stuckCommand = new RawCommand("*2\r\n$4\r\nECHO\r\n$5\r\nstuck\r\n"u8.ToArray());
         var stuckReply = connection.SendAsync(in stuckCommand).AsTask();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!server.ReceivedCommands.Contains("ECHO stuck")) await Task.Delay(10, timeout.Token);
+
+        while (!server.ReceivedCommands.Contains("ECHO stuck"))
+        {
+            await Task.Delay(10, timeout.Token);
+        }
 
         var retirement = node.RetireAsync();
         var barrierTimer = await clock.Timer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         using (var barrierSent = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-            while (!server.ReceivedCommands.Contains("PING")) await Task.Delay(10, barrierSent.Token);
+        {
+            while (!server.ReceivedCommands.Contains("PING"))
+            {
+                await Task.Delay(10, barrierSent.Token);
+            }
+        }
+
         barrierTimer.Fire();
 
         await retirement.WaitAsync(TimeSpan.FromSeconds(10));
@@ -319,14 +358,21 @@ public class ClusterNodeIdentityTests
         var connection = node.GetConnection();
         await server.SendRawAsync(">4\r\n+MOVING\r\n:1\r\n:10\r\n_\r\n"u8.ToArray());
         using var pushTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!connection.HasMaintenanceWindow) await Task.Delay(10, pushTimeout.Token);
+
+        while (!connection.HasMaintenanceWindow)
+        {
+            await Task.Delay(10, pushTimeout.Token);
+        }
 
         var deadline = disableCommandTimeout ? CommandDeadline.None : CommandDeadline.After(100);
         var acceptedCommand = connection.SendCheckedAsync(new RawCommand("*2\r\n$4\r\nECHO\r\n$1\r\nx\r\n"u8.ToArray()),
             commandDeadline: deadline).AsTask();
         using var commandTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (server.ReceivedCommands.Count(command => command == "ECHO x") == 0)
+        {
             await Task.Delay(10, commandTimeout.Token);
+        }
 
         var retirement = node.RetireAsync();
         using var reply = await acceptedCommand.WaitAsync(TimeSpan.FromSeconds(5));
@@ -351,7 +397,11 @@ public class ClusterNodeIdentityTests
             },
             SuppressReply = command =>
             {
-                if (command != "PING") return false;
+                if (command != "PING")
+                {
+                    return false;
+                }
+
                 barrierReceived.TrySetResult();
                 return true;
             },
@@ -420,8 +470,7 @@ public class ClusterNodeIdentityTests
         router.TopologyChanged += (_, _, _) => topologyChanged.TrySetResult();
         var connection = new object();
 
-        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 42, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0-1")]));
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 42, Migrations: [new(sourceEndpoint, targetEndpoint, "0-1")]));
         await topologyChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(source.IsRetired).IsTrue();
 
@@ -433,10 +482,8 @@ public class ClusterNodeIdentityTests
         // The duplicate ID is ignored. The worker is FIFO, so once the following notification
         // has been applied the duplicate has already been processed.
         topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        target.PublishMaintenanceNotification(connection, new("SMIGRATED", 42, Migrations:
-            [new(targetEndpoint, duplicateTargetEndpoint, "0-1")]));
-        target.PublishMaintenanceNotification(connection, new("SMIGRATED", 43, Migrations:
-            [new(targetEndpoint, sentinelEndpoint, "2")]));
+        target.PublishMaintenanceNotification(connection, new("SMIGRATED", 42, Migrations: [new(targetEndpoint, duplicateTargetEndpoint, "0-1")]));
+        target.PublishMaintenanceNotification(connection, new("SMIGRATED", 43, Migrations: [new(targetEndpoint, sentinelEndpoint, "2")]));
         await topologyChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
         // TopologyChanged fires after the slot is published, so no polling is needed here.
         await Assert.That(router.GetKnownSlotOwner(2)?.Port).IsEqualTo(7004);
@@ -465,35 +512,45 @@ public class ClusterNodeIdentityTests
             {
                 if (instrument.Meter.Name == RespireTelemetry.SourceName
                     && instrument.Name == SkippedMigrationMetricName)
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             },
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             var isSource = false;
             var isMalformed = false;
+
             foreach (var tag in tags)
             {
                 if (tag.Key == "server.address" && Equals(tag.Value, sourceEndpoint.Host))
+                {
                     isSource = true;
+                }
+
                 if (tag.Key == "reason" && Equals(tag.Value, "malformed"))
+                {
                     isMalformed = true;
+                }
             }
-            if (isSource && isMalformed) malformedSeen.TrySetResult();
+
+            if (isSource && isMalformed)
+            {
+                malformedSeen.TrySetResult();
+            }
         });
         listener.Start();
 
         var topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.TopologyChanged += (_, _, _) => topologyChanged.TrySetResult();
         var connection = new object();
-        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]));
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
         await topologyChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(targetEndpoint.Port);
         await Assert.That(source.IsRetired).IsFalse();
 
-        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "invalid")]));
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations: [new(sourceEndpoint, targetEndpoint, "invalid")]));
         await malformedSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
@@ -516,8 +573,7 @@ public class ClusterNodeIdentityTests
         router.TopologyChanged += (_, _, _) => changed.TrySetResult();
         var connection = new object();
 
-        primary.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations:
-            [new(seedEndpoint, firstTargetEndpoint, "0")]));
+        primary.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations: [new(seedEndpoint, firstTargetEndpoint, "0")]));
         await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(router.GetKnownSlotOwner(0)?.Port).IsEqualTo(firstTargetEndpoint.Port);
         await Assert.That(primary.IsRetired).IsFalse();
@@ -526,8 +582,7 @@ public class ClusterNodeIdentityTests
         router.ApplyTopology([new(0, 1, firstTargetEndpoint, "first-target", [])], router.TopologyVersion, 1L);
 
         changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        primary.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations:
-            [new(firstTargetEndpoint, secondTargetEndpoint, "1")]));
+        primary.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations: [new(firstTargetEndpoint, secondTargetEndpoint, "1")]));
         await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(router.GetKnownSlotOwner(1)?.Port).IsEqualTo(secondTargetEndpoint.Port);
     }
@@ -550,8 +605,7 @@ public class ClusterNodeIdentityTests
         router.NodeRetired += _ => disposed.TrySetResult(router.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)));
 #pragma warning restore RESP009
 
-        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]));
+        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
 
         await Assert.That(await disposed.Task.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
         await router.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
@@ -581,8 +635,10 @@ public class ClusterNodeIdentityTests
         client.ConnectionStateChanged += change =>
         {
             if (change.Endpoint == sourceEndpoint && change.State == RespireConnectionState.Connected)
+            {
 #pragma warning disable RESP009 // Bounded synchronous disposal from this callback is the reentrancy/deadlock behavior under test.
                 disposed.TrySetResult(client.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)));
+            }
 #pragma warning restore RESP009
         };
 
@@ -620,8 +676,7 @@ public class ClusterNodeIdentityTests
             continueWorker.Task.GetAwaiter().GetResult();
         };
 
-        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]));
+        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
 
         await topologyCallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await WaitUntilAsync(() => router.IsDisposed);
@@ -655,24 +710,46 @@ public class ClusterNodeIdentityTests
             {
                 if (instrument.Meter.Name == RespireTelemetry.SourceName
                     && instrument.Name == SkippedMigrationMetricName)
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             },
         };
         listener.SetMeasurementEventCallback<long>((_, measurement, tags, _) =>
         {
             var isQueueDrop = false;
             var hasSenderTags = false;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "reason" && Equals(tag.Value, "queue_full")) isQueueDrop = true;
-                if (tag.Key is "server.address" or "server.port") hasSenderTags = true;
+                if (tag.Key == "reason" && Equals(tag.Value, "queue_full"))
+                {
+                    isQueueDrop = true;
+                }
+
+                if (tag.Key is "server.address" or "server.port")
+                {
+                    hasSenderTags = true;
+                }
             }
+
             if (isQueueDrop)
             {
                 if (Interlocked.Add(ref metricDroppedCount, measurement) == expectedDrops)
+                {
                     allMetricsReported.TrySetResult();
-                if (hasSenderTags) Interlocked.Exchange(ref metricHadSenderTags, 1);
-                if (inReceiveCallback.Value) Interlocked.Exchange(ref metricRanOnReceiveThread, 1);
+                }
+
+                if (hasSenderTags)
+                {
+                    Interlocked.Exchange(ref metricHadSenderTags, 1);
+                }
+
+                if (inReceiveCallback.Value)
+                {
+                    Interlocked.Exchange(ref metricRanOnReceiveThread, 1);
+                }
+
                 metricReported.TrySetResult();
                 releaseMetricCallback.Task.GetAwaiter().GetResult();
             }
@@ -689,50 +766,65 @@ public class ClusterNodeIdentityTests
         var source = router.GetMultiplexer(sourceEndpoint);
         var secondSource = router.GetMultiplexer(secondSourceEndpoint);
         router.GetMultiplexer(targetEndpoint);
+
         for (var slot = 0; slot <= 501; slot++)
+        {
             router.SetSlotOwner(slot, slot % 2 == 0 ? source : secondSource);
+        }
+
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var lastApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.TopologyChanged += (_, _, _) =>
         {
-            if (blocked.TrySetResult()) release.Task.GetAwaiter().GetResult();
-            if (router.GetKnownSlotOwner(500)?.Port == targetEndpoint.Port) lastApplied.TrySetResult();
+            if (blocked.TrySetResult())
+            {
+                release.Task.GetAwaiter().GetResult();
+            }
+
+            if (router.GetKnownSlotOwner(500)?.Port == targetEndpoint.Port)
+            {
+                lastApplied.TrySetResult();
+            }
         };
         var connection = new object();
         var secondConnection = new object();
 
         // The worker takes slot 0 and blocks, leaving the whole 128-item queue empty.
         inReceiveCallback.Value = true;
+
         try
         {
-            source.PublishMaintenanceNotification(connection, new("SMIGRATED", 0, Migrations:
-                [new(sourceEndpoint, targetEndpoint, "0")]));
+            source.PublishMaintenanceNotification(connection, new("SMIGRATED", 0, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
         }
         finally
         {
             inReceiveCallback.Value = false;
         }
+
         try
         {
             await blocked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
             for (var slot = 1; slot <= 500; slot++)
             {
                 var notificationSource = slot % 2 == 0 ? source : secondSource;
                 var notificationSourceEndpoint = slot % 2 == 0 ? sourceEndpoint : secondSourceEndpoint;
                 var notificationConnection = slot % 2 == 0 ? connection : secondConnection;
                 inReceiveCallback.Value = true;
+
                 try
                 {
-                    notificationSource.PublishMaintenanceNotification(notificationConnection, new("SMIGRATED", slot, Migrations:
-                        [new(notificationSourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));
+                    notificationSource.PublishMaintenanceNotification(notificationConnection, new("SMIGRATED", slot, Migrations: [new(notificationSourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));
                 }
                 finally
                 {
                     inReceiveCallback.Value = false;
                 }
             }
+
             await Assert.That(router.SmigratedNotificationsDropped).IsEqualTo(expectedDrops);
+
             try
             {
                 await metricReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -744,6 +836,7 @@ public class ClusterNodeIdentityTests
             {
                 releaseMetricCallback.TrySetResult();
             }
+
             await allMetricsReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await logger.WarningReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(metricRanOnReceiveThread).IsEqualTo(0);
@@ -781,20 +874,29 @@ public class ClusterNodeIdentityTests
         var targetEndpoint = new RespireEndpoint("target", 7001);
         var source = router.GetMultiplexer(sourceEndpoint);
         router.GetMultiplexer(targetEndpoint);
-        for (var slot = 0; slot <= 3; slot++) router.SetSlotOwner(slot, source);
+
+        for (var slot = 0; slot <= 3; slot++)
+        {
+            router.SetSlotOwner(slot, source);
+        }
+
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.TopologyChanged += (_, _, _) =>
         {
-            if (blocked.TrySetResult()) release.Task.GetAwaiter().GetResult();
+            if (blocked.TrySetResult())
+            {
+                release.Task.GetAwaiter().GetResult();
+            }
         };
         var connection = new object();
-        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 0, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]));
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 0, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
         await blocked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         for (var slot = 1; slot <= 3; slot++)
-            source.PublishMaintenanceNotification(connection, new("SMIGRATED", slot, Migrations:
-                [new(sourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));
+        {
+            source.PublishMaintenanceNotification(connection, new("SMIGRATED", slot, Migrations: [new(sourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));
+        }
 
         var disposal = Task.Run(async () => await router.DisposeAsync());
         await WaitUntilAsync(() => router.IsDisposed);
@@ -804,7 +906,9 @@ public class ClusterNodeIdentityTests
 
         // Disposal joined the worker, which drained the queue without applying anything.
         for (var slot = 1; slot <= 3; slot++)
+        {
             await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(slot), source)).IsTrue();
+        }
     }
 
     [Test]
@@ -891,7 +995,9 @@ public class ClusterNodeIdentityTests
             {
                 if (instrument.Meter.Name == RespireTelemetry.SourceName
                     && instrument.Name == SkippedMigrationMetricName)
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             },
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
@@ -899,16 +1005,30 @@ public class ClusterNodeIdentityTests
             var isTestServer = false;
             var isDuplicate = false;
             var isMalformed = false;
+
             foreach (var tag in tags)
             {
                 if (tag.Key == "server.address" && Equals(tag.Value, "smigrated-metric-test"))
+                {
                     isTestServer = true;
+                }
+
                 if (tag.Key == "reason" && Equals(tag.Value, "duplicate"))
+                {
                     isDuplicate = true;
+                }
+
                 if (tag.Key == "reason" && Equals(tag.Value, "malformed"))
+                {
                     isMalformed = true;
+                }
             }
-            if (isTestServer && isMalformed) Interlocked.Increment(ref malformedCount);
+
+            if (isTestServer && isMalformed)
+            {
+                Interlocked.Increment(ref malformedCount);
+            }
+
             if (isTestServer && isDuplicate)
             {
                 Interlocked.Increment(ref duplicateCount);
@@ -946,13 +1066,20 @@ public class ClusterNodeIdentityTests
 
         var order = receivedInChainOrder ? Enumerable.Range(0, links) : Enumerable.Range(0, links).Reverse();
         var captured = new ClusterRouter.QueuedSmigratedNotification[links];
+
         foreach (var i in order)
+        {
             captured[i] = ClusterRouter.CaptureSmigratedNotification(first, new object(),
                 new("SMIGRATED", 1, Migrations: [new(endpoints[i], endpoints[i + 1], "0-1")]));
+        }
 
         // Every link but the first waits; the full deferral list (63 entries) then resolves in
         // one call when the first link applies.
-        for (var i = links - 1; i >= 1; i--) router.ApplySmigratedNotification(captured[i]);
+        for (var i = links - 1; i >= 1; i--)
+        {
+            router.ApplySmigratedNotification(captured[i]);
+        }
+
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), first)).IsTrue();
         router.ApplySmigratedNotification(captured[0]);
 
@@ -1008,7 +1135,9 @@ public class ClusterNodeIdentityTests
             {
                 if (instrument.Meter.Name == RespireTelemetry.SourceName
                     && instrument.Name == SkippedMigrationMetricName)
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             },
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
@@ -1016,24 +1145,53 @@ public class ClusterNodeIdentityTests
             string? reason = null;
             string? host = null;
             int? port = null;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "reason") reason = tag.Value as string;
-                if (tag.Key == "server.address") host = tag.Value as string;
-                if (tag.Key == "server.port") port = tag.Value as int?;
+                if (tag.Key == "reason")
+                {
+                    reason = tag.Value as string;
+                }
+
+                if (tag.Key == "server.address")
+                {
+                    host = tag.Value as string;
+                }
+
+                if (tag.Key == "server.port")
+                {
+                    port = tag.Value as int?;
+                }
             }
             // Other tests' routers share the process-wide meter; only count this test's senders.
-            if (host is not ("original-metric-sender" or "later-metric-sender")) return;
-            if (reason == (evict ? "deferral_evicted" : "deferral_expired")) lock (recorded) recorded.Add((host, port));
+            if (host is not ("original-metric-sender" or "later-metric-sender"))
+            {
+                return;
+            }
+
+            if (reason == (evict ? "deferral_evicted" : "deferral_expired"))
+            {
+                lock (recorded)
+                {
+                    recorded.Add((host, port));
+                }
+            }
         });
         listener.Start();
         var migration = new MaintenanceSlotMigration(new("absent-source", 7200), new("target", 7201), "0");
         router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(original, new object(),
             new("SMIGRATED", 1, Migrations: [migration])));
-        if (!evict) now += 30_000;
+
+        if (!evict)
+        {
+            now += 30_000;
+        }
+
         for (var i = 0; i < (evict ? 64 : 1); i++)
+        {
             router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(later, new object(),
                 new("SMIGRATED", 1, Migrations: [migration])));
+        }
 
         await Assert.That(recorded.Count).IsEqualTo(1);
         await Assert.That(recorded[0].Host).IsEqualTo(original.Host);
@@ -1091,6 +1249,7 @@ public class ClusterNodeIdentityTests
             new("SMIGRATED", 5, Migrations: [new(sourceEndpoint, targetEndpoint, "0")])));
         router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, connection,
             new("SMIGRATED", 6, Migrations: [new(targetEndpoint, sourceEndpoint, "0")])));
+
         for (var sequence = 7; sequence <= 300; sequence++)
         {
             router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, connection,
@@ -1120,7 +1279,10 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(0, a);
         router.SetSlotOwner(1, a);
         // Without another slot, A->B retires A, and B->A brings the slots back on a new transport.
-        if (!sourceRetiresInBetween) router.SetSlotOwner(2, a);
+        if (!sourceRetiresInBetween)
+        {
+            router.SetSlotOwner(2, a);
+        }
 
         // Received in this order on different connections: A->C (slot 0 only), B->A, A->B.
         var ac = ClusterRouter.CaptureSmigratedNotification(a, new object(),
@@ -1164,7 +1326,10 @@ public class ClusterNodeIdentityTests
         var topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.TopologyChanged += (_, _, _) =>
         {
-            if (router.GetKnownSlotOwner(0)?.Port == cEndpoint.Port) topologyChanged.TrySetResult();
+            if (router.GetKnownSlotOwner(0)?.Port == cEndpoint.Port)
+            {
+                topologyChanged.TrySetResult();
+            }
         };
 
         // One receive loop stamps a B->C push, then pauses while another connection retires A.
@@ -1198,13 +1363,19 @@ public class ClusterNodeIdentityTests
         listener.InstrumentPublished = (instrument, meterListener) =>
         {
             if (ReferenceEquals(instrument, skippedInstrument))
+            {
                 meterListener.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
             foreach (var tag in tags)
+            {
                 if (tag.Key == "server.address" && Equals(tag.Value, throwingHost))
+                {
                     throw new InvalidOperationException("listener failure");
+                }
+            }
         });
         listener.Start();
 
@@ -1215,24 +1386,37 @@ public class ClusterNodeIdentityTests
         var sourceEndpoint = new RespireEndpoint(throwingHost, 7000);
         var targetEndpoint = new RespireEndpoint("target", 7001);
         var source = router.GetMultiplexer(sourceEndpoint);
-        for (var slot = 0; slot <= 130; slot++) router.SetSlotOwner(slot, source);
+
+        for (var slot = 0; slot <= 130; slot++)
+        {
+            router.SetSlotOwner(slot, source);
+        }
+
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var lastApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.TopologyChanged += (_, _, _) =>
         {
-            if (blocked.TrySetResult()) release.Task.GetAwaiter().GetResult();
-            if (router.GetKnownSlotOwner(130)?.Port == targetEndpoint.Port) lastApplied.TrySetResult();
+            if (blocked.TrySetResult())
+            {
+                release.Task.GetAwaiter().GetResult();
+            }
+
+            if (router.GetKnownSlotOwner(130)?.Port == targetEndpoint.Port)
+            {
+                lastApplied.TrySetResult();
+            }
         };
         var connection = new object();
 
-        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 0, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]));
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 0, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
         await blocked.Task.WaitAsync(TimeSpan.FromSeconds(5));
         // Overflow diagnostics run off this receive-loop callback; a throwing listener must not escape.
         for (var slot = 1; slot <= 130; slot++)
-            source.PublishMaintenanceNotification(connection, new("SMIGRATED", slot, Migrations:
-                [new(sourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));
+        {
+            source.PublishMaintenanceNotification(connection, new("SMIGRATED", slot, Migrations: [new(sourceEndpoint, targetEndpoint, slot.ToString(System.Globalization.CultureInfo.InvariantCulture))]));
+        }
+
         await Assert.That(router.SmigratedNotificationsDropped).IsEqualTo(2);
         release.TrySetResult();
         await lastApplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1262,17 +1446,21 @@ public class ClusterNodeIdentityTests
         var secondApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.TopologyChanged += (_, _, _) =>
         {
-            if (router.GetKnownSlotOwner(1)?.Port == targetEndpoint.Port) secondApplied.TrySetResult();
-            else throw new InvalidOperationException("topology callback failure");
+            if (router.GetKnownSlotOwner(1)?.Port == targetEndpoint.Port)
+            {
+                secondApplied.TrySetResult();
+            }
+            else
+            {
+                throw new InvalidOperationException("topology callback failure");
+            }
         };
         var connection = new object();
 
         // The first callback throws, and the worker's error log throws too. The worker must
         // survive both and apply the next notification.
-        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]));
-        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "1")]));
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations: [new(sourceEndpoint, targetEndpoint, "1")]));
 
         await secondApplied.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(logger.ErrorCount).IsEqualTo(1);
@@ -1305,7 +1493,9 @@ public class ClusterNodeIdentityTests
             // field is assigned. Match the published instrument without reading that field.
             if (instrument.Meter.Name == RespireTelemetry.SourceName
                 && instrument.Name == SkippedMigrationMetricName)
+            {
                 meterListener.EnableMeasurementEvents(instrument);
+            }
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) => RecordSkipped(value, tags));
 
@@ -1313,20 +1503,39 @@ public class ClusterNodeIdentityTests
         {
             string? host = null;
             string? reason = null;
+
             foreach (var tag in tags)
             {
-                if (tag.Key == "server.address") host = tag.Value as string;
-                if (tag.Key == "reason") reason = tag.Value as string;
+                if (tag.Key == "server.address")
+                {
+                    host = tag.Value as string;
+                }
+
+                if (tag.Key == "reason")
+                {
+                    reason = tag.Value as string;
+                }
             }
-            if (host != disposingHost) return;
+
+            if (host != disposingHost)
+            {
+                return;
+            }
+
             Interlocked.Add(ref skippedCount, value);
-            if (Interlocked.CompareExchange(ref disposalCalls, 1, 0) != 0) return;
+
+            if (Interlocked.CompareExchange(ref disposalCalls, 1, 0) != 0)
+            {
+                return;
+            }
+
             skippedReason = reason;
             sourceRetiredBeforeListener = a.IsRetired;
 #pragma warning disable RESP009 // Bounded synchronous disposal from this callback is the reentrancy/deadlock behavior under test.
             disposedFromListener = router.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
 #pragma warning restore RESP009
         }
+
         listener.Start();
 
         // B->C waits for B to own slot 1, and expires before A->B arrives.
@@ -1355,7 +1564,9 @@ public class ClusterNodeIdentityTests
     {
         await using var node = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: Options(6379).ToConnectionOptions(enableMaintenanceNotifications: true));
-        MaintenanceNotificationHandler handler = (_, _, _, _) => { };
+        MaintenanceNotificationHandler handler = (_, _, _, _) =>
+        {
+        };
 
         await Assert.That(node.CaptureMaintenanceHandlers()).IsNull();
         node.MaintenanceNotificationReceived += handler;
@@ -1369,11 +1580,13 @@ public class ClusterNodeIdentityTests
 
         await using var cyclingNode = RespireConnectionMultiplexer.Create("127.0.0.1", 6379,
             options: Options(6379).ToConnectionOptions(enableMaintenanceNotifications: true));
+
         for (var i = 0; i < 512; i++)
         {
             cyclingNode.MaintenanceNotificationReceived += handler;
             cyclingNode.MaintenanceNotificationReceived -= handler;
         }
+
         await WaitUntilAsync(() =>
         {
             cyclingNode.PruneMaintenanceHandlerEpochs();
@@ -1404,8 +1617,7 @@ public class ClusterNodeIdentityTests
         router.NodeRetired += _ => retiredOnWorker.TrySetResult(router.IsOnSmigratedWorker);
         router.TopologyChanged += (_, _, _) => changedOnWorker.TrySetResult(router.IsOnSmigratedWorker);
 
-        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]));
+        source.PublishMaintenanceNotification(new object(), new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]));
 
         await Assert.That(await retiredOnWorker.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(await changedOnWorker.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
@@ -1427,8 +1639,7 @@ public class ClusterNodeIdentityTests
         router.SetSlotOwner(1, source);
 
         router.ApplySmigratedNotification(ClusterRouter.CaptureSmigratedNotification(source, new object(),
-            new("SMIGRATED", 1, Migrations:
-            [
+            new("SMIGRATED", 1, Migrations: [
                 new(sourceEndpoint, targetEndpoint, "0-"),
                 new(sourceEndpoint, targetEndpoint, "1"),
             ])));
@@ -1461,10 +1672,8 @@ public class ClusterNodeIdentityTests
         var topologyChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         router.TopologyChanged += (_, _, _) => topologyChanged.TrySetResult();
         var connection = new object();
-        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "0")]), receivedAt);
-        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations:
-            [new(sourceEndpoint, targetEndpoint, "1")]));
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 1, Migrations: [new(sourceEndpoint, targetEndpoint, "0")]), receivedAt);
+        source.PublishMaintenanceNotification(connection, new("SMIGRATED", 2, Migrations: [new(sourceEndpoint, targetEndpoint, "1")]));
         await topologyChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         await Assert.That(ReferenceEquals(router.GetKnownSlotOwner(0), source)).IsTrue();
@@ -1654,13 +1863,21 @@ public class ClusterNodeIdentityTests
         {
             try
             {
-                if (clear) router.ClearSlotOwner(0, source);
-                else router.SetSlotOwner(0, target);
+                if (clear)
+                {
+                    router.ClearSlotOwner(0, source);
+                }
+                else
+                {
+                    router.SetSlotOwner(0, target);
+                }
             }
             catch (Exception error) { failure = error; }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         bool blocked;
         RespireConnectionMultiplexer? observed;
+
         lock (clockGate)
         {
             worker.Start();
@@ -1668,6 +1885,7 @@ public class ClusterNodeIdentityTests
                 TimeSpan.FromSeconds(5));
             observed = router.GetKnownSlotOwner(0);
         }
+
         var finished = worker.Join(TimeSpan.FromSeconds(5));
 
         await Assert.That(blocked).IsTrue();
@@ -1760,7 +1978,9 @@ public class ClusterNodeIdentityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
+            Endpoints = { new RespireEndpoint("localhost") },
+            UseCluster = true,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var core = client.Core;
@@ -1793,11 +2013,16 @@ public class ClusterNodeIdentityTests
         };
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
-            if (Environment.CurrentManagedThreadId != callbackThread) return;
+            if (Environment.CurrentManagedThreadId != callbackThread)
+            {
+                return;
+            }
+
             measurements++;
             gateHeld |= healthGate.IsHeldByCurrentThread || router.NodeStateGate.IsHeldByCurrentThread;
         });
         listener.Start();
+
         if (retirement)
         {
             router.SetSlotOwner(0, router.GetMultiplexer(new RespireEndpoint("replacement")));
@@ -1806,6 +2031,7 @@ public class ClusterNodeIdentityTests
         {
             core.NotifyCommandStateChanged(original, 0, RespireConnectionState.Reconnecting);
         }
+
         listener.Dispose();
         // Continuity loss reports its Respire-specific signal, not a standard eviction.
         await Assert.That(measurements).IsEqualTo(1);
@@ -1819,7 +2045,8 @@ public class ClusterNodeIdentityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
+            Endpoints = { new RespireEndpoint("localhost") },
+            UseCluster = true,
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
@@ -1849,7 +2076,8 @@ public class ClusterNodeIdentityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
+            Endpoints = { new RespireEndpoint("localhost") },
+            UseCluster = true,
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
@@ -1893,7 +2121,8 @@ public class ClusterNodeIdentityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
+            Endpoints = { new RespireEndpoint("localhost") },
+            UseCluster = true,
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
@@ -1933,7 +2162,8 @@ public class ClusterNodeIdentityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
+            Endpoints = { new RespireEndpoint("localhost") },
+            UseCluster = true,
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
@@ -1961,6 +2191,7 @@ public class ClusterNodeIdentityTests
         var identities = (ClusterNodeIdentityIndex)typeof(ClusterRouter).GetField("_identities", flags)!.GetValue(router)!;
         var ids = (Dictionary<RespireConnectionMultiplexer, string>)typeof(ClusterNodeIdentityIndex)
             .GetField("_nodeIds", flags)!.GetValue(identities)!;
+
         if (knownIdentity)
         {
             await Assert.That(ids[redirected]).IsEqualTo("redirect-id");
@@ -1999,6 +2230,7 @@ public class ClusterNodeIdentityTests
         var capturedVersion = (long)version.GetValue(router)!;
         var error = new RespireServerException($"ASK 0 127.0.0.1:{target.Port}");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         if (dedicated)
         {
             await router.GetRedirectDedicatedPoolAsync(error, source, timeout.Token, commandSlot: null, discovery: null, observation: default);
@@ -2007,6 +2239,7 @@ public class ClusterNodeIdentityTests
         {
             await router.GetRedirectConnectionAsync(error, source, timeout.Token, commandSlot: null, discovery: null, observation: default);
         }
+
         var redirected = router.GetMultiplexer(redirectedEndpoint);
         var slots = (RespireConnectionMultiplexer?[])typeof(ClusterRouter).GetField("_slots", flags)!.GetValue(router)!;
         await Assert.That(ReferenceEquals(slots[0], client.Core.Multiplexer)).IsTrue();
@@ -2035,7 +2268,9 @@ public class ClusterNodeIdentityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
+            Endpoints = { new RespireEndpoint("localhost") },
+            UseCluster = true,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
@@ -2076,7 +2311,8 @@ public class ClusterNodeIdentityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
+            Endpoints = { new RespireEndpoint("localhost") },
+            UseCluster = true,
         });
 #pragma warning restore RESP010
         var router = client.Core.Cluster!;
@@ -2090,16 +2326,20 @@ public class ClusterNodeIdentityTests
         List<ClusterTopologyRange> later = [new(0, 16383, endpoint, "later", [])];
         apply.Invoke(router, [initial, 0L, 1L]);
         var olderVersion = (long)version.GetValue(router)!;
+
         if (movedBetweenRequests)
         {
             router.SetSlotOwner(0, router.GetMultiplexer(new RespireEndpoint("moved")));
         }
+
         var laterVersion = (long)version.GetValue(router)!;
         var newestRoute = router.GetMultiplexer(new RespireEndpoint("newest-route"));
+
         if (movedAfterLaterRequest)
         {
             router.SetSlotOwner(0, newestRoute);
         }
+
         if (laterCompletesFirst)
         {
             apply.Invoke(router, [later, laterVersion, 3L]);
@@ -2110,6 +2350,7 @@ public class ClusterNodeIdentityTests
             apply.Invoke(router, [older, olderVersion, 2L]);
             apply.Invoke(router, [later, laterVersion, 3L]);
         }
+
         var current = router.GetMultiplexer(endpoint);
         var slots = (RespireConnectionMultiplexer?[])typeof(ClusterRouter).GetField("_slots", flags)!.GetValue(router)!;
         var identities = (ClusterNodeIdentityIndex)typeof(ClusterRouter).GetField("_identities", flags)!.GetValue(router)!;
@@ -2133,7 +2374,9 @@ public class ClusterNodeIdentityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
+            Endpoints = { new RespireEndpoint("localhost") },
+            UseCluster = true,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var core = client.Core;
@@ -2141,7 +2384,12 @@ public class ClusterNodeIdentityTests
         var original = core.Multiplexer;
         var replacement = router.GetMultiplexer(new RespireEndpoint("replacement"));
         router.SetSlotOwner(0, original);
-        if (retirement) router.SetSlotOwner(0, replacement);
+
+        if (retirement)
+        {
+            router.SetSlotOwner(0, replacement);
+        }
+
         var cache = core.ClientCache!;
         CacheValue();
         var gate = (Lock)typeof(ClientCore).GetField("_stateGate",
@@ -2151,29 +2399,42 @@ public class ClusterNodeIdentityTests
         var callback = new Thread(() =>
         {
             started.Set();
+
             try
             {
-                if (retirement) core.NotifyCommandNodeRetired(original);
-                else core.NotifyCommandStateChanged(original, 0, state);
+                if (retirement)
+                {
+                    core.NotifyCommandNodeRetired(original);
+                }
+                else
+                {
+                    core.NotifyCommandStateChanged(original, 0, state);
+                }
+
                 finished.SetResult();
             }
             catch (Exception exception) { finished.SetException(exception); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         int countWhileBlocked;
+
         lock (gate)
         {
             callback.Start();
+
             if (!started.Wait(TimeSpan.FromSeconds(5)) || !SpinWait.SpinUntil(
                     () => (callback.ThreadState & System.Threading.ThreadState.WaitSleepJoin) != 0,
                     TimeSpan.FromSeconds(5)))
             {
                 throw new TimeoutException("The callback did not reach the held health gate.");
             }
+
             countWhileBlocked = cache.Count;
             // Flip membership and repopulate before the delayed callback can enter the gate.
             router.SetSlotOwner(0, retirement ? original : replacement);
             CacheValue();
         }
+
         await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(countWhileBlocked).IsEqualTo(1);
         await Assert.That(cache.Count).IsEqualTo(1);
@@ -2196,7 +2457,9 @@ public class ClusterNodeIdentityTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
+            Endpoints = { new RespireEndpoint("localhost") },
+            UseCluster = true,
+            ClientSideCache = new(),
         });
 #pragma warning restore RESP010
         var core = client.Core;
@@ -2319,7 +2582,11 @@ public class ClusterNodeIdentityTests
         var commandReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var seed = new FakeRespServer
         {
-            SuppressReply = _ => { commandReceived.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                commandReceived.TrySetResult();
+                return true;
+            },
         };
         var options = Options(seed.Port);
         await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
@@ -2350,6 +2617,7 @@ public class ClusterNodeIdentityTests
                 {
                     firstDiscovery.TrySetResult();
                 }
+
                 return true;
             },
         };
@@ -2368,7 +2636,11 @@ public class ClusterNodeIdentityTests
         var replacement = Encoding.UTF8.GetBytes("*1\r\n" + Range(
             0, 16383, preferred, seed.Port, movedHost ? "original" : "replacement", "", includeAliases: false));
         var refreshReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        seed.SuppressReply = _ => { refreshReceived.TrySetResult(); return true; };
+        seed.SuppressReply = _ =>
+        {
+            refreshReceived.TrySetResult();
+            return true;
+        };
         var refresh = router.GetMasterConnectionsAsync(default, discovery: null, observation: default).AsTask();
         await refreshReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await seed.SendRawAsync(replacement);
@@ -2582,7 +2854,11 @@ public class ClusterNodeIdentityTests
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!predicate()) await Task.Delay(5, timeout.Token);
+
+        while (!predicate())
+        {
+            await Task.Delay(5, timeout.Token);
+        }
     }
 
     private static RespireOptions Options(int seedPort) => new()
@@ -2596,16 +2872,31 @@ public class ClusterNodeIdentityTests
     private sealed class ThrowingErrorLogger : ILoggerFactory, ILogger
     {
         private int _errorCount;
+
         internal int ErrorCount => Volatile.Read(ref _errorCount);
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (logLevel < LogLevel.Error) return;
+            if (logLevel < LogLevel.Error)
+            {
+                return;
+            }
+
             Interlocked.Increment(ref _errorCount);
             throw new InvalidOperationException("logger failure");
         }
@@ -2614,16 +2905,31 @@ public class ClusterNodeIdentityTests
     private sealed class ThrowingDebugLogger : ILoggerFactory, ILogger
     {
         private int _debugCount;
+
         internal int DebugCount => Volatile.Read(ref _debugCount);
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Debug;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (logLevel != LogLevel.Debug) return;
+            if (logLevel != LogLevel.Debug)
+            {
+                return;
+            }
+
             Interlocked.Increment(ref _debugCount);
             throw new InvalidOperationException("debug logger failure");
         }
@@ -2632,18 +2938,41 @@ public class ClusterNodeIdentityTests
     private sealed class WarningCaptureLogger : ILoggerFactory, ILogger
     {
         private int _warningCount;
+
         internal int WarningCount => Volatile.Read(ref _warningCount);
-        internal TaskCompletionSource WarningReported { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal string LastWarning { get; private set; } = "";
+
+        internal TaskCompletionSource WarningReported
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal string LastWarning
+        {
+            get; private set;
+        } = "";
+
         public ILogger CreateLogger(string categoryName) => this;
-        public void AddProvider(ILoggerProvider provider) { }
-        public void Dispose() { }
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (logLevel < LogLevel.Warning) return;
+            if (logLevel < LogLevel.Warning)
+            {
+                return;
+            }
+
             LastWarning = formatter(state, exception);
             Interlocked.Increment(ref _warningCount);
             WarningReported.TrySetResult();
@@ -2652,7 +2981,10 @@ public class ClusterNodeIdentityTests
 
     private sealed class MaintenanceDrainClock : TimeProvider
     {
-        internal TaskCompletionSource<MaintenanceDrainTimer> Timer { get; } =
+        internal TaskCompletionSource<MaintenanceDrainTimer> Timer
+        {
+            get;
+        } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
@@ -2666,10 +2998,24 @@ public class ClusterNodeIdentityTests
     private sealed class MaintenanceDrainTimer(TimerCallback callback, object? state) : ITimer
     {
         private int _finished;
-        internal void Fire() { if (Interlocked.Exchange(ref _finished, 1) == 0) callback(state); }
+
+        internal void Fire()
+        {
+            if (Interlocked.Exchange(ref _finished, 1) == 0)
+            {
+                callback(state);
+            }
+        }
+
         public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _finished) == 0;
+
         public void Dispose() => Interlocked.Exchange(ref _finished, 1);
-        public ValueTask DisposeAsync() { Dispose(); return default; }
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return default;
+        }
     }
 
     private readonly struct BlockedWriteCommand(
@@ -2686,4 +3032,3 @@ public class ClusterNodeIdentityTests
         }
     }
 }
-

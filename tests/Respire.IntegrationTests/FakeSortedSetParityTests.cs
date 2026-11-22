@@ -19,6 +19,7 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var client = await Connect(fake, protocol);
         await client.SortedSets.AddAsync("key", ("a", 1));
+
         foreach (var key in new[] { "key", "missing" })
         {
             foreach (var command in new[] { "ZRANGEBYLEX", "ZREVRANGEBYLEX" })
@@ -30,6 +31,7 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
                 (await scoredLex.Should().ThrowAsync<RespireServerException>()).Which.Message
                     .Should().Be("ERR syntax error, WITHSCORES not supported in combination with BYLEX");
             }
+
             Func<Task> missingArguments = async () =>
             {
                 using var ignored = await client.ExecuteAsync("ZINTERCARD", 2, key);
@@ -37,6 +39,7 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
             (await missingArguments.Should().ThrowAsync<RespireServerException>()).Which.Message
                 .Should().Be("ERR syntax error");
         }
+
         (await client.SortedSets.ScoreAsync("key", "a")).Should().Be(1);
     }
 
@@ -56,10 +59,24 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
         await Number(client, "PEXPIRE", "key", 60_000);
         (await Number(client, "ZADD", "key", "XX", "GT", "CH", 1, "a", 4, "b", 5, "missing")).Should().Be(1);
         (await Number(client, "ZADD", "key", "LT", "CH", 1, "a", 9, "b", 6, "c")).Should().Be(2);
-        using (var result = await client.ExecuteAsync("ZADD", "key", "INCR", "GT", -1, "a")) result.IsNull.Should().BeTrue();
-        using (var result = await client.ExecuteAsync("ZADD", "key", "NX", "INCR", 1, "a")) result.IsNull.Should().BeTrue();
-        using (var result = await client.ExecuteAsync("ZADD", "key", "INCR", 2, "a")) result.AsDouble().Should().Be(3);
+
+        using (var result = await client.ExecuteAsync("ZADD", "key", "INCR", "GT", -1, "a"))
+        {
+            result.IsNull.Should().BeTrue();
+        }
+
+        using (var result = await client.ExecuteAsync("ZADD", "key", "NX", "INCR", 1, "a"))
+        {
+            result.IsNull.Should().BeTrue();
+        }
+
+        using (var result = await client.ExecuteAsync("ZADD", "key", "INCR", 2, "a"))
+        {
+            result.AsDouble().Should().Be(3);
+        }
+
         (await client.SortedSets.ScoresManyAsync("key", "a", "b", "c", "missing")).Should().Equal(3, 4, 6, null);
+
         foreach (var args in new RespireValue[][]
         {
             ["key", "NX", "XX", 1, "a"], ["key", "NX", "GT", 1, "a"], ["key", "GT", "LT", 1, "a"],
@@ -69,18 +86,25 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
             ["key", " 1", "a"], ["key", "1 ", "a"], ["key", 1], ["key", "XX"],
         })
         {
-            Func<Task> invalid = async () => { using var ignored = await client.ExecuteAsync("ZADD", args); };
+            Func<Task> invalid = async () =>
+            {
+                using var ignored = await client.ExecuteAsync("ZADD", args);
+            };
             await invalid.Should().ThrowAsync<RespireServerException>();
             (await client.SortedSets.ScoresManyAsync("key", "a", "b", "c")).Should().Equal(3, 4, 6);
             (await Number(client, "PTTL", "key")).Should().BeInRange(30_000, 60_000);
         }
+
         await Number(client, "ZADD", "numeric", "+inf", "inf", "-inf", "negative", "0x1.8p+2", "hex", "5e-324", "tiny");
         (await client.SortedSets.ScoreAsync("numeric", "hex")).Should().Be(6);
         (await client.SortedSets.ScoreAsync("numeric", "tiny")).Should().Be(double.Epsilon);
         await Number(client, "ZADD", "hex-rounding", "0x1.00000000000008p0", "even-low", "0x1.00000000000018p0", "even-high", "0x1.8p-1075", "subnormal");
         (await client.SortedSets.ScoresManyAsync("hex-rounding", "even-low", "even-high", "subnormal"))
             .Should().Equal(1, Math.BitIncrement(Math.BitIncrement(1d)), double.Epsilon);
-        Func<Task> nan = async () => { using var ignored = await client.ExecuteAsync("ZINCRBY", "numeric", "-inf", "inf"); };
+        Func<Task> nan = async () =>
+        {
+            using var ignored = await client.ExecuteAsync("ZINCRBY", "numeric", "-inf", "inf");
+        };
         await nan.Should().ThrowAsync<RespireServerException>().WithMessage("*resulting score*NaN*");
         (await client.SortedSets.ScoreAsync("numeric", "inf")).Should().Be(double.PositiveInfinity);
         await Number(client, "ZADD", "overflow", double.MaxValue, "a");
@@ -113,12 +137,18 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
         (await Members(client, "ZRANGE", binaryKey, 0, long.MinValue)).Should().BeEmpty();
         (await Number(client, "ZRANK", binaryKey, new byte[] { 255 })).Should().Be(3);
         (await Number(client, "ZREVRANK", binaryKey, new byte[] { 255 })).Should().Be(1);
-        using (var missing = await client.ExecuteAsync("ZRANK", binaryKey, "missing")) missing.IsNull.Should().BeTrue();
+
+        using (var missing = await client.ExecuteAsync("ZRANK", binaryKey, "missing"))
+        {
+            missing.IsNull.Should().BeTrue();
+        }
+
         (await Members(client, "ZRANGE", binaryKey, "(0", "+inf", "BYSCORE")).Should().Equal("68696768");
         (await Members(client, "ZREVRANGEBYSCORE", binaryKey, "+inf", "-inf", "LIMIT", 1, 2)).Should().Equal("FF", "00");
         (await Members(client, "ZRANGEBYSCORE", binaryKey, "-inf", "+inf", "LIMIT", -1, 2)).Should().BeEmpty();
         (await Members(client, "ZRANGEBYSCORE", binaryKey, "-inf", "+inf", "LIMIT", 3, -2)).Should().Equal("FF", "68696768");
         (await Number(client, "ZCOUNT", binaryKey, "(0", "+inf")).Should().Be(1);
+
         using (var scored = await client.ExecuteAsync("ZRANGE", binaryKey, 0, 0, "WITHSCORES"))
         {
             scored.Count.Should().Be(protocol == 3 ? 1 : 2);
@@ -126,21 +156,33 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
             entry[0].AsString().Should().Be("low");
             entry[1].AsDouble().Should().Be(-1);
         }
+
         using (var pop = await client.ExecuteAsync("ZPOPMIN", binaryKey))
         {
             pop.Count.Should().Be(2); // An omitted count stays flat even in RESP3.
             pop[0].AsString().Should().Be("low");
             pop[1].AsDouble().Should().Be(-1);
         }
+
         using (var pop = await client.ExecuteAsync("ZPOPMAX", binaryKey, 2))
         {
             pop.Count.Should().Be(protocol == 3 ? 2 : 4);
             (protocol == 3 ? pop[0][0] : pop[0]).AsString().Should().Be("high");
         }
+
         (await Number(client, "ZREMRANGEBYRANK", binaryKey, long.MinValue, long.MaxValue)).Should().Be(2);
         (await client.ExistsAsync(binaryKey)).Should().BeFalse();
-        using (var pop = await client.ExecuteAsync("ZPOPMIN", binaryKey, 0)) pop.Count.Should().Be(0);
-        using (var scores = await client.ExecuteAsync("ZMSCORE", binaryKey, "a", "b")) scores.All(value => value.IsNull).Should().BeTrue();
+
+        using (var pop = await client.ExecuteAsync("ZPOPMIN", binaryKey, 0))
+        {
+            pop.Count.Should().Be(0);
+        }
+
+        using (var scores = await client.ExecuteAsync("ZMSCORE", binaryKey, "a", "b"))
+        {
+            scores.All(value => value.IsNull).Should().BeTrue();
+        }
+
         await Number(client, "ZADD", "lex", 0, "", 0, new byte[] { 0 }, 0, "a", 0, new byte[] { 255 });
         (await Members(client, "ZRANGE", "lex", "[", new byte[] { (byte)'[', 255 }, "BYLEX")).Should().Equal("", "00", "61", "FF");
         (await Members(client, "ZREVRANGEBYLEX", "lex", "+", "-", "LIMIT", 1, 2)).Should().Equal("61", "00");
@@ -160,6 +202,7 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
         await using var fake = useFake ? new RespireFakeServer() : null;
         await using var client = await Connect(fake, protocol);
         await client.SortedSets.AddAsync("key", ("a", 1), ("b", 2));
+
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
             ("ZRANGE", ["key", 0, -1, "LIMIT", 0, 1]), ("ZRANGE", ["key", "-", "+", "BYLEX", "WITHSCORES"]),
@@ -176,22 +219,32 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
             ("ZINTERCARD", [1, "key", "LIMIT"]), ("ZINTERCARD", [1, "key", "WEIGHTS", 2]),
         })
         {
-            Func<Task> invalid = async () => { using var ignored = await client.ExecuteAsync(command, args); };
+            Func<Task> invalid = async () =>
+            {
+                using var ignored = await client.ExecuteAsync(command, args);
+            };
             await invalid.Should().ThrowAsync<RespireServerException>();
             (await client.SortedSets.RangeWithScoresAsync("key")).Should().Equal(new RespireSortedSetEntry("a", 1), new RespireSortedSetEntry("b", 2));
         }
+
         (await Number(client, "ZINTERCARD", 2, "key", "key", "LIMIT", 1, "limit", 0)).Should().Be(2);
         await client.Sets.AddAsync("set", "a", "other");
         (await Number(client, "ZINTERCARD", 2, "key", "set")).Should().Be(1);
         await client.Hashes.SetAsync("hash", "field", "value");
+
         foreach (var otherType in new[] { "set", "hash" })
         {
-            Func<Task> invalid = async () => { using var ignored = await client.ExecuteAsync("ZADD", otherType, 1, "a"); };
+            Func<Task> invalid = async () =>
+            {
+                using var ignored = await client.ExecuteAsync("ZADD", otherType, 1, "a");
+            };
             (await invalid.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("WRONGTYPE");
         }
+
         (await client.Sets.MembersAsync("set")).Should().BeEquivalentTo("a", "other");
         (await client.Hashes.GetStringAsync("hash", "field")).Should().Be("value");
         await client.SetAsync("wrong", "value");
+
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
             ("ZADD", ["wrong", 1, "a"]), ("ZINCRBY", ["wrong", 1, "a"]), ("ZREM", ["wrong", "a"]),
@@ -202,11 +255,20 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
             ("ZREMRANGEBYLEX", ["wrong", "-", "+"]), ("ZINTERCARD", [2, "missing", "wrong"]),
         })
         {
-            Func<Task> wrong = async () => { using var ignored = await client.ExecuteAsync(command, args); };
+            Func<Task> wrong = async () =>
+            {
+                using var ignored = await client.ExecuteAsync(command, args);
+            };
             (await wrong.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("WRONGTYPE");
         }
+
         (await client.GetStringAsync("wrong")).Should().Be("value");
-        using (var missing = await client.ExecuteAsync("MGET", "key")) missing[0].IsNull.Should().BeTrue();
+
+        using (var missing = await client.ExecuteAsync("MGET", "key"))
+        {
+            missing[0].IsNull.Should().BeTrue();
+        }
+
         await client.SetAsync("key", "replacement");
         (await client.GetStringAsync("key")).Should().Be("replacement");
     }
@@ -235,7 +297,10 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
         await client.SortedSets.AddAsync("json", json, 7);
         (await client.SortedSets.PopAsync<Payload>("json"))!.Value.Member.Should().Be(new Payload(7, "seven"));
         await client.SortedSets.AddAsync("invalid", "not-an-integer", 1);
-        Func<Task> invalid = async () => { await client.SortedSets.PopAsync<int>("invalid"); };
+        Func<Task> invalid = async () =>
+        {
+            await client.SortedSets.PopAsync<int>("invalid");
+        };
         await invalid.Should().ThrowAsync<FormatException>();
     }
 
@@ -243,7 +308,8 @@ public class FakeSortedSetParityTests(Redis7ReferenceContainer fixture)
 
     private ValueTask<RespireClient> Connect(RespireFakeServer? fake, int protocol)
         => RespireClient.ConnectAsync((fake?.CreateOptions() ?? RespireOptions.Parse(fixture.IsolatedConnectionString))
-            with { Protocol = (RespireProtocol)protocol });
+            with
+        { Protocol = (RespireProtocol)protocol });
 
     private static async Task<long> Number(IRespireClient client, string command, params RespireValue[] args)
     {

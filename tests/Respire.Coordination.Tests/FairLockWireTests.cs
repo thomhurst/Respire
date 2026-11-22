@@ -31,8 +31,10 @@ public class FairLockWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Endpoints = [new("127.0.0.1", server.Port)],
-            Connections = 1, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            ClientSideCache = new(),
         });
         var fair = new RespireCoordination(client).CreateFairLock("lease", "counter", "queue");
         var error = await Assert.That(async () => await fair
@@ -81,8 +83,11 @@ public class FairLockWireTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, Endpoints = [new("127.0.0.1", server.Port)],
-            Connections = 1, ClientSideCache = new(), CommandTimeout = null,
+            Protocol = RespireProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            ClientSideCache = new(),
+            CommandTimeout = null,
         });
         using var listener = new ActivityListener
         {
@@ -92,14 +97,21 @@ public class FairLockWireTests
             {
                 if (!lostAcquisitionReply && activity.GetTagItem("db.operation.name") is "EVALSHA"
                     && activity.GetTagItem("server.port") is int port && port == server.Port)
+                {
                     cancellation.Cancel();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
         var pending = new RespireCoordination(client).CreateFairLock("lease", "counter", "queue")
             .AcquireAsync(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
         await acquisitionSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        if (lostAcquisitionReply) await cancellation.CancelAsync();
+
+        if (lostAcquisitionReply)
+        {
+            await cancellation.CancelAsync();
+        }
+
         await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<OperationCanceledException>();
         await Assert.That(server.ReceivedCommands.Any(command =>
@@ -114,8 +126,10 @@ public class FairLockWireTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = [new("unused.invalid", 6379)], ReplicaEndpoints = [new("unused.invalid", 6380)],
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Endpoints = [new("unused.invalid", 6379)],
+            ReplicaEndpoints = [new("unused.invalid", 6380)],
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
         var fair = new RespireCoordination(client.WithReadFrom(readFrom)).CreateFairLock("lease", "counter", "queue");
         await Assert.That(async () => await fair.AcquireAsync(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10)))

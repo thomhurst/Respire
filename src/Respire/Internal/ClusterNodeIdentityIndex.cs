@@ -6,7 +6,10 @@ namespace Respire.Internal;
 internal sealed record ClusterTopologyRange(
     int Start, int End, RespireEndpoint Preferred, string? NodeId, List<RespireEndpoint> Aliases)
 {
-    internal List<ClusterTopologyReplica> Replicas { get; init; } = [];
+    internal List<ClusterTopologyReplica> Replicas
+    {
+        get; init;
+    } = [];
 }
 
 internal sealed record ClusterTopologyReplica(
@@ -28,7 +31,11 @@ internal sealed class ClusterNodeIdentityIndex
     internal ClusterNodeIdentityIndex(RespireEndpoint endpoint, RespireConnectionMultiplexer primary,
         Func<RespireEndpoint, bool, RespireConnectionMultiplexer> create, Lock gate)
     {
-        if (gate is null) throw new ArgumentNullException(nameof(gate));
+        if (gate is null)
+        {
+            throw new ArgumentNullException(nameof(gate));
+        }
+
         _create = create;
         _gate = gate;
         _nodes.Add(endpoint, primary);
@@ -42,9 +49,13 @@ internal sealed class ClusterNodeIdentityIndex
     }
 
     internal IEnumerable<RespireConnectionMultiplexer> All => _allNodes;
+
     internal IEnumerable<RespireEndpoint> Endpoints => _nodes.Keys;
+
     internal int NodeIdCount => _nodesById.Count;
+
     internal int ReverseNodeIdCount => _nodeIds.Count;
+
     internal ClusterReplicaRegistry Replicas => _replicas;
 
     internal bool IsActive(RespireConnectionMultiplexer node)
@@ -63,18 +74,42 @@ internal sealed class ClusterNodeIdentityIndex
     {
         AssertAccess();
         var retained = new HashSet<RespireConnectionMultiplexer>(activeNodes);
+
         foreach (var seed in configuredSeeds)
-            if (_nodes.TryGetValue(seed, out var node)) retained.Add(node);
+        {
+            if (_nodes.TryGetValue(seed, out var node))
+            {
+                retained.Add(node);
+            }
+        }
 
         // These snapshots scale with discovered endpoints/identities, once per topology refresh;
         // they are not per-slot or per-command allocations.
         foreach (var (endpoint, node) in _nodes.ToArray())
-            if (!retained.Contains(node)) _nodes.Remove(endpoint);
+        {
+            if (!retained.Contains(node))
+            {
+                _nodes.Remove(endpoint);
+            }
+        }
+
         _replicas.Retain(retained, activeNodes);
+
         foreach (var (id, node) in _nodesById.ToArray())
-            if (!activeNodes.Contains(node)) _nodesById.Remove(id);
+        {
+            if (!activeNodes.Contains(node))
+            {
+                _nodesById.Remove(id);
+            }
+        }
+
         foreach (var (node, id) in _nodeIds.ToArray())
-            if (!_nodesById.TryGetValue(id, out var current) || !ReferenceEquals(current, node)) _nodeIds.Remove(node);
+        {
+            if (!_nodesById.TryGetValue(id, out var current) || !ReferenceEquals(current, node))
+            {
+                _nodeIds.Remove(node);
+            }
+        }
 
         ValidateInvariants();
         return _allNodes.Where(node => !retained.Contains(node)).ToArray();
@@ -84,8 +119,15 @@ internal sealed class ClusterNodeIdentityIndex
     {
         AssertAccess();
         Debug.Assert(!IsActive(node), "An active generation cannot be forgotten.");
+
         foreach (var (endpoint, current) in _nodes.ToArray())
-            if (ReferenceEquals(current, node)) _nodes.Remove(endpoint);
+        {
+            if (ReferenceEquals(current, node))
+            {
+                _nodes.Remove(endpoint);
+            }
+        }
+
         _replicas.Forget(node);
         _allNodes.Remove(node);
         ValidateInvariants();
@@ -100,10 +142,12 @@ internal sealed class ClusterNodeIdentityIndex
     internal RespireConnectionMultiplexer GetOrCreate(RespireEndpoint endpoint)
     {
         AssertAccess();
+
         if (_nodes.TryGetValue(endpoint, out var existing))
         {
             return existing;
         }
+
         var node = CreateNode(endpoint);
         _nodes.Add(endpoint, node);
         return node;
@@ -127,7 +171,11 @@ internal sealed class ClusterNodeIdentityIndex
     internal RespireConnectionMultiplexer GetCurrent(RespireConnectionMultiplexer node)
     {
         AssertAccess();
-        if (node.Options.ReadOnly) return _replicas.GetCurrent(node);
+
+        if (node.Options.ReadOnly)
+        {
+            return _replicas.GetCurrent(node);
+        }
 
         if (_nodeIds.TryGetValue(node, out var id)
             && _nodesById.TryGetValue(id, out var identified) && IsCurrentTransport(identified))
@@ -147,17 +195,21 @@ internal sealed class ClusterNodeIdentityIndex
         // Reserve preferred addresses across the entire snapshot before considering aliases.
         // A later range must not lose its transport to an earlier range's metadata.
         var preferredOwners = new Dictionary<RespireEndpoint, string?>(EndpointComparer.Instance);
+
         foreach (var range in ranges)
         {
             preferredOwners.TryAdd(range.Preferred, range.NodeId);
         }
+
         var selectedById = new Dictionary<string, RespireConnectionMultiplexer>(StringComparer.Ordinal);
         var selectedNodeIds = new Dictionary<RespireConnectionMultiplexer, string>();
         var selectedEndpoints = new Dictionary<RespireEndpoint, RespireConnectionMultiplexer>(EndpointComparer.Instance);
         var resolved = new List<(ClusterTopologyRange Range, RespireConnectionMultiplexer Node)>();
+
         foreach (var range in ranges)
         {
             RespireConnectionMultiplexer node;
+
             if (range.NodeId is { } id && selectedById.TryGetValue(id, out var selected))
             {
                 node = selected;
@@ -167,6 +219,7 @@ internal sealed class ClusterNodeIdentityIndex
                 var advertised = range.NodeId is { } knownId ? advertisedById[knownId]
                     : new HashSet<RespireEndpoint>(range.Aliases, EndpointComparer.Instance) { range.Preferred };
                 node = ResolveTopologyNode(range, advertised, preferredOwners, selectedEndpoints, selectedNodeIds, protectedNodes);
+
                 if (range.NodeId is { } nodeId)
                 {
                     selectedById.Add(nodeId, node);
@@ -176,6 +229,7 @@ internal sealed class ClusterNodeIdentityIndex
 
             resolved.Add((range, node));
             selectedEndpoints[range.Preferred] = node;
+
             foreach (var alias in range.Aliases)
             {
                 selectedEndpoints.TryAdd(alias, node);
@@ -190,6 +244,7 @@ internal sealed class ClusterNodeIdentityIndex
         List<ClusterTopologyRange> ranges)
     {
         var advertisedById = new Dictionary<string, HashSet<RespireEndpoint>>(StringComparer.Ordinal);
+
         foreach (var range in ranges)
         {
             if (range.NodeId is not { } id)
@@ -205,6 +260,7 @@ internal sealed class ClusterNodeIdentityIndex
             endpoints.Add(range.Preferred);
             endpoints.UnionWith(range.Aliases);
         }
+
         return advertisedById;
     }
 
@@ -215,6 +271,7 @@ internal sealed class ClusterNodeIdentityIndex
         // Publish all preferred endpoints before metadata. An alias reassigned in this
         // snapshot replaces its old owner, but cannot override another current preferred endpoint.
         HashSet<RespireEndpoint>? protectedEndpoints = null;
+
         if (protectedNodes is not null)
         {
             foreach (var (endpoint, node) in _nodes)
@@ -229,6 +286,7 @@ internal sealed class ClusterNodeIdentityIndex
         var published = protectedEndpoints is null
             ? new HashSet<RespireEndpoint>(EndpointComparer.Instance)
             : new HashSet<RespireEndpoint>(protectedEndpoints, EndpointComparer.Instance);
+
         foreach (var (range, node) in resolved)
         {
             if (protectedEndpoints?.Contains(range.Preferred) != true)
@@ -268,9 +326,11 @@ internal sealed class ClusterNodeIdentityIndex
             {
                 continue;
             }
+
             _nodesById[id] = node;
             _nodeIds[node] = id;
         }
+
         ValidateInvariants();
     }
 
@@ -278,11 +338,14 @@ internal sealed class ClusterNodeIdentityIndex
     private void ValidateInvariants()
     {
         AssertAccess();
+
         foreach (var node in _nodes.Values)
         {
             Debug.Assert(_allNodes.Contains(node), "Every endpoint transport must remain owned.");
         }
+
         _replicas.ValidateInvariants(_allNodes.Contains);
+
         foreach (var (id, node) in _nodesById)
         {
             Debug.Assert(_allNodes.Contains(node), "Every identity transport must remain owned.");
@@ -320,6 +383,7 @@ internal sealed class ClusterNodeIdentityIndex
         {
             return preferred;
         }
+
         foreach (var endpoint in advertised)
         {
             if (ResolveEndpoint(endpoint) is { } alias)
@@ -343,6 +407,7 @@ internal sealed class ClusterNodeIdentityIndex
             {
                 return existing;
             }
+
             return null;
         }
 
@@ -355,6 +420,7 @@ internal sealed class ClusterNodeIdentityIndex
             {
                 return false;
             }
+
             if (!EndpointComparer.Instance.Equals(endpoint, range.Preferred)
                 && preferredOwners.TryGetValue(endpoint, out var preferredId)
                 && (range.NodeId is null || preferredId != range.NodeId))

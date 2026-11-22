@@ -31,6 +31,7 @@ public partial class RespireHybridCacheCoherenceTests
             release.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
             throw new InvalidOperationException("invalidation memory cleanup failed");
         };
+
         try
         {
             await writeCache.SetAsync(key, "new", LongLived);
@@ -91,14 +92,21 @@ public partial class RespireHybridCacheCoherenceTests
         await coherent.GetOrCreateAsync(key, _ => ValueTask.FromResult("value"), options);
         await other.GetOrCreateAsync(otherKey, _ => ValueTask.FromResult("value"), options);
         Task? dispatchedDisposal = null;
+
         void DisposeFromCleanup()
         {
             if (threadHop)
             {
                 dispatchedDisposal = Task.Run(async () =>
                 {
-                    if (asynchronous) await coherent.DisposeAsync();
-                    else coherent.Dispose();
+                    if (asynchronous)
+                    {
+                        await coherent.DisposeAsync();
+                    }
+                    else
+                    {
+                        coherent.Dispose();
+                    }
                 });
                 // A bounded wait lets the original drain unwind in the negative control.
                 dispatchedDisposal.WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
@@ -108,17 +116,27 @@ public partial class RespireHybridCacheCoherenceTests
                 // Bound the failing-before-fix async join so its enclosing drain can unwind.
                 coherent.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
             }
-            else coherent.Dispose();
+            else
+            {
+                coherent.Dispose();
+            }
         }
+
         otherMemory.OnRemove = DisposeFromCleanup;
         memory.OnRemove = nested
             ? () => other.RemoveAsync(otherKey).AsTask().GetAwaiter().GetResult()
             : DisposeFromCleanup;
+
         try
         {
             Exception? failure = null;
-            try { await Task.Run(async () => await coherent.RemoveAsync(key)).WaitAsync(TimeSpan.FromSeconds(10)); }
+
+            try
+            {
+                await Task.Run(async () => await coherent.RemoveAsync(key)).WaitAsync(TimeSpan.FromSeconds(10));
+            }
             catch (Exception error) { failure = error; }
+
             await Assert.That(failure is InvalidOperationException).IsTrue();
             await Assert.That(failure!.Message).IsEqualTo("Cannot dispose the cache from its active retirement cleanup.");
             // Rejection occurs before closing admission or stopping the tracker.
@@ -134,9 +152,14 @@ public partial class RespireHybridCacheCoherenceTests
         {
             memory.OnRemove = null;
             otherMemory.OnRemove = null;
+
             if (dispatchedDisposal is not null)
             {
-                try { await dispatchedDisposal.WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
+                try
+                {
+                    await dispatchedDisposal.WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch { }
             }
         }
     }
@@ -157,9 +180,17 @@ public partial class RespireHybridCacheCoherenceTests
         memory.OnRemove = () => disposal = Task.Run(async () =>
         {
             await release.Task;
-            if (asynchronous) await coherent.DisposeAsync();
-            else coherent.Dispose();
+
+            if (asynchronous)
+            {
+                await coherent.DisposeAsync();
+            }
+            else
+            {
+                coherent.Dispose();
+            }
         });
+
         try
         {
             await coherent.RemoveAsync(key);
@@ -173,7 +204,15 @@ public partial class RespireHybridCacheCoherenceTests
         {
             memory.OnRemove = null;
             release.TrySetResult();
-            if (disposal is not null) { try { await disposal.WaitAsync(TimeSpan.FromSeconds(10)); } catch { } }
+
+            if (disposal is not null)
+            {
+                try
+                {
+                    await disposal.WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch { }
+            }
         }
     }
 
@@ -192,7 +231,9 @@ public partial class RespireHybridCacheCoherenceTests
             new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite });
         var coherent = Coherent(provider);
         using var subscription = coherent.TrackingClient.ClientSideCache!.SubscribeInvalidations(
-            InstanceName + key, _ => { });
+            InstanceName + key, _ =>
+            {
+            });
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var expected = new InvalidOperationException("concurrent retirement cleanup failed");
@@ -200,25 +241,40 @@ public partial class RespireHybridCacheCoherenceTests
         {
             entered.TrySetResult();
             release.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
-            if (cleanupFails) throw expected;
+
+            if (cleanupFails)
+            {
+                throw expected;
+            }
         };
         var retirement = Task.Run(async () => await cache.RemoveAsync(key));
         Task? disposal = null;
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(coherent.ObservationCount).IsEqualTo(0);
             disposal = Task.Run(async () =>
             {
-                if (asynchronous) await coherent.DisposeAsync();
-                else coherent.Dispose();
+                if (asynchronous)
+                {
+                    await coherent.DisposeAsync();
+                }
+                else
+                {
+                    coherent.Dispose();
+                }
             });
             // The public admission guard proves disposal has entered, rather than relying
             // on a delay after scheduling its task. This key has no observation to retire.
             var probeKey = NewKey();
             await UntilAsync(async () =>
             {
-                try { await coherent.RemoveAsync(probeKey); return false; }
+                try
+                {
+                    await coherent.RemoveAsync(probeKey);
+                    return false;
+                }
                 catch (ObjectDisposedException) { return true; }
             });
             await Assert.That(disposal.IsCompleted).IsFalse();
@@ -226,10 +282,19 @@ public partial class RespireHybridCacheCoherenceTests
             release.TrySetResult();
             Exception? retirementFailure = null;
             Exception? disposalFailure = null;
-            try { await retirement.WaitAsync(TimeSpan.FromSeconds(10)); }
+
+            try
+            {
+                await retirement.WaitAsync(TimeSpan.FromSeconds(10));
+            }
             catch (Exception error) { retirementFailure = error; }
-            try { await disposal.WaitAsync(TimeSpan.FromSeconds(10)); }
+
+            try
+            {
+                await disposal.WaitAsync(TimeSpan.FromSeconds(10));
+            }
             catch (Exception error) { disposalFailure = error; }
+
             await Assert.That(ReferenceEquals(retirementFailure, cleanupFails ? expected : null)).IsTrue();
             await Assert.That(ReferenceEquals(disposalFailure, cleanupFails ? expected : null)).IsTrue();
             await Assert.That(subscription.Stopped.IsCancellationRequested).IsTrue();
@@ -239,8 +304,22 @@ public partial class RespireHybridCacheCoherenceTests
         {
             release.TrySetResult();
             memory.OnRemove = null;
-            try { await retirement.WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
-            if (disposal is not null) { try { await disposal.WaitAsync(TimeSpan.FromSeconds(10)); } catch { } }
+
+            try
+            {
+                await retirement.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            catch { }
+
+            if (disposal is not null)
+            {
+                try
+                {
+                    await disposal.WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch { }
+            }
+
             await coherent.TrackingClient.DisposeAsync();
         }
     }
@@ -256,13 +335,19 @@ public partial class RespireHybridCacheCoherenceTests
         await using var provider = BuildProvider(true, memory: memory);
         var cache = provider.GetRequiredService<HybridCache>();
         var keys = Enumerable.Range(0, keyCount).Select(_ => NewKey()).ToArray();
+
         foreach (var key in keys)
+        {
             await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("value"),
                 new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite });
+        }
+
         var coherent = Coherent(provider);
         await Assert.That(coherent.ObservationCount).IsEqualTo(keyCount);
         using var subscription = coherent.TrackingClient.ClientSideCache!.SubscribeInvalidations(
-            InstanceName + keys[0], _ => { });
+            InstanceName + keys[0], _ =>
+            {
+            });
         var expected = new InvalidOperationException("disposal memory cleanup failed");
         var removals = 0;
         memory.OnRemove = () =>
@@ -270,21 +355,34 @@ public partial class RespireHybridCacheCoherenceTests
             Interlocked.Increment(ref removals);
             throw expected;
         };
+
         try
         {
             Exception? failure = null;
+
             try
             {
-                if (asynchronous) await coherent.DisposeAsync();
-                else coherent.Dispose();
+                if (asynchronous)
+                {
+                    await coherent.DisposeAsync();
+                }
+                else
+                {
+                    coherent.Dispose();
+                }
             }
             catch (Exception error) { failure = error; }
+
             await Assert.That(subscription.Stopped.IsCancellationRequested).IsTrue();
             await Assert.That(coherent.TrackingClient.IsConnected).IsFalse();
             await Assert.That(async () => await coherent.TrackingClient.PingAsync()).Throws<ObjectDisposedException>();
             await Assert.That(coherent.ObservationCount).IsEqualTo(0);
             await Assert.That(removals).IsEqualTo(keyCount);
-            if (keyCount == 1) await Assert.That(ReferenceEquals(failure, expected)).IsTrue();
+
+            if (keyCount == 1)
+            {
+                await Assert.That(ReferenceEquals(failure, expected)).IsTrue();
+            }
             else
             {
                 await Assert.That(failure is AggregateException).IsTrue();
@@ -322,7 +420,11 @@ public partial class RespireHybridCacheCoherenceTests
         {
             // The new context is created under the observation gate. Retire another
             // generation reentrantly so its cleanup is deferred to Acquire's final drain.
-            if (++contexts == 3) coherent!.RemoveAsync(firstKey).GetAwaiter().GetResult();
+            if (++contexts == 3)
+            {
+                coherent!.RemoveAsync(firstKey).GetAwaiter().GetResult();
+            }
+
             return new ControlledTagCache(() => ValueTask.CompletedTask);
         }, new());
         await using var owned = coherent;
@@ -332,16 +434,21 @@ public partial class RespireHybridCacheCoherenceTests
             await fillRelease.Task;
             return "value";
         }).AsTask();
+
         try
         {
             await fillEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             var removals = 0;
             memory.OnRemove = () =>
             {
-                if (++removals == 1 || repeatedFailure) throw cleanupFailure;
+                if (++removals == 1 || repeatedFailure)
+                {
+                    throw cleanupFailure;
+                }
             };
             Exception? failure = null;
             var callbackRan = false;
+
             try
             {
                 await coherent.GetOrCreateAsync(NewKey(), _ =>
@@ -351,17 +458,22 @@ public partial class RespireHybridCacheCoherenceTests
                 });
             }
             catch (Exception caught) { failure = caught; }
+
             await Assert.That(coherent.ObservationCount).IsEqualTo(0);
             coherent.SweepObservations();
             await Assert.That(coherent.ObservationCount).IsEqualTo(0);
             await Assert.That(callbackRan).IsFalse();
+
             if (repeatedFailure)
             {
                 await Assert.That(failure is AggregateException).IsTrue();
                 await Assert.That(((AggregateException)failure!).InnerExceptions.Count).IsEqualTo(2);
                 await Assert.That(((AggregateException)failure!).InnerExceptions.All(error => ReferenceEquals(error, cleanupFailure))).IsTrue();
             }
-            else await Assert.That(ReferenceEquals(failure, cleanupFailure)).IsTrue();
+            else
+            {
+                await Assert.That(ReferenceEquals(failure, cleanupFailure)).IsTrue();
+            }
         }
         finally
         {
@@ -394,17 +506,27 @@ public partial class RespireHybridCacheCoherenceTests
             return "value";
         }).AsTask();
         Task? removal = null;
+
         try
         {
             await fillEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
             removal = coherent.RemoveByTagAsync("tag").AsTask();
             await remoteEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
             if (!synchronousRemoteFailure)
+            {
                 await Assert.That(removal.IsCompleted).IsFalse();
+            }
+
             remoteRelease.TrySetResult();
             Exception? failure = null;
-            try { await removal.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            try
+            {
+                await removal.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch (Exception caught) { failure = caught; }
+
             if (remoteFails)
             {
                 await Assert.That(failure is AggregateException).IsTrue();
@@ -413,26 +535,48 @@ public partial class RespireHybridCacheCoherenceTests
                 await Assert.That(failures.Contains(remoteFailure)).IsTrue();
                 await Assert.That(failures.Count).IsEqualTo(2);
             }
-            else await Assert.That(ReferenceEquals(failure, localFailure)).IsTrue();
+            else
+            {
+                await Assert.That(ReferenceEquals(failure, localFailure)).IsTrue();
+            }
         }
         finally
         {
             remoteRelease.TrySetResult();
             fillRelease.TrySetResult();
-            if (removal is not null) { try { await removal; } catch { } }
+
+            if (removal is not null)
+            {
+                try
+                {
+                    await removal;
+                }
+                catch { }
+            }
+
             await fill.WaitAsync(TimeSpan.FromSeconds(10));
         }
 
         ValueTask RemoteUpdate()
         {
             remoteEntered.TrySetResult();
-            if (synchronousRemoteFailure) throw remoteFailure;
+
+            if (synchronousRemoteFailure)
+            {
+                throw remoteFailure;
+            }
+
             return new(CompleteRemoteAsync());
         }
+
         async Task CompleteRemoteAsync()
         {
             await remoteRelease.Task;
-            if (remoteFails) throw remoteFailure;
+
+            if (remoteFails)
+            {
+                throw remoteFailure;
+            }
         }
     }
 
@@ -462,6 +606,7 @@ public partial class RespireHybridCacheCoherenceTests
             return "value";
         }).AsTask();
         Task? removal = null;
+
         try
         {
             await fillEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -471,8 +616,13 @@ public partial class RespireHybridCacheCoherenceTests
             await Assert.That(removal.IsCompleted).IsFalse();
             remoteRelease.TrySetResult();
             Exception? failure = null;
-            try { await removal.WaitAsync(TimeSpan.FromSeconds(5)); }
+
+            try
+            {
+                await removal.WaitAsync(TimeSpan.FromSeconds(5));
+            }
             catch (Exception caught) { failure = caught; }
+
             if (remoteFails)
             {
                 await Assert.That(failure is AggregateException).IsTrue();
@@ -481,23 +631,40 @@ public partial class RespireHybridCacheCoherenceTests
                 await Assert.That(failures.Contains(remoteFailure)).IsTrue();
                 await Assert.That(failures.Count).IsEqualTo(2);
             }
-            else await Assert.That(ReferenceEquals(failure, cleanupFailure)).IsTrue();
+            else
+            {
+                await Assert.That(ReferenceEquals(failure, cleanupFailure)).IsTrue();
+            }
         }
         finally
         {
             memory.OnRemove = null;
             remoteRelease.TrySetResult();
             fillRelease.TrySetResult();
-            if (removal is not null) { try { await removal; } catch { } }
+
+            if (removal is not null)
+            {
+                try
+                {
+                    await removal;
+                }
+                catch { }
+            }
+
             await fill.WaitAsync(TimeSpan.FromSeconds(10));
         }
 
         ValueTask RemoteUpdate() => ++remoteCalls == 1 ? ValueTask.CompletedTask : new(CompleteRemoteAsync());
+
         async Task CompleteRemoteAsync()
         {
             remoteEntered.TrySetResult();
             await remoteRelease.Task;
-            if (remoteFails) throw remoteFailure;
+
+            if (remoteFails)
+            {
+                throw remoteFailure;
+            }
         }
     }
 
@@ -517,7 +684,12 @@ public partial class RespireHybridCacheCoherenceTests
             // A separate thread must acquire the bridge gate while Remove is still active.
             var count = Task.Run(() => Coherent(provider).ObservationCount)
                 .WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
-            if (count != 0) throw new InvalidOperationException("Retirement was not published before cleanup.");
+
+            if (count != 0)
+            {
+                throw new InvalidOperationException("Retirement was not published before cleanup.");
+            }
+
             Interlocked.Increment(ref probes);
         };
         await cache.RemoveAsync(key);
@@ -535,6 +707,7 @@ public partial class RespireHybridCacheCoherenceTests
         await Task.Run(() =>
         {
             var previous = SynchronizationContext.Current;
+
             try
             {
                 SynchronizationContext.SetSynchronizationContext(context);
@@ -566,7 +739,9 @@ public partial class RespireHybridCacheCoherenceTests
     private sealed class RecordingSynchronizationContext : SynchronizationContext
     {
         private int _posts;
+
         internal int Posts => Volatile.Read(ref _posts);
+
         public override void Post(SendOrPostCallback callback, object? state)
         {
             Interlocked.Increment(ref _posts);
@@ -578,9 +753,17 @@ public partial class RespireHybridCacheCoherenceTests
     {
         private readonly MemoryCache _inner = new(Options.Create(new MemoryCacheOptions()));
         internal Action? OnRemove;
+
         public bool TryGetValue(object key, out object? value) => _inner.TryGetValue(key, out value);
+
         public ICacheEntry CreateEntry(object key) => _inner.CreateEntry(key);
-        public void Remove(object key) { OnRemove?.Invoke(); _inner.Remove(key); }
+
+        public void Remove(object key)
+        {
+            OnRemove?.Invoke();
+            _inner.Remove(key);
+        }
+
         public void Dispose() => _inner.Dispose();
     }
 
@@ -590,9 +773,12 @@ public partial class RespireHybridCacheCoherenceTests
             Func<TState, CancellationToken, ValueTask<T>> underlyingDataCallback,
             HybridCacheEntryOptions? options = null, IEnumerable<string>? tags = null,
             CancellationToken cancellationToken = default) => underlyingDataCallback(state, cancellationToken);
+
         public override ValueTask SetAsync<T>(string key, T value, HybridCacheEntryOptions? options = null,
             IEnumerable<string>? tags = null, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
         public override ValueTask RemoveAsync(string key, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
         public override ValueTask RemoveByTagAsync(string tag, CancellationToken cancellationToken = default) => removeTag();
     }
 }

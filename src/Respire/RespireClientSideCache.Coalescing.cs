@@ -11,6 +11,7 @@ internal sealed partial class ClientSideCacheCoordinator
     internal bool CoalesceConcurrentMisses => _options.CoalesceConcurrentMisses;
 
     private static long _sharedReadRetirements;
+
     internal static long SharedReadRetirements => Interlocked.Read(ref _sharedReadRetirements);
 
     private readonly Lock _sharedReadLock = new();
@@ -27,7 +28,13 @@ internal sealed partial class ClientSideCacheCoordinator
 
     internal int ActiveSharedReadCount
     {
-        get { lock (_sharedReadLock) return _activeSharedReads.Count; }
+        get
+        {
+            lock (_sharedReadLock)
+            {
+                return _activeSharedReads.Count;
+            }
+        }
     }
 
     internal ValueTask<RespValue> CoalesceReadAsync<TState>(
@@ -43,14 +50,22 @@ internal sealed partial class ClientSideCacheCoordinator
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation callerObservation = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!_options.CoalesceConcurrentMisses) return read(state, cancellationToken, callerObservation);
+
+        if (!_options.CoalesceConcurrentMisses)
+        {
+            return read(state, cancellationToken, callerObservation);
+        }
 
         var shared = JoinSharedRead<RespValue>(identity, out var owner);
 
         // Start outside the gate: transport callbacks and metrics may reenter the cache.
         // Every producer snapshots its inputs before its first asynchronous suspension.
         // ProduceSharedReadAsync must capture every failure in Completion; it is not awaited here.
-        if (owner) _ = ProduceSharedReadAsync(shared, state, read);
+        if (owner)
+        {
+            _ = ProduceSharedReadAsync(shared, state, read);
+        }
+
         return WaitForSharedReadAsync(shared, cancellationToken, callerObservation);
     }
 
@@ -61,10 +76,19 @@ internal sealed partial class ClientSideCacheCoordinator
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation callerObservation = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
         if (!_options.CoalesceConcurrentMisses)
+        {
             return ConvertGetReadAsync(read(readState, cancellationToken, callerObservation), state, converter);
+        }
+
         var shared = JoinSharedRead<GetReadResult>(identity, out var owner);
-        if (owner) _ = ProduceSharedGetReadAsync(shared, readState, read);
+
+        if (owner)
+        {
+            _ = ProduceSharedGetReadAsync(shared, readState, read);
+        }
+
         return WaitForSharedGetReadAsync(shared, cancellationToken, state, converter, callerObservation);
     }
 
@@ -85,12 +109,14 @@ internal sealed partial class ClientSideCacheCoordinator
         // Reserve admission before taking the gate. An invalidation that sees no joinable
         // reads must still wait for a publisher already inside or approaching this gate.
         Interlocked.Increment(ref _sharedReadAdmissions);
+
         try
         {
             lock (_sharedReadLock)
             {
                 ObjectDisposedException.ThrowIf(_sharedReadsStopped, this);
                 var mutationActive = HasActiveMutation(in identity);
+
                 if (mutationActive || Volatile.Read(ref _sharedReadInvalidations) != 0 || !_sharedReads.TryGetValue(identity, out shared!))
                 {
                     // Borrowed binary arguments must not outlive the caller that supplied them.
@@ -98,10 +124,14 @@ internal sealed partial class ClientSideCacheCoordinator
                     // Reads starting during invalidation cannot become joinable: their producer
                     // may still observe the store before its entries have been removed.
                     if (!mutationActive && Volatile.Read(ref _sharedReadInvalidations) == 0)
+                    {
                         AddSharedRead(shared);
+                    }
+
                     _activeSharedReads.Add(shared);
                     owner = true;
                 }
+
                 shared.Waiters++;
             }
         }
@@ -117,6 +147,7 @@ internal sealed partial class ClientSideCacheCoordinator
         Func<TState, CancellationToken, RespireTelemetry.ErrorObservation, ValueTask<RespValue>> read)
     {
         RespValue owned = default;
+
         try
         {
             try
@@ -127,6 +158,7 @@ internal sealed partial class ClientSideCacheCoordinator
                 owned = response.ToOwned();
             }
             finally { FinishSharedRead(shared); }
+
             shared.Completion.TrySetResult(owned);
         }
         catch (Exception error)
@@ -152,8 +184,12 @@ internal sealed partial class ClientSideCacheCoordinator
             // decrementing before copying would let another caller mutate its source bytes.
             lock (_sharedReadLock)
             {
-                if (shared.Waiters == 1) return response;
+                if (shared.Waiters == 1)
+                {
+                    return response;
+                }
             }
+
             return response.ToOwned();
         }
         finally { ReleaseSharedRead(shared, callerObservation); }
@@ -164,6 +200,7 @@ internal sealed partial class ClientSideCacheCoordinator
         Func<TState, CancellationToken, RespireTelemetry.ErrorObservation, ValueTask<GetReadResult>> read)
     {
         GetReadResult owned = default;
+
         try
         {
             try
@@ -173,6 +210,7 @@ internal sealed partial class ClientSideCacheCoordinator
                 owned = result.ToOwned(shareText: true);
             }
             finally { FinishSharedRead(shared); }
+
             shared.Completion.TrySetResult(owned);
         }
         catch (Exception error)
@@ -197,8 +235,17 @@ internal sealed partial class ClientSideCacheCoordinator
             // As with ordinary replies, copy mutable response storage before releasing
             // the waiter. Only canonical immutable text and the publication handle are shared.
             bool soleWaiter;
-            lock (_sharedReadLock) soleWaiter = shared.Waiters == 1;
-            if (!soleWaiter) result = result.ToOwned();
+
+            lock (_sharedReadLock)
+            {
+                soleWaiter = shared.Waiters == 1;
+            }
+
+            if (!soleWaiter)
+            {
+                result = result.ToOwned();
+            }
+
             using var response = result.Response;
             return converter(state, in result);
         }
@@ -209,6 +256,7 @@ internal sealed partial class ClientSideCacheCoordinator
     {
         var cancel = false;
         var dispose = false;
+
         lock (_sharedReadLock)
         {
             // Copy a scalar while the gate still protects the producer's active lease.
@@ -220,6 +268,7 @@ internal sealed partial class ClientSideCacheCoordinator
                 // overflow cannot erase either owner's completed retry history.
                 callerObservation.SetAttempts((int)Math.Min(int.MaxValue, (long)callerObservation.Attempts + producerAttempts));
             }
+
             if (--shared.Waiters == 0)
             {
                 RemoveSharedRead(shared);
@@ -227,13 +276,21 @@ internal sealed partial class ClientSideCacheCoordinator
                 dispose = shared.Finished && !shared.Canceling;
             }
         }
-        if (cancel) CancelSharedRead(shared);
-        else if (dispose) shared.Cancellation.Dispose();
+
+        if (cancel)
+        {
+            CancelSharedRead(shared);
+        }
+        else if (dispose)
+        {
+            shared.Cancellation.Dispose();
+        }
     }
 
     private void FinishSharedRead(SharedRead shared)
     {
         bool dispose;
+
         lock (_sharedReadLock)
         {
             shared.CompletedAttempts = shared.Observation.Attempts;
@@ -243,7 +300,11 @@ internal sealed partial class ClientSideCacheCoordinator
             _activeSharedReads.Remove(shared);
             dispose = shared.Waiters == 0 && !shared.Canceling;
         }
-        if (dispose) shared.Cancellation.Dispose();
+
+        if (dispose)
+        {
+            shared.Cancellation.Dispose();
+        }
     }
 
     // Call only under _sharedReadLock: the dictionary and its published count move together.
@@ -270,7 +331,11 @@ internal sealed partial class ClientSideCacheCoordinator
 
     private static bool BeginCancellation(SharedRead shared)
     {
-        if (shared.Finished || shared.CancellationStarted) return false;
+        if (shared.Finished || shared.CancellationStarted)
+        {
+            return false;
+        }
+
         shared.CancellationStarted = shared.Canceling = true;
         return true;
     }
@@ -290,12 +355,17 @@ internal sealed partial class ClientSideCacheCoordinator
         finally
         {
             bool dispose;
+
             lock (_sharedReadLock)
             {
                 shared.Canceling = false;
                 dispose = shared.Finished && shared.Waiters == 0;
             }
-            if (dispose) shared.Cancellation.Dispose();
+
+            if (dispose)
+            {
+                shared.Cancellation.Dispose();
+            }
         }
     }
 
@@ -304,37 +374,61 @@ internal sealed partial class ClientSideCacheCoordinator
     // disabled until all changes finish; no shared gate is held while touching cache stores.
     private void BeginSharedReadInvalidation()
     {
-        if (!_options.CoalesceConcurrentMisses) return;
+        if (!_options.CoalesceConcurrentMisses)
+        {
+            return;
+        }
+
         Interlocked.Increment(ref _sharedReadInvalidations);
         // Read admissions first: a completed publisher releases its reservation only after
         // publishing the joinable count. Later admissions observe the invalidation barrier.
         if (Volatile.Read(ref _sharedReadAdmissions) == 0 && Volatile.Read(ref _joinableSharedReadCount) == 0)
+        {
             return;
+        }
+
         lock (_sharedReadLock)
         {
             // Observable measurement keeps user meter callbacks outside cache gates.
-            if (_sharedReads.Count != 0) Interlocked.Add(ref _sharedReadRetirements, _sharedReads.Count);
+            if (_sharedReads.Count != 0)
+            {
+                Interlocked.Add(ref _sharedReadRetirements, _sharedReads.Count);
+            }
+
             ClearSharedReads();
         }
     }
 
     private void EndSharedReadInvalidation()
     {
-        if (!_options.CoalesceConcurrentMisses) return;
+        if (!_options.CoalesceConcurrentMisses)
+        {
+            return;
+        }
+
         Interlocked.Decrement(ref _sharedReadInvalidations);
     }
 
     internal void StopSharedReads()
     {
-        if (!_options.CoalesceConcurrentMisses) return;
+        if (!_options.CoalesceConcurrentMisses)
+        {
+            return;
+        }
+
         SharedRead[] cancel;
+
         lock (_sharedReadLock)
         {
             _sharedReadsStopped = true;
             ClearSharedReads();
             cancel = _activeSharedReads.Where(BeginCancellation).ToArray();
         }
-        foreach (var shared in cancel) CancelSharedRead(shared);
+
+        foreach (var shared in cancel)
+        {
+            CancelSharedRead(shared);
+        }
     }
 
     private abstract class SharedRead(ClientCacheCommandKey identity)
@@ -342,18 +436,21 @@ internal sealed partial class ClientSideCacheCoordinator
         internal readonly ClientCacheCommandKey Identity = identity;
         internal readonly CancellationTokenSource Cancellation = new();
         internal readonly DispatchResponseSource<bool> ErrorOwner = DispatchResponseSource<bool>.Start();
+
         internal RespireTelemetry.ErrorObservation Observation => ErrorOwner.Observation;
         internal int CompletedAttempts;
         internal int Waiters;
         internal bool Finished;
         internal bool CancellationStarted;
         internal bool Canceling;
+
         internal abstract void Fail(Exception error);
     }
 
     private sealed class SharedRead<T>(ClientCacheCommandKey identity) : SharedRead(identity)
     {
         internal readonly TaskCompletionSource<T> Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         internal override void Fail(Exception error)
         {
             Completion.TrySetException(error);

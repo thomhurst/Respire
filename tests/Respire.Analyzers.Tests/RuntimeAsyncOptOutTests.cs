@@ -33,7 +33,10 @@ public class RuntimeAsyncOptOutTests
                     && attribute.ArgumentList?.Arguments.Single().ToString() == "false"))
             .Select(site => $"{site.Path}:{site.Declaration.GetLocation().GetLineSpan().StartLinePosition.Line + 1}")
             .ToArray();
+
         if (missing.Length != 0)
+        {
             throw new InvalidOperationException("Pooling builder without [RuntimeAsyncMethodGeneration(false)]:\n" + string.Join('\n', missing));
+        }
     }
 }

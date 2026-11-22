@@ -41,8 +41,17 @@ public class JsonFilterValidationTests
     public void ConvertedFilterMappingsAreRejectedBeforeIo(int variant)
     {
         var options = new JsonSerializerOptions();
-        if (variant == 1) options.Converters.Add(new UppercaseFilterConverter());
-        if (variant == 3) options.NumberHandling = JsonNumberHandling.WriteAsString;
+
+        if (variant == 1)
+        {
+            options.Converters.Add(new UppercaseFilterConverter());
+        }
+
+        if (variant == 3)
+        {
+            options.NumberHandling = JsonNumberHandling.WriteAsString;
+        }
+
         System.Text.Json.Serialization.Metadata.JsonTypeInfo metadata = variant is 1 or 3
             ? new JsonFilterContext(options).JsonTypedFilterRecord
             : JsonFilterValidationContext.Default.ConvertedJsonFilterRecord;
@@ -139,31 +148,37 @@ public class JsonFilterValidationTests
         : RespireVectorDataJsonMapper<JsonMovie>(metadata)
     {
         public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => new JsonMovieMapper().VectorFields;
+
         public override IReadOnlyList<RespireVectorDataFilterField> FilterFields => new JsonMovieMapper().FilterFields;
+
         public override string GetKey(JsonMovie record) => record.Id;
     }
 
     public sealed class UppercaseFilterConverter : JsonConverter<string>
     {
         public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => reader.GetString()!;
+
         public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) => writer.WriteStringValue(value.ToUpperInvariant());
     }
 
     public sealed class FilterCollectionConverter : JsonConverter<string[]>
     {
         public override string[] Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => throw new NotSupportedException();
+
         public override void Write(Utf8JsonWriter writer, string[] value, JsonSerializerOptions options) => throw new NotSupportedException();
     }
 
     public sealed class FilterDetailsConverter : JsonConverter<MovieDetails>
     {
         public override MovieDetails Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => throw new NotSupportedException();
+
         public override void Write(Utf8JsonWriter writer, MovieDetails value, JsonSerializerOptions options) => throw new NotSupportedException();
     }
 
     private sealed class InvalidFilterMapper(int variant) : RespireVectorDataJsonMapper<JsonMovie>(MovieJsonContext.Default.JsonMovie)
     {
         public override IReadOnlyList<RespireVectorDataVectorField> VectorFields => new JsonMovieMapper().VectorFields;
+
         public override IReadOnlyList<RespireVectorDataFilterField> FilterFields => variant switch
         {
             0 => [new("Details.Title", "title", RespireVectorDataFilterKind.String) { JsonPath = "$.details.missing" }],
@@ -172,12 +187,15 @@ public class JsonFilterValidationTests
             3 => [new("Details.Title", "bad alias", RespireVectorDataFilterKind.String) { JsonPath = "$.details.movie_title" }],
             _ => [new("Details.Title", "title", RespireVectorDataFilterKind.String) { JsonPath = "$.details[*]" }],
         };
+
         public override string GetKey(JsonMovie record) => record.Id;
     }
 
     private static async Task Collect<T>(IAsyncEnumerable<T> source)
     {
-        await foreach (var item in source) { }
+        await foreach (var item in source)
+        {
+        }
     }
 }
 

@@ -15,7 +15,10 @@ public class ConnectionSelectionBenchmarks
     private RespireConnectionMultiplexer _multiplexer = null!;
 
     [Params(1, 2)]
-    public int Connections { get; set; }
+    public int Connections
+    {
+        get; set;
+    }
 
     [GlobalSetup]
     public async Task Setup()
@@ -45,6 +48,7 @@ public class ConnectionSelectionBenchmarks
     public async Task Cleanup()
     {
         await _multiplexer.DisposeAsync();
+
         if (_redisContainer is not null)
         {
             await _redisContainer.DisposeAsync();

@@ -22,6 +22,7 @@ public class LockFreeStackTests
         await Assert.That(stack.TryPush(new object())).IsFalse();
 
         var popped = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
         while (stack.TryPop(out var item))
         {
             popped.Add(item);

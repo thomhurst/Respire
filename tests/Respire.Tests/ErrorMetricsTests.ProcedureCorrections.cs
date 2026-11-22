@@ -26,7 +26,12 @@ public partial class ErrorMetricsTests
         var record = type.GetMethod("RecordRetry", BindingFlags.Instance | BindingFlags.NonPublic)!;
         attempts.SetValue(telemetry, int.MaxValue - 1);
         var error = new RespireServerException("NOSCRIPT missing");
-        for (var index = 0; index < 3; index++) record.Invoke(telemetry, [error]);
+
+        for (var index = 0; index < 3; index++)
+        {
+            record.Invoke(telemetry, [error]);
+        }
+
         await Assert.That((int)attempts.GetValue(telemetry)!).IsEqualTo(int.MaxValue);
         await Assert.That(capture.Items.Select(item => (int)item.Tags["redis.client.operation.retry_attempts"]!).ToArray())
             .IsEquivalentTo(new[] { int.MaxValue - 1, int.MaxValue, int.MaxValue });
@@ -47,22 +52,42 @@ public partial class ErrorMetricsTests
         {
             ReplyOverride = (_, command) =>
             {
-                if (command.StartsWith("HELLO ", StringComparison.Ordinal)) return "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
-                if (command.StartsWith("EVALSHA ", StringComparison.Ordinal)) return "-NOSCRIPT missing\r\n"u8.ToArray();
-                if (command.StartsWith("FCALL ", StringComparison.Ordinal)) return "-ERR Function not found\r\n"u8.ToArray();
+                if (command.StartsWith("HELLO ", StringComparison.Ordinal))
+                {
+                    return "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
+                }
+
+                if (command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return "-NOSCRIPT missing\r\n"u8.ToArray();
+                }
+
+                if (command.StartsWith("FCALL ", StringComparison.Ordinal))
+                {
+                    return "-ERR Function not found\r\n"u8.ToArray();
+                }
+
                 if (command.StartsWith("FUNCTION LIST ", StringComparison.Ordinal))
+                {
                     return loaded ? FunctionLibraryMetadata(source) : "*0\r\n"u8.ToArray();
+                }
+
                 if (command.StartsWith("FUNCTION LOAD ", StringComparison.Ordinal))
                 {
                     loaded = true;
                     return "$6\r\nsample\r\n"u8.ToArray();
                 }
+
                 return null;
             },
             SuppressReply = command =>
             {
                 if (!command.StartsWith("EVAL ", StringComparison.Ordinal)
-                    && !(command.StartsWith("FCALL ", StringComparison.Ordinal) && ++calls == 2)) return false;
+                    && !(command.StartsWith("FCALL ", StringComparison.Ordinal) && ++calls == 2))
+                {
+                    return false;
+                }
+
                 replyPending.TrySetResult();
                 return true;
             },
@@ -70,7 +95,8 @@ public partial class ErrorMetricsTests
 #pragma warning disable RESP010 // Each telemetry scenario owns and disposes its client so connection and observation state cannot leak between tests.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -79,7 +105,9 @@ public partial class ErrorMetricsTests
         using var capture = new Capture(throwOnMeasurement: true, onMeasurement: item =>
         {
             if (!(bool)item.Tags["redis.client.errors.internal"]!)
+            {
                 mutationsAtFinal = cache.InspectForTests().ActiveMutationCount;
+            }
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = function
@@ -114,17 +142,26 @@ public partial class ErrorMetricsTests
             {
                 if (command.StartsWith("FCALL ", StringComparison.Ordinal))
                 {
-                    if (Interlocked.Increment(ref calls) <= 2) return "-ERR Function not found\r\n"u8.ToArray();
+                    if (Interlocked.Increment(ref calls) <= 2)
+                    {
+                        return "-ERR Function not found\r\n"u8.ToArray();
+                    }
+
                     return bothFail || command.EndsWith(" first", StringComparison.Ordinal)
                         ? "$3\r\nbad\r\n"u8.ToArray() : ":42\r\n"u8.ToArray();
                 }
+
                 if (command.StartsWith("FUNCTION LIST ", StringComparison.Ordinal))
+                {
                     return loaded ? FunctionLibraryMetadata(source) : "*0\r\n"u8.ToArray();
+                }
+
                 if (command.StartsWith("FUNCTION LOAD ", StringComparison.Ordinal))
                 {
                     loaded = true;
                     return "-ERR Library 'sample' already exists\r\n"u8.ToArray();
                 }
+
                 return null;
             },
         };
@@ -136,6 +173,7 @@ public partial class ErrorMetricsTests
         await gate.WaitAsync(deadline.Token);
         Task<int> first;
         Task<int> second;
+
         try
         {
             first = client.Functions.ExecuteAsync<int>(library.Function("function"), args: ["first"],
@@ -143,21 +181,40 @@ public partial class ErrorMetricsTests
             second = client.Functions.ExecuteAsync<int>(library.Function("function"), args: ["second"],
                 cancellationToken: deadline.Token).AsTask();
             // Both calls must capture the old generation before either reload enters the gate.
-            while (capture.Items.Count < 2) await Task.Delay(1, deadline.Token);
+            while (capture.Items.Count < 2)
+            {
+                await Task.Delay(1, deadline.Token);
+            }
+
             await Assert.That(capture.Items.All(item => (bool)item.Tags["redis.client.errors.internal"]!)).IsTrue();
             await Assert.That(first.IsCompleted || second.IsCompleted).IsFalse();
         }
         finally { gate.Release(); }
 
         await Assert.That(async () => await first.WaitAsync(deadline.Token)).Throws<Exception>();
-        if (bothFail) await Assert.That(async () => await second.WaitAsync(deadline.Token)).Throws<Exception>();
-        else await Assert.That(await second.WaitAsync(deadline.Token)).IsEqualTo(42);
+
+        if (bothFail)
+        {
+            await Assert.That(async () => await second.WaitAsync(deadline.Token)).Throws<Exception>();
+        }
+        else
+        {
+            await Assert.That(await second.WaitAsync(deadline.Token)).IsEqualTo(42);
+        }
+
         var finals = capture.Items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
         await Assert.That(finals.Length).IsEqualTo(bothFail ? 2 : 1);
         var counts = finals.Select(item => (int)item.Tags["redis.client.operation.retry_attempts"]!).Order().ToArray();
         // Exactly one caller observes the LOAD collision; the other only observes its own FCALL miss.
-        if (bothFail) await Assert.That(counts).IsEquivalentTo(new[] { 1, 2 });
-        else await Assert.That(counts.Single() is 1 or 2).IsTrue();
+        if (bothFail)
+        {
+            await Assert.That(counts).IsEquivalentTo(new[] { 1, 2 });
+        }
+        else
+        {
+            await Assert.That(counts.Single() is 1 or 2).IsTrue();
+        }
+
         await Assert.That(capture.Items.Count(item => (bool)item.Tags["redis.client.errors.internal"]!)).IsEqualTo(3);
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("FUNCTION LOAD ", StringComparison.Ordinal)))
             .IsEqualTo(1);
@@ -175,7 +232,11 @@ public partial class ErrorMetricsTests
         {
             SuppressReply = command =>
             {
-                if (command != "SCRIPT FLUSH") return false;
+                if (command != "SCRIPT FLUSH")
+                {
+                    return false;
+                }
+
                 correctionWritten.TrySetResult();
                 return true;
             },
@@ -191,10 +252,12 @@ public partial class ErrorMetricsTests
         using var secondObservation = RespireTelemetry.ErrorObservation.Rent(force: true);
         firstObservation.SetAttempts(2);
         secondObservation.SetAttempts(3);
+
         Task<bool> Join(RespireTelemetry.ErrorObservation observation)
             => client.ExecuteWithCorrectionAsync(new ProcedureCorrectionExecution(original, observation),
                 RespireClient.CorrectionOrdering.OrderedCorrection, producer,
                 static async (correction, _) => await correction.ConfigureAwait(false)).AsTask();
+
         var first = Join(firstObservation);
         var second = Join(secondObservation);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -203,14 +266,25 @@ public partial class ErrorMetricsTests
         await Assert.That(capture.Items).IsEmpty();
         await server.SendRawAsync(correctionFails ? "-NOPERM correction rejected\r\n"u8.ToArray() : FakeRespServer.OkReply);
         Exception expected = original;
+
         if (correctionFails)
+        {
             expected = (await Assert.That(async () => await producer.WaitAsync(deadline.Token)).Throws<RespireServerException>())!;
-        else await producer.WaitAsync(deadline.Token);
+        }
+        else
+        {
+            await producer.WaitAsync(deadline.Token);
+        }
+
         var firstError = await Assert.That(async () => await first.WaitAsync(deadline.Token)).Throws<Exception>();
         var secondError = await Assert.That(async () => await second.WaitAsync(deadline.Token)).Throws<Exception>();
         await Assert.That(ReferenceEquals(firstError, expected) && ReferenceEquals(secondError, expected)).IsTrue();
+
         if (!correctionFails)
+        {
             await Assert.That(((OperationCanceledException)firstError!).CancellationToken).IsEqualTo(cancellation.Token);
+        }
+
         await Assert.That(capture.Items.All(item => !(bool)item.Tags["redis.client.errors.internal"]!)).IsTrue();
         var counts = capture.Items.Select(item => (int)item.Tags["redis.client.operation.retry_attempts"]!).Order().ToArray();
         await Assert.That(counts).IsEquivalentTo(correctionFails ? new[] { 0, 2, 3 } : new[] { 2, 3 });
@@ -220,8 +294,11 @@ public partial class ErrorMetricsTests
         : RespireClient.ITrackedCorrectionExecution<bool>
     {
         public ValueTask<bool> Response => ValueTask.FromException<bool>(error);
+
         public RespireClient.TrackedConnectionIdentity ConnectionIdentity => default;
+
         public bool CommandMayBeOutstanding => true;
+
         public RespireTelemetry.ErrorObservation ErrorObservation => observation;
     }
 }

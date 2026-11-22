@@ -24,7 +24,8 @@ public class NativeLockIntegrationTests(VersionedServerFixture servers)
         var server = await servers.LeaseAsync(image);
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { server.Endpoint }, Database = server.Database,
+            Endpoints = { server.Endpoint },
+            Database = server.Database,
             Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
             Connections = 1,
             ClientSideCache = protocol == 3 ? new() : null,
@@ -53,8 +54,16 @@ public class NativeLockIntegrationTests(VersionedServerFixture servers)
         // The first SET is also counted when an older server rejects its IFEQ option.
         Delta(before, after, "set").Should().Be(1);
         var extensionScripts = Delta(before, after, "evalsha") + Delta(before, after, "eval");
-        if (nativeExtension) extensionScripts.Should().Be(0);
-        else extensionScripts.Should().BeInRange(1, 2);
+
+        if (nativeExtension)
+        {
+            extensionScripts.Should().Be(0);
+        }
+        else
+        {
+            extensionScripts.Should().BeInRange(1, 2);
+        }
+
         (await client.Keys.ExpiryAsync(key)).TimeToLive.Should().BeGreaterThan(TimeSpan.FromSeconds(50));
         before = after;
         (await client.Locks.ResetExpiryAsync(key, replacement, TimeSpan.FromSeconds(1))).Should().BeFalse();
@@ -65,13 +74,17 @@ public class NativeLockIntegrationTests(VersionedServerFixture servers)
         before = await Stats(owner);
         (await client.Locks.ReleaseAsync(key, token)).Should().BeTrue();
         after = await Stats(owner);
+
         if (releaseCommand == "evalsha")
+        {
             (Delta(before, after, "evalsha") + Delta(before, after, "eval")).Should().Be(1);
+        }
         else
         {
             Delta(before, after, releaseCommand).Should().Be(1);
             (Delta(before, after, "evalsha") + Delta(before, after, "eval")).Should().Be(0);
         }
+
         (await client.Locks.GetOwnerTokenAsync(key)).Should().BeNull();
         (await client.Locks.ResetExpiryAsync(key, token, TimeSpan.FromSeconds(60))).Should().BeFalse();
         (await client.Locks.ReleaseAsync(key, token)).Should().BeFalse();
@@ -82,7 +95,12 @@ public class NativeLockIntegrationTests(VersionedServerFixture servers)
     {
         (await client.Locks.TryTakeAsync(key, token, TimeSpan.FromMilliseconds(1))).Should().BeTrue();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (await client.Keys.ExistsAsync(key, deadline.Token)) await Task.Delay(10, deadline.Token);
+
+        while (await client.Keys.ExistsAsync(key, deadline.Token))
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+
         (await client.Locks.ResetExpiryAsync(key, token, TimeSpan.FromSeconds(60))).Should().BeFalse();
         (await client.Locks.ReleaseAsync(key, token)).Should().BeFalse();
     }
@@ -106,14 +124,21 @@ public class NativeLockIntegrationTests(VersionedServerFixture servers)
             (await replacementView.Locks.GetOwnerTokenAsync(key) == replacement).Should().BeTrue();
             (await replacementView.Keys.ExpiryAsync(key)).TimeToLive.Should().BeLessThanOrEqualTo(TimeSpan.FromSeconds(20));
         }
+
         await client.Keys.DeleteAsync(key);
     }
 
     private static async Task VerifyWrongTypeAsync(IRespireClient client, RespireKey key, RespireLockToken token)
     {
         await client.Lists.RightPushAsync(key, "wrong-type");
-        Func<Task> releaseWrongType = async () => { await client.Locks.ReleaseAsync(key, token); };
-        Func<Task> extendWrongType = async () => { await client.Locks.ResetExpiryAsync(key, token, TimeSpan.FromSeconds(5)); };
+        Func<Task> releaseWrongType = async () =>
+        {
+            await client.Locks.ReleaseAsync(key, token);
+        };
+        Func<Task> extendWrongType = async () =>
+        {
+            await client.Locks.ResetExpiryAsync(key, token, TimeSpan.FromSeconds(5));
+        };
         await releaseWrongType.Should().ThrowAsync<RespireServerException>();
         await extendWrongType.Should().ThrowAsync<RespireServerException>();
         await client.Keys.DeleteAsync(key);

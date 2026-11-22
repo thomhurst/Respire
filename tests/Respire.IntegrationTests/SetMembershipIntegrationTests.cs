@@ -82,15 +82,26 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
         await client.Sets.AddAsync("set", "member");
         Func<Task>[] commands =
         [
-            async () => { await client.Sets.ContainsManyAsync("wrong", "member"); },
-            async () => { await client.Sets.MoveAsync("set", "wrong", "member"); },
-            async () => { await client.Sets.IntersectCountAsync("set", "wrong"); },
+            async () =>
+            {
+                await client.Sets.ContainsManyAsync("wrong", "member");
+            },
+            async () =>
+            {
+                await client.Sets.MoveAsync("set", "wrong", "member");
+            },
+            async () =>
+            {
+                await client.Sets.IntersectCountAsync("set", "wrong");
+            },
         ];
+
         foreach (var command in commands)
         {
             var error = await command.Should().ThrowAsync<RespireServerException>();
             error.Which.Code.Should().Be("WRONGTYPE");
         }
+
         (await client.Sets.ContainsAsync("set", "member")).Should().BeTrue();
     }
 
@@ -117,10 +128,16 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
         var limited = queue.Sets.IntersectCount(1, ["first", "second"]);
         var moved = queue.Sets.Move("first", "second", "a");
         var afterMove = queue.Sets.ContainsMany("second", "a", "b", "c");
+
         if (transaction is not null)
+        {
             await transaction.CommitAsync();
+        }
         else
+        {
             await batch!.ExecuteAsync();
+        }
+
         members.Result.Should().Equal(true, false, true);
         count.Result.Should().Be(2);
         limited.Result.Should().Be(1);

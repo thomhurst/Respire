@@ -26,12 +26,14 @@ public class MaintenanceNotificationTests
     public async Task BulkReadByteTracksEverySuccessfulByteButNotEndOfStream(int value)
     {
         using var payload = new RespBulkPayloadPipe();
+
         if (value >= 0)
         {
             payload.GetMemory(1).Span[0] = (byte)value;
             payload.Advance(1);
             await payload.FlushAsync();
         }
+
         payload.Complete();
         var progress = typeof(RespBulkPayloadPipe).GetField("_lastReaderProgress",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
@@ -70,8 +72,11 @@ public class MaintenanceNotificationTests
     {
         await using var server = Server(Encoding.UTF8.GetBytes(reply));
         var options = Options(server) with { MaintenanceNotifications = mode };
+
         if (fails)
+        {
             await Assert.That(async () => await RespireClient.ConnectAsync(options)).Throws<RespireException>();
+        }
         else
         {
             // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
@@ -89,8 +94,11 @@ public class MaintenanceNotificationTests
     {
         await using var server = new FakeRespServer("-NOPROTO unsupported\r\n"u8.ToArray(), FakeRespServer.PongReply);
         var options = Options(server) with { MaintenanceNotifications = mode };
+
         if (fails)
+        {
             await Assert.That(async () => await RespireClient.ConnectAsync(options)).Throws<RespireException>();
+        }
         else
         {
             // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
@@ -99,6 +107,7 @@ public class MaintenanceNotificationTests
 #pragma warning restore RESP010
             await client.PingAsync();
         }
+
         await Assert.That(server.ReceivedCommands.Contains("CLIENT MAINT_NOTIFICATIONS ON")).IsFalse();
     }
 
@@ -134,12 +143,14 @@ public class MaintenanceNotificationTests
         await using var router = new ClusterRouter(options, primary);
         await using var lease = router.GetCorrectionLease(primary.GetConnection());
         var connection = await lease.Pool.RentAsync(default);
+
         try
         {
             using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
             await Assert.That(pong.AsString()).IsEqualTo("PONG");
         }
         finally { lease.Pool.Return(connection); }
+
         await Assert.That(server.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(2);
         await Assert.That(server.ReceivedCommands.Count(command => command == "CLIENT MAINT_NOTIFICATIONS ON")).IsEqualTo(1);
     }
@@ -159,6 +170,7 @@ public class MaintenanceNotificationTests
         await Assert.That(notification).IsNotNull();
         await Assert.That(notification!.Kind).IsEqualTo(kind);
         await Assert.That(notification.SequenceId).IsEqualTo(1);
+
         if (kind == "SMIGRATED")
         {
             await Assert.That(notification.Migrations![0].Target).IsEqualTo(new RespireEndpoint("::1", 6380));
@@ -207,11 +219,13 @@ public class MaintenanceNotificationTests
     public async Task CapacityEvictsOldestFinishedIdentityFirst()
     {
         var state = new MaintenanceTimeoutState(1000);
+
         for (var i = 0; i < 256; i++)
         {
             state.Apply(new("MIGRATING", i), 0);
             state.Apply(new("MIGRATED", i), 0);
         }
+
         state.Apply(new("MIGRATING", 1000), 10); // Evicts sequence 0.
         state.Apply(new("MIGRATED", 1000), 10);
         state.Apply(new("MIGRATING", 2000), 20); // Evicts sequence 1, not the newer 1000.
@@ -231,7 +245,12 @@ public class MaintenanceNotificationTests
     public async Task PushesFollowingAcknowledgementInSameReadAreHandled(bool completed)
     {
         var reply = FakeRespServer.OkReply.Concat(Start("MIGRATING", 7));
-        if (completed) reply = reply.Concat(Finish("MIGRATED", 7));
+
+        if (completed)
+        {
+            reply = reply.Concat(Finish("MIGRATED", 7));
+        }
+
         await using var server = Server(reply.ToArray());
         await using var connection = await Connect(server, TimeSpan.FromSeconds(2));
         using var result = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
@@ -258,13 +277,19 @@ public class MaintenanceNotificationTests
         var originalPool = client.Core.DedicatedPool;
         await Assert.That(client.Core.Multiplexer.IsConnected).IsFalse();
         await client.Strings.SetAsync("first", new ReadOnlySequence<byte>("one"u8.ToArray()), cancellationToken: timeout.Token);
+
         if (!duringHandshake)
         {
             await Assert.That(client.Core.Multiplexer.IsConnected).IsFalse();
             var index = source.ReceivedCommands.ToList().IndexOf("SET first one");
             await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[index]);
         }
-        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+
+        while (!originalPool.IsStopping)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         await Assert.That(await client.Strings.SetAsync("second", new ReadOnlySequence<byte>("two"u8.ToArray()),
             cancellationToken: timeout.Token)).IsTrue();
         await Assert.That(target.ReceivedCommands).Contains("SET second two");
@@ -296,13 +321,22 @@ public class MaintenanceNotificationTests
             : client.Core.Multiplexer.GetConnection();
         var wireId = server.ReceivedConnectionIds[0];
         await server.SendRawAsync(omitTarget ? ">4\r\n+MOVING\r\n:1\r\n:10\r\n_\r\n"u8.ToArray() : Moving(1, server.Port), wireId);
-        while (multiplexed.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
+
+        while (multiplexed.IsAcceptingCommands)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         var replacement = await MaintenancePoolAsync(client, "upload");
         await Assert.That(ReferenceEquals(pool, replacement)).IsFalse();
         await Assert.That(pool.IsMovingPublicationCurrent).IsFalse();
         await Assert.That(replacement.IsMovingPublicationCurrent).IsTrue();
         var lease = await replacement.RentAsync(timeout.Token, kind: DedicatedLeaseKind.Streaming);
-        try { await Assert.That(ReferenceEquals(old, lease)).IsFalse(); }
+
+        try
+        {
+            await Assert.That(ReferenceEquals(old, lease)).IsFalse();
+        }
         finally { replacement.Return(lease); }
     }
 
@@ -360,7 +394,11 @@ public class MaintenanceNotificationTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = client.Core.DedicatedPool;
         await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
-        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+
+        while (!originalPool.IsStopping)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
 
         var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
         var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
@@ -368,19 +406,37 @@ public class MaintenanceNotificationTests
         // callbacks still observe them, so filter on the operation as well as the endpoint.
         bool IsOperation(Activity activity) => activity.OperationName is "SET" or "BLPOP"
             && TestTelemetry.IsFrom(activity, source.Port, target.Port);
+
         using var listener = new ActivityListener
         {
             ShouldListenTo = activitySource => activitySource.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name is "SET" or "BLPOP"
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
-            ActivityStarted = activity => { if (IsOperation(activity)) started.Enqueue(activity); },
-            ActivityStopped = activity => { if (IsOperation(activity)) stopped.Enqueue(activity); },
+            ActivityStarted = activity =>
+            {
+                if (IsOperation(activity))
+                {
+                    started.Enqueue(activity);
+                }
+            },
+            ActivityStopped = activity =>
+            {
+                if (IsOperation(activity))
+                {
+                    stopped.Enqueue(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
+
         if (streaming)
+        {
             await client.Strings.SetAsync("upload", new ReadOnlySequence<byte>("value"u8.ToArray()), cancellationToken: timeout.Token);
+        }
         else
+        {
             _ = await client.Lists.LeftPopAsync("queue", waitFor: TimeSpan.FromSeconds(1), cancellationToken: timeout.Token);
+        }
 
         await Assert.That(started.Count).IsEqualTo(1);
         await Assert.That(stopped.Count).IsEqualTo(1);
@@ -414,12 +470,22 @@ public class MaintenanceNotificationTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = client.Core.DedicatedPool;
         await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
-        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
-        if (acquisitionFails) target.SuppressReply = command => command == "HELLO 3";
+
+        while (!originalPool.IsStopping)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
+        if (acquisitionFails)
+        {
+            target.SuppressReply = command => command == "HELLO 3";
+        }
 
         var name = aof ? "WAITAOF SET" : "WAIT SET";
+
         bool IsOperation(Activity activity) => activity.OperationName == name
             && TestTelemetry.IsFrom(activity, source.Port, target.Port);
+
         var started = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
         var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
         using var listener = new ActivityListener
@@ -427,17 +493,34 @@ public class MaintenanceNotificationTests
             ShouldListenTo = activitySource => activitySource.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.Name == name
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
-            ActivityStarted = activity => { if (IsOperation(activity)) started.Enqueue(activity); },
-            ActivityStopped = activity => { if (IsOperation(activity)) stopped.Enqueue(activity); },
+            ActivityStarted = activity =>
+            {
+                if (IsOperation(activity))
+                {
+                    started.Enqueue(activity);
+                }
+            },
+            ActivityStopped = activity =>
+            {
+                if (IsOperation(activity))
+                {
+                    stopped.Enqueue(activity);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
         using var batch = client.CreateBatch();
         _ = batch.Set("first", "value");
         _ = batch.Set("second", "value");
+
         if (acquisitionFails)
+        {
             await Assert.That(Execute).Throws<RespireException>();
+        }
         else
+        {
             await Execute();
+        }
 
         await Assert.That(started.Count).IsEqualTo(1);
         await Assert.That(stopped.Count).IsEqualTo(1);
@@ -448,8 +531,14 @@ public class MaintenanceNotificationTests
 
         async Task Execute()
         {
-            if (aof) _ = await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.FromSeconds(1), timeout.Token);
-            else _ = await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1), timeout.Token);
+            if (aof)
+            {
+                _ = await batch.ExecuteAndWaitForAofAsync(true, 1, TimeSpan.FromSeconds(1), timeout.Token);
+            }
+            else
+            {
+                _ = await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1), timeout.Token);
+            }
         }
     }
 
@@ -464,7 +553,8 @@ public class MaintenanceNotificationTests
 #pragma warning disable RESP010
         await using var client = RespireClient.Create(Options(server) with
         {
-            ConnectTimeout = TimeSpan.FromMilliseconds(100), CommandTimeout = TimeSpan.FromMilliseconds(250),
+            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            CommandTimeout = TimeSpan.FromMilliseconds(250),
         });
 #pragma warning restore RESP010
         var stopped = new System.Collections.Concurrent.ConcurrentQueue<Activity>();
@@ -475,7 +565,10 @@ public class MaintenanceNotificationTests
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
             ActivityStopped = activity =>
             {
-                if (activity.OperationName == "SET" && TestTelemetry.IsFrom(activity, server.Port)) stopped.Enqueue(activity);
+                if (activity.OperationName == "SET" && TestTelemetry.IsFrom(activity, server.Port))
+                {
+                    stopped.Enqueue(activity);
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -521,9 +614,19 @@ public class MaintenanceNotificationTests
         var originalPool = await MaintenancePoolAsync(client, "pending");
         var upload = client.Strings.SetAsync("pending", new ReadOnlySequence<byte>("value"u8.ToArray()),
             cancellationToken: timeout.Token).AsTask();
-        while (!source.ReceivedCommands.Contains("SET pending value")) await Task.Delay(5, timeout.Token);
+
+        while (!source.ReceivedCommands.Contains("SET pending value"))
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
-        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+
+        while (!originalPool.IsStopping)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         await client.DisposeAsync().AsTask().WaitAsync(timeout.Token);
         await Assert.That(async () => await upload.WaitAsync(timeout.Token)).Throws<RespireConnectionException>();
         await originalPool.RetireAsync().AsTask().WaitAsync(timeout.Token);
@@ -559,11 +662,17 @@ public class MaintenanceNotificationTests
                 ? ActivitySamplingResult.AllDataAndRecorded : ActivitySamplingResult.None,
             ActivityStarted = activity =>
             {
-                if (activity.OperationName == "SET" && TestTelemetry.IsFrom(activity, source.Port, target.Port)) started.Enqueue(activity);
+                if (activity.OperationName == "SET" && TestTelemetry.IsFrom(activity, source.Port, target.Port))
+                {
+                    started.Enqueue(activity);
+                }
             },
             ActivityStopped = activity =>
             {
-                if (activity.OperationName == "SET" && TestTelemetry.IsFrom(activity, source.Port, target.Port)) stopped.Enqueue(activity);
+                if (activity.OperationName == "SET" && TestTelemetry.IsFrom(activity, source.Port, target.Port))
+                {
+                    stopped.Enqueue(activity);
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -572,7 +681,12 @@ public class MaintenanceNotificationTests
             cancellationToken: timeout.Token).AsTask();
         await payload.Started.Task.WaitAsync(timeout.Token);
         await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
-        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+
+        while (!originalPool.IsStopping)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         payload.Resume.TrySetResult();
         await Assert.That(await upload.WaitAsync(timeout.Token)).IsTrue();
         await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith("SET "))).IsFalse();
@@ -613,10 +727,19 @@ public class MaintenanceNotificationTests
             ConnectTimeout = TimeSpan.FromSeconds(10),
             TestingStreamFactory = async (host, port, token) =>
             {
-                if (Volatile.Read(ref stallAcquisition)) await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                if (Volatile.Read(ref stallAcquisition))
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                }
+
                 var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
-                try { await socket.ConnectAsync(host, port, token); }
+
+                try
+                {
+                    await socket.ConnectAsync(host, port, token);
+                }
                 catch { socket.Dispose(); throw; }
+
                 return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
             },
         }, timeout.Token);
@@ -636,7 +759,11 @@ public class MaintenanceNotificationTests
             cancellationToken: timeout.Token).AsTask();
         await payload.Started.Task.WaitAsync(timeout.Token);
         await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
-        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+
+        while (!originalPool.IsStopping)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
         // The command connection has completed handoff. Stall only the replacement upload lease.
         Volatile.Write(ref stallAcquisition, true);
         payload.Resume.TrySetResult();
@@ -669,11 +796,13 @@ public class MaintenanceNotificationTests
     private static RespireOptions MaintenanceRoutingOptions(FakeRespServer source, FakeRespServer sentinel, string mode)
     {
         var options = Options(source) with { UseCluster = mode == "cluster", SentinelPrimaryName = mode == "sentinel" ? "mymaster" : null };
+
         if (mode == "sentinel")
         {
             options.Endpoints.Clear();
             options.Endpoints.Add(new("127.0.0.1", sentinel.Port));
         }
+
         return options;
     }
 
@@ -685,8 +814,16 @@ public class MaintenanceNotificationTests
     private sealed class PausedFirstReadStream() : MemoryStream("payload"u8.ToArray())
     {
         public override bool CanSeek => false;
-        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Started
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Resume
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
@@ -714,20 +851,38 @@ public class MaintenanceNotificationTests
         var originalPool = client.Core.DedicatedPool;
         var original = client.Core.Multiplexer.GetConnection();
         Task<RespValue>? pending = null;
+
         if (retainOriginalConnection)
         {
             source.SuppressReply = command => command == "PING";
             pending = original.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token).AsTask();
-            while (!source.ReceivedCommands.Contains("PING")) await Task.Delay(5, timeout.Token);
+
+            while (!source.ReceivedCommands.Contains("PING"))
+            {
+                await Task.Delay(5, timeout.Token);
+            }
         }
+
         await source.SendRawAsync(Moving(1, target.Port), source.ReceivedConnectionIds[0]);
-        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+
+        while (!originalPool.IsStopping)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         var fence = client.FenceCorrectionConnectionAsync(new(new("127.0.0.1", source.Port), 42,
             Connection: retainOriginalConnection ? original : null), timeout.Token).AsTask();
         await fence.WaitAsync(timeout.Token);
+
         if (pending is not null)
-            await Assert.That(async () => { using var reply = await pending.WaitAsync(timeout.Token); })
+        {
+            await Assert.That(async () =>
+                {
+                    using var reply = await pending.WaitAsync(timeout.Token);
+                })
                 .Throws<RespireConnectionException>();
+        }
+
         await Assert.That(source.ReceivedCommands.Any(command => command.StartsWith("CLIENT KILL ID 42"))).IsTrue();
         await Assert.That(target.ReceivedCommands.Any(command => command.StartsWith("CLIENT KILL "))).IsFalse();
     }
@@ -756,21 +911,35 @@ public class MaintenanceNotificationTests
             if (command == "HELLO 3")
             {
                 handshake.TrySetResult(connection);
-                if (!handshakeComplete) return [];
+
+                if (!handshakeComplete)
+                {
+                    return [];
+                }
             }
+
             return originalReply(connection, command);
         };
         var rental = pool.RentAsync(deadline.Token,
             kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary).AsTask();
         var wire = await handshake.Task.WaitAsync(deadline.Token);
         RespireConnection? lease = null;
+
         try
         {
-            if (handshakeComplete) lease = await rental.WaitAsync(deadline.Token);
-            source.CloseConnection(wire);
             if (handshakeComplete)
             {
-                while (!generation.IsRetired) await Task.Delay(1, deadline.Token);
+                lease = await rental.WaitAsync(deadline.Token);
+            }
+
+            source.CloseConnection(wire);
+
+            if (handshakeComplete)
+            {
+                while (!generation.IsRetired)
+                {
+                    await Task.Delay(1, deadline.Token);
+                }
             }
             else
             {
@@ -787,7 +956,10 @@ public class MaintenanceNotificationTests
         }
         finally
         {
-            if (lease is not null) pool.Return(lease);
+            if (lease is not null)
+            {
+                pool.Return(lease);
+            }
         }
     }
 
@@ -809,7 +981,11 @@ public class MaintenanceNotificationTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         source.SuppressReply = command =>
         {
-            if (command != "HELLO 3") return false;
+            if (command != "HELLO 3")
+            {
+                return false;
+            }
+
             handshake.TrySetResult();
             return true;
         };
@@ -817,12 +993,18 @@ public class MaintenanceNotificationTests
         listener.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == "Respire" && instrument.Name == "redis.client.connection.closed")
+            {
                 current.EnableMeasurementEvents(instrument);
+            }
         };
         var observed = 0;
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
         {
-            if (Interlocked.Exchange(ref observed, 1) != 0) return;
+            if (Interlocked.Exchange(ref observed, 1) != 0)
+            {
+                return;
+            }
+
             entered.TrySetResult();
             release.Task.GetAwaiter().GetResult();
         });
@@ -831,6 +1013,7 @@ public class MaintenanceNotificationTests
         var connecting = RespireConnection.ConnectAsync("127.0.0.1", source.Port,
             generation.ConnectionOptions, cancellationToken: cancellation.Token);
         Task? canceling = null;
+
         try
         {
             await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -846,7 +1029,12 @@ public class MaintenanceNotificationTests
         finally
         {
             release.TrySetResult();
-            if (canceling is not null) await canceling.WaitAsync(TimeSpan.FromSeconds(5));
+
+            if (canceling is not null)
+            {
+                await canceling.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+
             await Assert.That(async () => await connecting.WaitAsync(TimeSpan.FromSeconds(5)))
                 .Throws<OperationCanceledException>();
         }
@@ -872,16 +1060,22 @@ public class MaintenanceNotificationTests
 #pragma warning restore RESP010
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var originalPool = await MaintenancePoolAsync(client, "lease");
+
         ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> Rent(CancellationToken token)
             => client.Core.Cluster is { } cluster
                 ? cluster.RentDedicatedConnectionAsync(originalPool, ClusterHash.GetSlot("lease"), token,
                     discovery: null, observation: default, kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary)
                 : client.Core.RentDedicatedConnectionAsync(originalPool, token,
                     kind: streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary, observation: default);
+
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         source.SuppressReply = command =>
         {
-            if (command != "HELLO 3") return false;
+            if (command != "HELLO 3")
+            {
+                return false;
+            }
+
             handshake.TrySetResult();
             return true;
         };
@@ -928,13 +1122,22 @@ public class MaintenanceNotificationTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var upload = client.Strings.SetAsync("old-upload", new ReadOnlySequence<byte>("old"u8.ToArray()),
             cancellationToken: timeout.Token).AsTask();
-        while (!source.ReceivedCommands.Contains("SET old-upload old")) await Task.Delay(5, timeout.Token);
+
+        while (!source.ReceivedCommands.Contains("SET old-upload old"))
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         var index = source.ReceivedCommands.ToList().IndexOf("SET old-upload old");
         var uploadConnection = source.ReceivedConnectionIds[index];
         await source.SendRawAsync(Moving(1, target.Port), fromUpload ? uploadConnection : source.ReceivedConnectionIds[0]);
         await WaitForRetirement(selected);
         // Reproduce selection before publication followed by rental after retirement.
-        while (!originalPool.IsStopping) await Task.Delay(5, timeout.Token);
+        while (!originalPool.IsStopping)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
+
         await Assert.That(originalPool.IsStopping).IsTrue();
         var (owner, lease) = client.Core.Cluster is { } cluster
             ? await cluster.RentDedicatedConnectionAsync(originalPool, ClusterHash.GetSlot("old-upload"), timeout.Token,
@@ -1026,10 +1229,13 @@ public class MaintenanceNotificationTests
         var waitingForCapacity = staleSelection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await source.SendRawAsync(Encoding.UTF8.GetBytes(
             $">4\r\n+MOVING\r\n:1\r\n:10\r\n+127.0.0.1:{target.Port}\r\n"));
+
         using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
         {
             while (multiplexer.GetConnection().Port != target.Port)
+            {
                 await Task.Delay(5, timeout.Token);
+            }
         }
 
         // Hold ring capacity until the replacement is published; elapsed delays can admit
@@ -1268,7 +1474,11 @@ public class MaintenanceNotificationTests
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
             {
-                CredentialCacheInvalidation = () => { Interlocked.Increment(ref initialFlushes); return 0; },
+                CredentialCacheInvalidation = () =>
+                {
+                    Interlocked.Increment(ref initialFlushes);
+                    return 0;
+                },
                 CredentialCacheRetirementFence = () =>
                 {
                     fenceSawRetiredSocket.TrySetResult(oldConnection is { IsAcceptingCommands: false });
@@ -1311,6 +1521,7 @@ public class MaintenanceNotificationTests
         await using var sampler = new ReadLatencySampler<RespireConnection>((_, _) => ValueTask.FromResult(10L));
         var reserved = multiplexer.GetConnection();
         await Assert.That(sampler.TryReserveForValidation(reserved, out var reservation)).IsTrue();
+
         using (reservation)
         {
             await source.SendRawAsync(Moving(1, target.Port));
@@ -1344,11 +1555,13 @@ public class MaintenanceNotificationTests
             // The empty-host fallback reads the responder's host, so a retired selection must
             // be replaced explicitly rather than rerouted behind the caller's back.
             var (responder, reply) = await ClusterRouter.SendTopologyQueryAsync(selected, multiplexer, default);
+
             using (reply)
             {
                 await Assert.That(ReferenceEquals(responder, selected)).IsFalse();
                 await Assert.That(responder.Port).IsEqualTo(target.Port);
             }
+
             await Assert.That(target.ReceivedCommands.Contains("CLUSTER SLOTS")).IsTrue();
         }
         else
@@ -1358,6 +1571,7 @@ public class MaintenanceNotificationTests
                 .Throws<RespireConnectionRetiredException>();
             await Assert.That(target.ReceivedCommands.Contains("CLUSTER SLOTS")).IsFalse();
         }
+
         await Assert.That(source.ReceivedCommands.Contains("CLUSTER SLOTS")).IsFalse();
     }
 
@@ -1440,13 +1654,22 @@ public class MaintenanceNotificationTests
 
     private sealed class MovingGraceFailureLogger : Microsoft.Extensions.Logging.ILogger
     {
-        internal TaskCompletionSource Failed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Failed
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
         public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
             TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            if (eventId.Name == "MovingGraceAttemptFailed") Failed.TrySetResult();
+            if (eventId.Name == "MovingGraceAttemptFailed")
+            {
+                Failed.TrySetResult();
+            }
         }
     }
 
@@ -1488,11 +1711,15 @@ public class MaintenanceNotificationTests
             connection.MovingPublicationGeneration, 0, Environment.TickCount64 - 20_000);
 
         QueueMovingHandoff(multiplexer, 0, connection, announcement);
+
         using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
         {
             while (!target.ReceivedCommands.Contains("CLIENT MAINT_NOTIFICATIONS ON"))
+            {
                 await Task.Delay(5, timeout.Token);
+            }
         }
+
         await Task.Delay(500);
 
         // The expired grace period allows the one setup attempt and no retries.
@@ -1587,7 +1814,9 @@ public class MaintenanceNotificationTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            Connections = 1, MaxInflightCommands = 4, CommandTimeout = TimeSpan.FromSeconds(5),
+            Connections = 1,
+            MaxInflightCommands = 4,
+            CommandTimeout = TimeSpan.FromSeconds(5),
         });
 #pragma warning restore RESP010
         var original = client.Core.Multiplexer.GetConnection();
@@ -1719,14 +1948,21 @@ public class MaintenanceNotificationTests
         var observe = new AsyncLocal<bool>();
         using var continuity = MeterFor("respire.client_cache.continuity_flushes", (value, _) =>
         {
-            if (observe.Value && value == 1) published.TrySetResult();
+            if (observe.Value && value == 1)
+            {
+                published.TrySetResult();
+            }
         });
         var logger = new HandoffFailureLogger();
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
             logger: logger,
             options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true) with
             {
-                CredentialCacheInvalidation = () => { observe.Value = true; return 1; },
+                CredentialCacheInvalidation = () =>
+                {
+                    observe.Value = true;
+                    return 1;
+                },
                 CredentialCacheRetirementFence = () => throw new InvalidOperationException("Metrics observer failure."),
             });
 
@@ -1744,13 +1980,18 @@ public class MaintenanceNotificationTests
     private sealed class HandoffFailureLogger : Microsoft.Extensions.Logging.ILogger
     {
         internal volatile bool HandoffFailed;
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
         public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
             TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             if (logLevel >= Microsoft.Extensions.Logging.LogLevel.Warning && exception is InvalidOperationException)
+            {
                 HandoffFailed = true;
+            }
         }
     }
 
@@ -1759,19 +2000,25 @@ public class MaintenanceNotificationTests
     {
         await using var source = Server(maxConnections: 2);
         var obsoleteTargets = new FakeRespServer[3];
+
         for (var i = 0; i < obsoleteTargets.Length; i++)
         {
             obsoleteTargets[i] = Server(maxConnections: 16);
             obsoleteTargets[i].DelayReply(0, 200);
         }
+
         await using var final = Server(maxConnections: 2);
+
         try
         {
             await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", source.Port,
                 options: Options(source).ToConnectionOptions(enableMaintenanceNotifications: true));
 
             for (var sequence = 1; sequence <= 12; sequence++)
+            {
                 await source.SendRawAsync(Moving(sequence, obsoleteTargets[sequence % obsoleteTargets.Length].Port));
+            }
+
             await source.SendRawAsync(Moving(13, final.Port));
 
             await WaitForPort(multiplexer, final.Port);
@@ -1782,7 +2029,10 @@ public class MaintenanceNotificationTests
         }
         finally
         {
-            foreach (var obsolete in obsoleteTargets) await obsolete.DisposeAsync();
+            foreach (var obsolete in obsoleteTargets)
+            {
+                await obsolete.DisposeAsync();
+            }
         }
     }
 
@@ -1795,14 +2045,19 @@ public class MaintenanceNotificationTests
     private static async Task WaitForReplacement(RespireConnectionMultiplexer multiplexer, RespireConnection replaced)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
         while (true)
         {
             try
             {
                 if (multiplexer.GetConnection() is { IsAcceptingCommands: true } current
-                    && !ReferenceEquals(current, replaced)) return;
+                    && !ReferenceEquals(current, replaced))
+                {
+                    return;
+                }
             }
             catch (RespireException) { }
+
             await Task.Delay(5, timeout.Token);
         }
     }
@@ -1813,13 +2068,21 @@ public class MaintenanceNotificationTests
     private static async Task WaitForRetirement(RespireConnection connection)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (connection.IsAcceptingCommands) await Task.Delay(5, timeout.Token);
+
+        while (connection.IsAcceptingCommands)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
     }
 
     private static async Task WaitForPort(RespireConnectionMultiplexer multiplexer, int port, TimeSpan? observationTimeout = null)
     {
         using var timeout = new CancellationTokenSource(observationTimeout ?? TimeSpan.FromSeconds(5));
-        while (multiplexer.GetConnection().Port != port) await Task.Delay(5, timeout.Token);
+
+        while (multiplexer.GetConnection().Port != port)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
     }
 
     [Test]
@@ -1838,6 +2101,7 @@ public class MaintenanceNotificationTests
         var window = state.GetWindow(1100)!;
         var remaining = ring.SweepExpired(1100, TimeSpan.FromMilliseconds(200), null,
             deadlineExtension: 1000, maintenanceStarted: window.Started);
+
         if (deadline <= 1000)
         {
             await Assert.That(remaining).IsEqualTo(-1);
@@ -1850,6 +2114,7 @@ public class MaintenanceNotificationTests
             source.TrySetResult(RespValue.Integer(1));
             using var result = await source.Task;
         }
+
         ring.TryDequeue(out var dequeued);
         dequeued.ReleaseRef();
     }
@@ -1870,6 +2135,7 @@ public class MaintenanceNotificationTests
         var normal = TimeSpan.FromMilliseconds(200);
         var relaxed = longerRelaxation == false ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromMilliseconds(1200);
         MaintenanceTimeoutState? state = null;
+
         if (longerRelaxation is not null)
         {
             state = new MaintenanceTimeoutState(5000);
@@ -1902,6 +2168,7 @@ public class MaintenanceNotificationTests
             source.TrySetResult(RespValue.Integer(1));
             using var result = await source.Task;
         }
+
         ring.TryDequeue(out var dequeued);
         dequeued.ReleaseRef();
     }
@@ -1979,8 +2246,14 @@ public class MaintenanceNotificationTests
         await Assert.That(first.IsCompleted).IsFalse();
         await Assert.That(second.IsCompleted).IsFalse();
         await server.SendRawAsync(Finish(finish, 11));
-        await Assert.That(async () => { using var _ = await first.WaitAsync(TimeSpan.FromSeconds(5)); }).Throws<RespireTimeoutException>();
-        await Assert.That(async () => { using var _ = await second.WaitAsync(TimeSpan.FromSeconds(5)); }).Throws<RespireTimeoutException>();
+        await Assert.That(async () =>
+        {
+            using var _ = await first.WaitAsync(TimeSpan.FromSeconds(5));
+        }).Throws<RespireTimeoutException>();
+        await Assert.That(async () =>
+        {
+            using var _ = await second.WaitAsync(TimeSpan.FromSeconds(5));
+        }).Throws<RespireTimeoutException>();
         // Both timed-out slots still consume their own replies; the next response must remain aligned.
         await server.SendRawAsync("+first\r\n+second\r\n"u8.ToArray());
         server.SuppressReply = null;
@@ -2001,7 +2274,10 @@ public class MaintenanceNotificationTests
         await Task.Delay(1_200);
         await server.SendRawAsync(Finish("MIGRATED", 11).Concat("+first\r\n"u8.ToArray()).ToArray());
 
-        var error = await Assert.That(async () => { using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(5)); })
+        var error = await Assert.That(async () =>
+            {
+                using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+            })
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.IsCommandNotSubmitted).IsTrue();
         using var firstReply = await first.WaitAsync(TimeSpan.FromSeconds(5));
@@ -2021,7 +2297,10 @@ public class MaintenanceNotificationTests
         var command = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), cancellation.Token).AsTask();
         await WaitForCommands(server, 3);
         cancellation.Cancel();
-        await Assert.That(async () => { using var _ = await command; }).Throws<OperationCanceledException>();
+        await Assert.That(async () =>
+        {
+            using var _ = await command;
+        }).Throws<OperationCanceledException>();
         await Assert.That(connection.IsConnected).IsTrue();
     }
 
@@ -2034,7 +2313,10 @@ public class MaintenanceNotificationTests
         await server.SendRawAsync(Start("MIGRATING", 1));
         await WaitForMaintenance(connection);
         var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
-        await Assert.That(async () => { using var _ = await pending.WaitAsync(TimeSpan.FromSeconds(5)); }).Throws<RespireTimeoutException>();
+        await Assert.That(async () =>
+        {
+            using var _ = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        }).Throws<RespireTimeoutException>();
         await Assert.That(connection.HasMaintenanceWindow).IsFalse();
 
         await using var unlimitedServer = Server();
@@ -2059,7 +2341,12 @@ public class MaintenanceNotificationTests
     public async Task ReceiveWatchdogRelaxesAndRestoresOnCompletion(string? delayedSetupCommand)
     {
         await using var server = Server();
-        if (delayedSetupCommand is not null) server.DelayCommand(delayedSetupCommand, 350);
+
+        if (delayedSetupCommand is not null)
+        {
+            server.DelayCommand(delayedSetupCommand, 350);
+        }
+
         server.SuppressReply = command => command == "PING";
         using var initialization = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
@@ -2078,7 +2365,12 @@ public class MaintenanceNotificationTests
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         typeof(RespireConnection).GetField("_responseTimeout", flags)!.SetValue(connection, TimeSpan.FromMilliseconds(150));
         var wake = (SemaphoreSlim)typeof(RespireConnection).GetField("_watchdogWake", flags)!.GetValue(connection)!;
-        if (wake.CurrentCount == 0) wake.Release();
+
+        if (wake.CurrentCount == 0)
+        {
+            wake.Release();
+        }
+
         await Assert.That(connection.HasRelaxedTimeoutAllowance).IsTrue();
         var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await WaitForCommands(server, 3);
@@ -2086,7 +2378,10 @@ public class MaintenanceNotificationTests
         await Assert.That(connection.IsConnected).IsTrue();
         await Assert.That(pending.IsCompleted).IsFalse();
         await server.SendRawAsync(Finish("FAILED_OVER", 1));
-        var error = await Assert.That(async () => { using var _ = await pending.WaitAsync(TimeSpan.FromSeconds(3)); })
+        var error = await Assert.That(async () =>
+            {
+                using var _ = await pending.WaitAsync(TimeSpan.FromSeconds(3));
+            })
             .Throws<RespireConnectionException>();
         await Assert.That(error!.Message).Contains("received no data for 00:00:00.1500000");
         await Assert.That(connection.HasMaintenanceWindow).IsFalse();
@@ -2132,6 +2427,7 @@ public class MaintenanceNotificationTests
 
         var pipe = new System.IO.Pipelines.Pipe();
         await using var source = pipe.Reader.AsStream();
+
         try
         {
             var upload = client.Strings.SetAsync("key", source, 4).AsTask();
@@ -2160,16 +2456,29 @@ public class MaintenanceNotificationTests
         var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         var kind = streaming ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary;
         var connections = new RespireConnection[4];
+
         for (var index = 0; index < connections.Length; index++)
+        {
             connections[index] = await pool.RentAsync(CancellationToken.None, kind: kind);
-        foreach (var connection in connections) pool.Return(connection);
+        }
+
+        foreach (var connection in connections)
+        {
+            pool.Return(connection);
+        }
+
         var reused = new RespireConnection[4];
+
         for (var index = 0; index < reused.Length; index++)
         {
             reused[index] = await pool.RentAsync(CancellationToken.None, kind: kind);
             await Assert.That(ReferenceEquals(reused[index], connections[3 - index])).IsTrue();
         }
-        foreach (var connection in reused) pool.Return(connection);
+
+        foreach (var connection in reused)
+        {
+            pool.Return(connection);
+        }
     }
 
     [Test]
@@ -2185,9 +2494,17 @@ public class MaintenanceNotificationTests
 #pragma warning restore RESP010
         var pool = await client.Core.GetDedicatedPoolAsync(CancellationToken.None, observation: default);
         var first = new RespireConnection[4];
+
         for (var index = 0; index < first.Length; index++)
+        {
             first[index] = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Streaming : DedicatedLeaseKind.Ordinary);
-        foreach (var connection in first) pool.Return(connection);
+        }
+
+        foreach (var connection in first)
+        {
+            pool.Return(connection);
+        }
+
         var other = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Ordinary : DedicatedLeaseKind.Streaming);
         pool.Return(other);
         var reused = await pool.RentAsync(CancellationToken.None, kind: streamingFirst ? DedicatedLeaseKind.Ordinary : DedicatedLeaseKind.Streaming);
@@ -2241,7 +2558,10 @@ public class MaintenanceNotificationTests
         await Assert.That(set.IsCompleted).IsFalse();
 
         await server.SendRawAsync(Finish("MIGRATED", 1));
-        await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(3)); })
+        await Assert.That(async () =>
+            {
+                using var _ = await set.WaitAsync(TimeSpan.FromSeconds(3));
+            })
             .Throws<RespireTimeoutException>();
         // The deadline fired while the first chunk was still being read, before any header bytes
         // were queued, so the connection stays usable.
@@ -2266,7 +2586,10 @@ public class MaintenanceNotificationTests
         var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
         await pipe.Writer.WriteAsync("da"u8.ToArray());
 
-        var error = await Assert.That(async () => { using var _ = await set.WaitAsync(TimeSpan.FromSeconds(3)); })
+        var error = await Assert.That(async () =>
+            {
+                using var _ = await set.WaitAsync(TimeSpan.FromSeconds(3));
+            })
             .Throws<RespireTimeoutException>();
         await Assert.That(error!.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(500));
         // Only the first chunk was being read, so no partial frame needed the connection closed.
@@ -2289,8 +2612,14 @@ public class MaintenanceNotificationTests
         await Task.Delay(1_200);
         await Assert.That(waiting.IsCompleted).IsFalse();
         await server.SendRawAsync(Finish("MIGRATED", 1));
-        var waitingError = await Assert.That(async () => { using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireTimeoutException>();
-        var acceptedError = await Assert.That(async () => { using var _ = await accepted.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireTimeoutException>();
+        var waitingError = await Assert.That(async () =>
+        {
+            using var _ = await waiting.WaitAsync(TimeSpan.FromSeconds(3));
+        }).Throws<RespireTimeoutException>();
+        var acceptedError = await Assert.That(async () =>
+        {
+            using var _ = await accepted.WaitAsync(TimeSpan.FromSeconds(3));
+        }).Throws<RespireTimeoutException>();
         await Assert.That(waitingError!.IsCommandNotSubmitted).IsTrue();
         await Assert.That(acceptedError!.IsCommandNotSubmitted).IsFalse();
         await Assert.That(server.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
@@ -2308,13 +2637,18 @@ public class MaintenanceNotificationTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
             ActivityStarted = activity =>
             {
-                if (activity.OperationName != "redis.maintenance" || !Equals(activity.GetTagItem("server.port"), server.Port)) return;
+                if (activity.OperationName != "redis.maintenance" || !Equals(activity.GetTagItem("server.port"), server.Port))
+                {
+                    return;
+                }
+
                 entered.Set();
                 release.Wait(TimeSpan.FromSeconds(10));
             },
         };
         ActivitySource.AddActivityListener(listener);
         await using var connection = await Connect(server, TimeSpan.FromSeconds(2));
+
         try
         {
             await server.SendRawAsync(Start("MIGRATING", 1));
@@ -2339,10 +2673,18 @@ public class MaintenanceNotificationTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
             ActivityStopped = activity =>
             {
-                if (activity.OperationName != "redis.maintenance" || !Equals(activity.GetTagItem("server.port"), server.Port)) return;
+                if (activity.OperationName != "redis.maintenance" || !Equals(activity.GetTagItem("server.port"), server.Port))
+                {
+                    return;
+                }
+
                 var kind = (string)activity.GetTagItem("respire.maintenance.kind")!;
                 kinds.Enqueue(kind);
-                if (kind == "FAILED_OVER") completed.TrySetResult();
+
+                if (kind == "FAILED_OVER")
+                {
+                    completed.TrySetResult();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -2374,7 +2716,10 @@ public class MaintenanceNotificationTests
             ActivityStopped = activity =>
             {
                 if (activity.OperationName == "redis.maintenance" && Equals(activity.GetTagItem("server.port"), server.Port)
-                    && Equals(activity.GetTagItem("respire.maintenance.kind"), kind)) observed.TrySetResult();
+                    && Equals(activity.GetTagItem("respire.maintenance.kind"), kind))
+                {
+                    observed.TrySetResult();
+                }
             },
         };
         ActivitySource.AddActivityListener(listener);
@@ -2394,14 +2739,18 @@ public class MaintenanceNotificationTests
         server.SuppressReply = command => command == "PING";
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = mode,
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = mode,
             CommandTimeout = TimeSpan.FromMilliseconds(150),
         });
         await server.SendRawAsync(malformed
             ? ">3\r\n+SMIGRATING\r\n:1\r\n+invalid-slot\r\n"u8.ToArray()
             : Start("MIGRATING", 1));
         var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
-        await Assert.That(async () => { using var _ = await pending.WaitAsync(TimeSpan.FromSeconds(3)); }).Throws<RespireTimeoutException>();
+        await Assert.That(async () =>
+        {
+            using var _ = await pending.WaitAsync(TimeSpan.FromSeconds(3));
+        }).Throws<RespireTimeoutException>();
         await Assert.That(connection.HasMaintenanceWindow).IsFalse();
         await Assert.That(connection.IsConnected).IsTrue();
     }
@@ -2413,8 +2762,10 @@ public class MaintenanceNotificationTests
         server.SuppressReply = command => command == "PING";
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
         {
-            Protocol = RespireProtocol.Resp3, MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
-            CommandTimeout = TimeSpan.FromSeconds(2), ResponseTimeout = TimeSpan.FromSeconds(2),
+            Protocol = RespireProtocol.Resp3,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            CommandTimeout = TimeSpan.FromSeconds(2),
+            ResponseTimeout = TimeSpan.FromSeconds(2),
             MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(50),
         });
         await server.SendRawAsync(Start("MIGRATING", 1));
@@ -2434,8 +2785,12 @@ public class MaintenanceNotificationTests
     {
         var bytes = ">3\r\n+invalidate\r\n:1\r\n*0\r\n"u8.ToArray();
         var position = 0;
+
         if (RespParser.TryParseValue(bytes, ref position, out var value) != RespParseStatus.Done)
+        {
             throw new Exception("Invalid test fixture");
+        }
+
         using (value)
         {
             _ = MeasureMaintenanceParsing(value, allocate: false); // JIT warm-up.
@@ -2452,11 +2807,17 @@ public class MaintenanceNotificationTests
     private static long MeasureMaintenanceParsing(RespValue value, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 100; i++)
         {
             _ = MaintenanceNotification.Parse(in value);
-            if (allocate) GC.KeepAlive(AllocateControl());
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateControl());
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -2475,13 +2836,18 @@ public class MaintenanceNotificationTests
             ActivityStarted = activity =>
             {
                 if (Equals(activity.GetTagItem("server.address"), host))
+                {
                     throw new InvalidOperationException("Listener failure.");
+                }
             },
         };
         ActivitySource.AddActivityListener(activities);
         using var meters = MeterFor("redis.client.maintenance.notifications", (value, tags) =>
         {
-            if (HasTag(tags, "server.address", host)) counted.TrySetResult();
+            if (HasTag(tags, "server.address", host))
+            {
+                counted.TrySetResult();
+            }
         });
         var logger = new RecordingLogger();
 
@@ -2505,7 +2871,11 @@ public class MaintenanceNotificationTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
             ActivityStarted = activity =>
             {
-                if (!Equals(activity.GetTagItem("server.address"), host) || Interlocked.Exchange(ref blocked, 1) != 0) return;
+                if (!Equals(activity.GetTagItem("server.address"), host) || Interlocked.Exchange(ref blocked, 1) != 0)
+                {
+                    return;
+                }
+
                 entered.Set();
                 release.Wait(TimeSpan.FromSeconds(10));
             },
@@ -2515,12 +2885,17 @@ public class MaintenanceNotificationTests
         var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var notifications = MeterFor("redis.client.maintenance.notifications", (value, tags) =>
         {
-            if (HasTag(tags, "server.address", host) && Interlocked.Add(ref delivered, value) == 257) drained.TrySetResult();
+            if (HasTag(tags, "server.address", host) && Interlocked.Add(ref delivered, value) == 257)
+            {
+                drained.TrySetResult();
+            }
         });
         using var drops = MeterFor("respire.maintenance.notifications.dropped", (value, tags) =>
         {
             if (HasTag(tags, "server.address", host) && HasTag(tags, "server.port", 6379))
+            {
                 Interlocked.Add(ref dropped, value);
+            }
         });
         var telemetry = new MaintenanceTelemetry(host, 6379, 0, null);
 
@@ -2528,7 +2903,11 @@ public class MaintenanceNotificationTests
         await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5)));
         await Assert.That(entered.IsSet).IsTrue();
         // The first event is in flight; 258 more overflow the 256-entry queue by two.
-        for (var i = 1; i <= 258; i++) telemetry.Publish(new("MIGRATING", i, 5));
+        for (var i = 1; i <= 258; i++)
+        {
+            telemetry.Publish(new("MIGRATING", i, 5));
+        }
+
         release.Set();
 
         await drained.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -2543,7 +2922,9 @@ public class MaintenanceNotificationTests
             InstrumentPublished = (instrument, meterListener) =>
             {
                 if (instrument.Meter.Name == RespireTelemetry.SourceName && instrument.Name == name)
+                {
                     meterListener.EnableMeasurementEvents(instrument);
+                }
             },
         };
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) => onMeasurement(value, tags));
@@ -2556,7 +2937,13 @@ public class MaintenanceNotificationTests
     private static bool HasTag(ReadOnlySpan<KeyValuePair<string, object?>> tags, string key, object? value)
     {
         foreach (var tag in tags)
-            if (tag.Key == key && Equals(tag.Value, value)) return true;
+        {
+            if (tag.Key == key && Equals(tag.Value, value))
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -2564,14 +2951,24 @@ public class MaintenanceNotificationTests
     {
         internal readonly TaskCompletionSource Informed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal volatile bool Warned;
+
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
         public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
         public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
             TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             // The warning for the failed activity sink precedes the information log.
-            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning && exception is InvalidOperationException) Warned = true;
-            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Information) Informed.TrySetResult();
+            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning && exception is InvalidOperationException)
+            {
+                Warned = true;
+            }
+
+            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Information)
+            {
+                Informed.TrySetResult();
+            }
         }
     }
 
@@ -2588,9 +2985,19 @@ public class MaintenanceNotificationTests
     {
         var position = 0;
         var bytes = Encoding.UTF8.GetBytes(wire);
-        if (RespParser.TryParseValue(bytes, ref position, out var value) != RespParseStatus.Done) throw new Exception("Invalid test fixture");
+
+        if (RespParser.TryParseValue(bytes, ref position, out var value) != RespParseStatus.Done)
+        {
+            throw new Exception("Invalid test fixture");
+        }
+
         bool actual;
-        using (value) actual = MaintenanceNotification.IsSlotMigrationPush(in value);
+
+        using (value)
+        {
+            actual = MaintenanceNotification.IsSlotMigrationPush(in value);
+        }
+
         await Assert.That(actual).IsEqualTo(expected);
     }
 
@@ -2598,8 +3005,16 @@ public class MaintenanceNotificationTests
     {
         var position = 0;
         var bytes = Encoding.UTF8.GetBytes(wire);
-        if (RespParser.TryParseValue(bytes, ref position, out var value) != RespParseStatus.Done) throw new Exception("Invalid test fixture");
-        using (value) return MaintenanceNotification.Parse(in value);
+
+        if (RespParser.TryParseValue(bytes, ref position, out var value) != RespParseStatus.Done)
+        {
+            throw new Exception("Invalid test fixture");
+        }
+
+        using (value)
+        {
+            return MaintenanceNotification.Parse(in value);
+        }
     }
 
     private static FakeRespServer Server(byte[]? maintenanceReply = null, int maxConnections = 1) => new(maxConnections, FakeRespServer.PongReply)
@@ -2639,6 +3054,7 @@ public class MaintenanceNotificationTests
 
     private static byte[] Start(string kind, int sequence) => Encoding.UTF8.GetBytes(
         $">3\r\n+{kind}\r\n:{sequence}\r\n" + (kind == "SMIGRATING" ? "+0-10\r\n" : ":1\r\n"));
+
     private static byte[] Finish(string kind, int sequence) => Encoding.UTF8.GetBytes(kind == "SMIGRATED"
         ? $">3\r\n+{kind}\r\n:{sequence}\r\n*1\r\n*3\r\n+old:6379\r\n+new:6380\r\n+0-10\r\n"
         : $">2\r\n+{kind}\r\n:{sequence}\r\n");
@@ -2658,12 +3074,20 @@ public class MaintenanceNotificationTests
     private static async Task WaitForCommands(FakeRespServer server, int count)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen < count) await Task.Delay(5, timeout.Token);
+
+        while (server.CommandsSeen < count)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
     }
 
     private static async Task WaitForMaintenance(RespireConnection connection)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (!connection.HasMaintenanceWindow) await Task.Delay(5, timeout.Token);
+
+        while (!connection.HasMaintenanceWindow)
+        {
+            await Task.Delay(5, timeout.Token);
+        }
     }
 }

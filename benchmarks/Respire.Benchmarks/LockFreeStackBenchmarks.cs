@@ -51,7 +51,10 @@ public class LockFreeStackBenchmarks
 
 internal sealed class PoolBenchmarkItem
 {
-    public int Value { get; } = 42;
+    public int Value
+    {
+        get;
+    } = 42;
 }
 
 internal readonly struct PoolBenchmarkItemPolicy : IPooledObjectPolicy<PoolBenchmarkItem>

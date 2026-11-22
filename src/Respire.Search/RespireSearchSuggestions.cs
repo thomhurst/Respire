@@ -7,26 +7,44 @@ namespace Respire.Search;
 public sealed record RespireSearchSuggestionAddOptions
 {
     /// <summary>Adds to the existing score instead of replacing it.</summary>
-    public bool Increment { get; init; }
+    public bool Increment
+    {
+        get; init;
+    }
 
     /// <summary>Optional binary payload. Null omits PAYLOAD; empty memory sends an empty payload.</summary>
-    public ReadOnlyMemory<byte>? Payload { get; init; }
+    public ReadOnlyMemory<byte>? Payload
+    {
+        get; init;
+    }
 }
 
 /// <summary>Options for retrieving autocomplete suggestions.</summary>
 public sealed record RespireSearchSuggestionOptions
 {
     /// <summary>Includes prefixes at Levenshtein distance one.</summary>
-    public bool Fuzzy { get; init; }
+    public bool Fuzzy
+    {
+        get; init;
+    }
 
     /// <summary>Requests each suggestion's server-calculated match score.</summary>
-    public bool WithScores { get; init; }
+    public bool WithScores
+    {
+        get; init;
+    }
 
     /// <summary>Requests each suggestion's optional binary payload.</summary>
-    public bool WithPayloads { get; init; }
+    public bool WithPayloads
+    {
+        get; init;
+    }
 
     /// <summary>Maximum results. Must be positive; null uses the server default (5).</summary>
-    public int? Max { get; init; }
+    public int? Max
+    {
+        get; init;
+    }
 }
 
 /// <summary>An owned autocomplete suggestion. Score is null when not requested; Payload is null when not requested or absent.</summary>
@@ -40,7 +58,12 @@ public sealed partial class RespireSearchClient
         RespireSearchSuggestionAddOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(suggestion);
-        if (double.IsNaN(score)) throw new ArgumentOutOfRangeException(nameof(score), "A suggestion score cannot be NaN.");
+
+        if (double.IsNaN(score))
+        {
+            throw new ArgumentOutOfRangeException(nameof(score), "A suggestion score cannot be NaN.");
+        }
+
         var increment = options?.Increment == true;
         var payload = options?.Payload;
         var arguments = CreateSuggestionArguments(
@@ -82,7 +105,12 @@ public sealed partial class RespireSearchClient
         RespireSearchSuggestionOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(prefix);
-        if (options?.Max is <= 0) throw new ArgumentOutOfRangeException(nameof(options), options.Max, "Max must be positive.");
+
+        if (options?.Max is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), options.Max, "Max must be positive.");
+        }
+
         var withScores = options?.WithScores == true;
         var withPayloads = options?.WithPayloads == true;
         var fuzzy = options?.Fuzzy == true;
@@ -94,21 +122,34 @@ public sealed partial class RespireSearchClient
         return await ExecuteAsync<IReadOnlyList<RespireSearchSuggestion>>(RespireSearchCommands.GetSuggestions, [key, prefix, .. arguments], cancellationToken, result =>
         {
             if (result.Type != RespireDataType.Array || result.IsNull)
+            {
                 throw RespireSearchReply.Unexpected("FT.SUGGET", "an array was expected");
+            }
+
             var width = 1 + (withScores ? 1 : 0) + (withPayloads ? 1 : 0);
+
             if (result.Count % width != 0)
+            {
                 throw RespireSearchReply.Unexpected("FT.SUGGET", "an incomplete suggestion entry");
+            }
+
             var suggestions = new RespireSearchSuggestion[result.Count / width];
+
             for (var i = 0; i < suggestions.Length; i++)
             {
                 var offset = i * width;
                 var text = ReadSuggestionString(result[offset++]).AsString();
                 double? score = withScores ? ReadSuggestionScore(result[offset++]) : null;
                 ReadOnlyMemory<byte>? payload = null;
+
                 if (withPayloads && !result[offset].IsNull)
+                {
                     payload = ReadSuggestionString(result[offset]).AsBytes();
+                }
+
                 suggestions[i] = new(text, score, payload);
             }
+
             return suggestions;
         }).ConfigureAwait(false);
     }
@@ -117,37 +158,74 @@ public sealed partial class RespireSearchClient
         ReadOnlySpan<RespireValue?> flags, RespireValue optionName, RespireValue? optionValue)
     {
         var count = optionValue.HasValue ? 2 : 0;
+
         foreach (var flag in flags)
-            if (flag.HasValue) count++;
-        if (count == 0) return [];
+        {
+            if (flag.HasValue)
+            {
+                count++;
+            }
+        }
+
+        if (count == 0)
+        {
+            return [];
+        }
+
         var arguments = new RespireValue[count];
         var offset = 0;
+
         foreach (var flag in flags)
-            if (flag is { } value) arguments[offset++] = value;
+        {
+            if (flag is { } value)
+            {
+                arguments[offset++] = value;
+            }
+        }
+
         if (optionValue is { } pairedValue)
         {
             arguments[offset++] = optionName;
             arguments[offset] = pairedValue;
         }
+
         return arguments;
     }
 
     private static RespireResult ReadSuggestionString(RespireResult result)
     {
         if (result.IsNull || result.Type is not (RespireDataType.BulkString or RespireDataType.SimpleString))
+        {
             throw RespireSearchReply.Unexpected("FT.SUGGET", "a string was expected");
+        }
+
         return result;
     }
 
     private static double ReadSuggestionScore(RespireResult result)
     {
-        if (result.Type == RespireDataType.Double) return result.AsDouble();
+        if (result.Type == RespireDataType.Double)
+        {
+            return result.AsDouble();
+        }
+
         var text = ReadSuggestionString(result).AsString();
         // Redis uses inf tokens, which invariant double.TryParse does not accept as Infinity.
         if (text.Equals("inf", StringComparison.OrdinalIgnoreCase) || text.Equals("+inf", StringComparison.OrdinalIgnoreCase))
+        {
             return double.PositiveInfinity;
-        if (text.Equals("-inf", StringComparison.OrdinalIgnoreCase)) return double.NegativeInfinity;
-        if (text.Equals("nan", StringComparison.OrdinalIgnoreCase)) return double.NaN;
+        }
+
+        if (text.Equals("-inf", StringComparison.OrdinalIgnoreCase))
+        {
+            return double.NegativeInfinity;
+        }
+
+        if (text.Equals("nan", StringComparison.OrdinalIgnoreCase))
+        {
+            return double.NaN;
+        }
+
         return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
             ? value
             : throw RespireSearchReply.Unexpected("FT.SUGGET", "a numeric score was expected");

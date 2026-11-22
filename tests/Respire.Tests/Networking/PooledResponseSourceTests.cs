@@ -24,7 +24,10 @@ public class PooledResponseSourceTests
         var observed = new TaskCompletionSource<(int Thread, long Value, Exception? Error)>(TaskCreationOptions.RunContinuationsAsynchronously);
         awaiter.UnsafeOnCompleted(() =>
         {
-            try { observed.TrySetResult((Environment.CurrentManagedThreadId, awaiter.GetResult(), null)); }
+            try
+            {
+                observed.TrySetResult((Environment.CurrentManagedThreadId, awaiter.GetResult(), null));
+            }
             catch (Exception error) { observed.TrySetResult((Environment.CurrentManagedThreadId, 0, error)); }
         });
         var scheduler = new CompletionScheduler();
@@ -34,14 +37,21 @@ public class PooledResponseSourceTests
         // A dedicated owner makes an extra pool dispatch distinguishable without timing assertions.
         var completionThread = new Thread(() =>
         {
-            try { scheduler.Execute(); finished.TrySetResult(Environment.CurrentManagedThreadId); }
+            try
+            {
+                scheduler.Execute();
+                finished.TrySetResult(Environment.CurrentManagedThreadId);
+            }
             catch (Exception error) { finished.TrySetException(error); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         completionThread.Start();
+
         try
         {
             var result = await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var owner = await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
             if (converterFails)
             {
                 await Assert.That(result.Thread).IsNotEqualTo(owner);
@@ -73,7 +83,12 @@ public class PooledResponseSourceTests
             {
                 _ = awaiter.GetResult();
                 entered.TrySetResult();
-                if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Caller was not released.");
+
+                if (!release.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    throw new TimeoutException("Caller was not released.");
+                }
+
                 completed.TrySetResult();
             }
             catch (Exception error) { completed.TrySetException(error); }
@@ -85,6 +100,7 @@ public class PooledResponseSourceTests
         var resumed = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = Task.Run(async () => resumed.TrySetResult(
             await new CompletionScheduler.RunWhileAwaiting<int>(new ValueTask<int>(receive.Task), scheduler)));
+
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -93,6 +109,7 @@ public class PooledResponseSourceTests
             await Assert.That(completed.Task.IsCompleted).IsFalse();
         }
         finally { release.Set(); }
+
         await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
     }

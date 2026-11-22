@@ -22,10 +22,16 @@ public class HashPartialReadBenchmarks
     private long _reads;
 
     [Params(0, 2, 4)]
-    public int CachedFields { get; set; }
+    public int CachedFields
+    {
+        get; set;
+    }
 
     [ParamsSource(nameof(Modes))]
-    public bool ReuseHashFields { get; set; }
+    public bool ReuseHashFields
+    {
+        get; set;
+    }
 
     public IEnumerable<bool> Modes => Environment.GetEnvironmentVariable("RESPIRE_BENCH_BASELINE") == "1"
         ? [false] : [false, true];
@@ -36,6 +42,7 @@ public class HashPartialReadBenchmarks
         var host = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1";
         var port = int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379");
         var cache = new RespireClientSideCacheOptions();
+
         if (ReuseHashFields)
         {
             // Setup-only reflection keeps the identical fixture source compatible with old builds.
@@ -43,18 +50,31 @@ public class HashPartialReadBenchmarks
                 ?? throw new InvalidOperationException("The selected build does not support partial hash reads.");
             option.SetValue(cache, true);
         }
+
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new(host, port) }, Connections = 1,
-            Protocol = RespireProtocol.Resp3, ClientSideCache = cache,
+            Endpoints = { new(host, port) },
+            Connections = 1,
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = cache,
         });
+
         foreach (var key in _keys)
+        {
             foreach (var field in _fields)
+            {
                 await _client.Hashes.SetAsync(key, field, _value);
+            }
+        }
+
         _primedFields = _fields[..CachedFields];
         var values = await _client.Hashes.GetManyAsync(_keys[0], _fields);
+
         if (values.Length != 4 || values.Any(value => value != _value))
+        {
             throw new InvalidOperationException("Hash fixture did not return the expected values.");
+        }
+
         _process.Refresh();
         _cpuAt = _process.TotalProcessorTime;
         _startedAt = Stopwatch.GetTimestamp();
@@ -66,10 +86,17 @@ public class HashPartialReadBenchmarks
         // BDN performs one invocation per iteration. Each measured read uses a separate
         // hash, so no earlier operation turns a planned miss into a hit. Priming is excluded.
         _client.ClientSideCache!.Clear();
-        if (CachedFields == 0) return;
+
+        if (CachedFields == 0)
+        {
+            return;
+        }
+
 #pragma warning disable RESP009 // BDN iteration setup must be synchronous; finish priming before the measured reads.
         foreach (var key in _keys)
+        {
             _client.Hashes.GetManyAsync(key, _primedFields).AsTask().GetAwaiter().GetResult();
+        }
 #pragma warning restore RESP009
     }
 
@@ -77,12 +104,14 @@ public class HashPartialReadBenchmarks
     public async Task<int> ReadBatch()
     {
         var count = 0;
+
         foreach (var key in _keys)
         {
             var values = await _client.Hashes.GetManyAsync(key, _fields);
             count += values.Length;
             _reads++;
         }
+
         return count;
     }
 
@@ -92,10 +121,18 @@ public class HashPartialReadBenchmarks
         _process.Refresh();
         Console.WriteLine("HASH_PARTIAL_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
-            CachedFields, ReuseHashFields, reads = _reads, elapsedSeconds = Stopwatch.GetElapsedTime(_startedAt).TotalSeconds,
+            CachedFields,
+            ReuseHashFields,
+            reads = _reads,
+            elapsedSeconds = Stopwatch.GetElapsedTime(_startedAt).TotalSeconds,
             cpuMilliseconds = (_process.TotalProcessorTime - _cpuAt).TotalMilliseconds
         }));
-        foreach (var key in _keys) await _client.DeleteAsync(key);
+
+        foreach (var key in _keys)
+        {
+            await _client.DeleteAsync(key);
+        }
+
         await _client.DisposeAsync();
         _process.Dispose();
     }

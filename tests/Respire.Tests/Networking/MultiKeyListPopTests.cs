@@ -29,10 +29,16 @@ public class MultiKeyListPopTests
         RespireKey[] keys = ["missing", "key"];
         var pending = queue.Lists.PopMany(keys, 2, RespireListSide.Right);
         keys[1] = "changed";
+
         if (transaction is not null)
+        {
             await transaction.CommitAsync();
+        }
         else
+        {
             await batch!.ExecuteAsync();
+        }
+
         await Assert.That(pending.Result!.Value.Key).IsEqualTo((RespireKey)"key");
         await Assert.That(pending.Result.Value.Values).IsEquivalentTo(["a", "b"], CollectionOrdering.Matching);
         await Assert.That(server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC"))
@@ -62,19 +68,48 @@ public class MultiKeyListPopTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         Func<Task>[] invalid =
         [
-            async () => { await client.Lists.PopManyAsync([]); },
-            async () => { await client.Lists.PopManyAsync(["key"], 0); },
-            async () => { await client.Lists.PopManyAsync(["key"], -1); },
-            async () => { await client.Lists.PopManyAsync(["key"], side: (RespireListSide)99); },
-            async () => { await client.Lists.PopManyAsync(["key"], waitFor: TimeSpan.FromSeconds(-2)); },
-            async () => { await client.Lists.PopAsync([], TimeSpan.Zero); },
-            async () => { await client.Lists.PopAsync(["key"], TimeSpan.Zero, (RespireListSide)99); },
-            async () => { await client.Lists.PopAsync(["key"], TimeSpan.FromSeconds(-2)); },
+            async () =>
+            {
+                await client.Lists.PopManyAsync([]);
+            },
+            async () =>
+            {
+                await client.Lists.PopManyAsync(["key"], 0);
+            },
+            async () =>
+            {
+                await client.Lists.PopManyAsync(["key"], -1);
+            },
+            async () =>
+            {
+                await client.Lists.PopManyAsync(["key"], side: (RespireListSide)99);
+            },
+            async () =>
+            {
+                await client.Lists.PopManyAsync(["key"], waitFor: TimeSpan.FromSeconds(-2));
+            },
+            async () =>
+            {
+                await client.Lists.PopAsync([], TimeSpan.Zero);
+            },
+            async () =>
+            {
+                await client.Lists.PopAsync(["key"], TimeSpan.Zero, (RespireListSide)99);
+            },
+            async () =>
+            {
+                await client.Lists.PopAsync(["key"], TimeSpan.FromSeconds(-2));
+            },
         ];
+
         foreach (var command in invalid)
+        {
             await Assert.That(command).Throws<ArgumentException>();
+        }
+
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
+
         foreach (var lists in new[] { batch.Lists, transaction.Lists })
         {
             await Assert.That(() => lists.PopMany([])).Throws<ArgumentException>();
@@ -82,6 +117,7 @@ public class MultiKeyListPopTests
             await Assert.That(() => lists.PopMany(["key"], -1)).Throws<ArgumentOutOfRangeException>();
             await Assert.That(() => lists.PopMany(["key"], side: (RespireListSide)99)).Throws<ArgumentOutOfRangeException>();
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -95,7 +131,11 @@ public class MultiKeyListPopTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("BL", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("BL", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 received.TrySetResult();
                 return true;
             },
@@ -143,16 +183,23 @@ public class MultiKeyListPopTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");
         RespireKey[] keys = ["{lists}:first", "{lists}:second"];
         RespireKey returned;
+
         if (scalar)
+        {
             returned = (await view.Lists.PopAsync(keys, TimeSpan.FromSeconds(1), path == "one-left" ? RespireListSide.Left : RespireListSide.Right))!.Value.Key;
+        }
         else if (path is "immediate" or "many-blocking")
+        {
             returned = (await (path == "many-blocking" ? view.Lists.PopManyAsync(keys, waitFor: TimeSpan.FromSeconds(1)) : view.Lists.PopManyAsync(keys)))!.Value.Key;
+        }
         else if (path == "batch")
         {
             using var batch = view.CreateBatch();
@@ -167,6 +214,7 @@ public class MultiKeyListPopTests
             await transaction.CommitAsync();
             returned = pending.Result!.Value.Key;
         }
+
         await Assert.That(returned).IsEqualTo((RespireKey)"{lists}:second");
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         var expected = path switch
@@ -188,7 +236,9 @@ public class MultiKeyListPopTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         var view = client.WithKeyPrefix("tenant:");

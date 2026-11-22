@@ -51,7 +51,10 @@ public sealed record RespireSearchQuery(RespireSearchExpression Expression, Resp
 {
     /// <summary>Query expression.</summary>
     // Validate both initial construction and record-copy assignment; either can set this property.
-    public RespireSearchExpression Expression { get; init => field = value.RequireValid(nameof(Expression)); } = Expression.RequireValid(nameof(Expression));
+    public RespireSearchExpression Expression
+    {
+        get; init => field = value.RequireValid(nameof(Expression));
+    } = Expression.RequireValid(nameof(Expression));
 
     internal RespireValue[] ToArguments() => (Options ?? RespireSearchQueryOptions.Default).ToArguments();
 
@@ -88,9 +91,22 @@ public static class RespireSearchQueryBuilder
     public static RespireSearchExpression NumericRange(string field, double minimum, double maximum, bool exclusiveMinimum = false, bool exclusiveMaximum = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(field);
-        if (double.IsNaN(minimum)) throw new ArgumentOutOfRangeException(nameof(minimum));
-        if (double.IsNaN(maximum)) throw new ArgumentOutOfRangeException(nameof(maximum));
-        if (minimum > maximum) throw new ArgumentOutOfRangeException(nameof(minimum));
+
+        if (double.IsNaN(minimum))
+        {
+            throw new ArgumentOutOfRangeException(nameof(minimum));
+        }
+
+        if (double.IsNaN(maximum))
+        {
+            throw new ArgumentOutOfRangeException(nameof(maximum));
+        }
+
+        if (minimum > maximum)
+        {
+            throw new ArgumentOutOfRangeException(nameof(minimum));
+        }
+
         return FormatRange(field, FormatBound(minimum), FormatBound(maximum), exclusiveMinimum, exclusiveMaximum);
     }
 
@@ -99,7 +115,12 @@ public static class RespireSearchQueryBuilder
     public static RespireSearchExpression NumericRange(string field, long minimum, long maximum, bool exclusiveMinimum = false, bool exclusiveMaximum = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(field);
-        if (minimum > maximum) throw new ArgumentOutOfRangeException(nameof(minimum));
+
+        if (minimum > maximum)
+        {
+            throw new ArgumentOutOfRangeException(nameof(minimum));
+        }
+
         return FormatRange(
             field,
             minimum.ToString(CultureInfo.InvariantCulture),
@@ -130,8 +151,17 @@ public static class RespireSearchQueryBuilder
     private static RespireSearchExpression Combine(string separator, RespireSearchExpression[] expressions)
     {
         ArgumentNullException.ThrowIfNull(expressions);
-        if (expressions.Length == 0) throw new ArgumentException("At least one expression is required.", nameof(expressions));
-        foreach (var expression in expressions) expression.RequireValid(nameof(expressions));
+
+        if (expressions.Length == 0)
+        {
+            throw new ArgumentException("At least one expression is required.", nameof(expressions));
+        }
+
+        foreach (var expression in expressions)
+        {
+            expression.RequireValid(nameof(expressions));
+        }
+
         return RespireSearchExpression.FromBuilder(expressions.Length == 1
             ? expressions[0].Value
             : $"({string.Join(separator, expressions.Select(value => $"({value.Value})"))})");
@@ -149,9 +179,14 @@ public static class RespireSearchQueryBuilder
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
         var escaped = new StringBuilder(value.Length);
+
         foreach (var rune in value.EnumerateRunes())
         {
-            if (!Rune.IsLetterOrDigit(rune) && rune.Value != '_') escaped.Append('\\');
+            if (!Rune.IsLetterOrDigit(rune) && rune.Value != '_')
+            {
+                escaped.Append('\\');
+            }
+
 #if NET11_0_OR_GREATER
             escaped.Append(rune);
 #else
@@ -169,13 +204,22 @@ public sealed record RespireSearchQueryOptions
     internal static readonly RespireSearchQueryOptions Default = new();
 
     /// <summary>Field names to return. Empty means server default.</summary>
-    public IReadOnlyList<string> ReturnFields { get; init; } = [];
+    public IReadOnlyList<string> ReturnFields
+    {
+        get; init;
+    } = [];
 
     /// <summary>Return identifiers only.</summary>
-    public bool NoContent { get; init; }
+    public bool NoContent
+    {
+        get; init;
+    }
 
     /// <summary>Include scores in server response.</summary>
-    public bool WithScores { get; init; }
+    public bool WithScores
+    {
+        get; init;
+    }
 
     /// <summary>Restricts matches to these document keys. Empty means no key restriction.</summary>
     /// <remarks>The list is copied. Keep any binary key memory unchanged until the search completes.</remarks>
@@ -197,94 +241,199 @@ public sealed record RespireSearchQueryOptions
     } = [];
 
     /// <summary>Highlights matching terms in returned text.</summary>
-    public RespireSearchHighlightOptions? Highlight { get; init; }
+    public RespireSearchHighlightOptions? Highlight
+    {
+        get; init;
+    }
 
     /// <summary>Returns excerpts containing matching terms.</summary>
-    public RespireSearchSummaryOptions? Summarize { get; init; }
+    public RespireSearchSummaryOptions? Summarize
+    {
+        get; init;
+    }
 
     /// <summary>Maximum intervening words. Zero requires adjacent terms; null uses the server default.</summary>
-    public int? Slop { get; init; }
+    public int? Slop
+    {
+        get; init;
+    }
 
     /// <summary>Requires query terms to occur in query order.</summary>
-    public bool InOrder { get; init; }
+    public bool InOrder
+    {
+        get; init;
+    }
 
     /// <summary>Server stemming language. Null uses the server default.</summary>
-    public string? Language { get; init; }
+    public string? Language
+    {
+        get; init;
+    }
 
     /// <summary>Built-in or registered server scorer name.</summary>
-    public string? Scorer { get; init; }
+    public string? Scorer
+    {
+        get; init;
+    }
 
     /// <summary>Includes the score explanation tree. Requires <see cref="WithScores"/>.</summary>
-    public bool ExplainScore { get; init; }
+    public bool ExplainScore
+    {
+        get; init;
+    }
 
     /// <summary>Disables query expansion and stemming.</summary>
-    public bool Verbatim { get; init; }
+    public bool Verbatim
+    {
+        get; init;
+    }
 
     /// <summary>Includes stopwords in the query.</summary>
-    public bool NoStopWords { get; init; }
+    public bool NoStopWords
+    {
+        get; init;
+    }
 
     /// <summary>Requests legacy document payloads. Modern indexes normally return null.</summary>
-    public bool WithPayloads { get; init; }
+    public bool WithPayloads
+    {
+        get; init;
+    }
 
     /// <summary>Includes the server's encoded sort key, or null when no sort key is available.</summary>
-    public bool WithSortKeys { get; init; }
+    public bool WithSortKeys
+    {
+        get; init;
+    }
 
     /// <summary>Zero-based offset and result count.</summary>
-    public (int Offset, int Count)? Limit { get; init; }
+    public (int Offset, int Count)? Limit
+    {
+        get; init;
+    }
 
     /// <summary>Optional sort field and direction.</summary>
-    public (string Field, RespireSearchSortDirection Direction)? SortBy { get; init; }
+    public (string Field, RespireSearchSortDirection Direction)? SortBy
+    {
+        get; init;
+    }
 
     /// <summary>Query dialect version. Named parameters require dialect 2 or later.</summary>
-    public int? Dialect { get; init; }
+    public int? Dialect
+    {
+        get; init;
+    }
 
     /// <summary>Maximum server execution time in milliseconds.</summary>
-    public int? TimeoutMilliseconds { get; init; }
+    public int? TimeoutMilliseconds
+    {
+        get; init;
+    }
 
     /// <summary>Named query parameters.</summary>
-    public IReadOnlyDictionary<string, RespireValue> Parameters { get; init; } = RespireSearchEmpty.Values;
+    public IReadOnlyDictionary<string, RespireValue> Parameters
+    {
+        get; init;
+    } = RespireSearchEmpty.Values;
 
     internal RespireValue[] ToArguments(KeyValuePair<string, RespireValue>? reservedParameter = null)
     {
         ArgumentNullException.ThrowIfNull(ReturnFields);
         ArgumentNullException.ThrowIfNull(Parameters);
         ArgumentNullException.ThrowIfNull(InKeys);
+
         if (ExplainScore && !WithScores)
+        {
             throw new ArgumentException("EXPLAINSCORE requires WITHSCORES.", nameof(ExplainScore));
+        }
+
         if (NoContent && (Highlight is not null || Summarize is not null))
+        {
             throw new ArgumentException("NOCONTENT cannot be combined with highlighting or summaries.", nameof(NoContent));
-        if (Slop is < 0) throw new ArgumentOutOfRangeException(nameof(Slop));
-        if (reservedParameter is not null) RespireSearchParameters.RejectReserved(Parameters, nameof(Parameters));
+        }
+
+        if (Slop is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Slop));
+        }
+
+        if (reservedParameter is not null)
+        {
+            RespireSearchParameters.RejectReserved(Parameters, nameof(Parameters));
+        }
+
         RespireSearchDialect.Validate(Dialect, requiresParameters: Parameters.Count > 0 || reservedParameter is not null);
         var args = new List<RespireValue>();
-        if (NoContent) args.Add("NOCONTENT");
-        if (WithScores) args.Add("WITHSCORES");
-        if (WithPayloads) args.Add("WITHPAYLOADS");
-        if (WithSortKeys) args.Add("WITHSORTKEYS");
-        if (ExplainScore) args.Add("EXPLAINSCORE");
-        if (Verbatim) args.Add("VERBATIM");
-        if (NoStopWords) args.Add("NOSTOPWORDS");
-        if (InOrder) args.Add("INORDER");
+
+        if (NoContent)
+        {
+            args.Add("NOCONTENT");
+        }
+
+        if (WithScores)
+        {
+            args.Add("WITHSCORES");
+        }
+
+        if (WithPayloads)
+        {
+            args.Add("WITHPAYLOADS");
+        }
+
+        if (WithSortKeys)
+        {
+            args.Add("WITHSORTKEYS");
+        }
+
+        if (ExplainScore)
+        {
+            args.Add("EXPLAINSCORE");
+        }
+
+        if (Verbatim)
+        {
+            args.Add("VERBATIM");
+        }
+
+        if (NoStopWords)
+        {
+            args.Add("NOSTOPWORDS");
+        }
+
+        if (InOrder)
+        {
+            args.Add("INORDER");
+        }
+
         if (InKeys.Count > 0)
         {
             args.Add("INKEYS");
             args.Add(InKeys.Count);
-            foreach (var key in InKeys) args.Add(key);
+
+            foreach (var key in InKeys)
+            {
+                args.Add(key);
+            }
         }
+
         RespireSearchOptionArguments.AddFields(args, "INFIELDS", InFields);
         Highlight?.AddArguments(args);
         Summarize?.AddArguments(args);
+
         if (Slop is { } slop)
         {
             args.Add("SLOP");
             args.Add(slop);
         }
+
         RespireSearchOptionArguments.AddText(args, "LANGUAGE", Language);
         RespireSearchOptionArguments.AddText(args, "SCORER", Scorer);
+
         if (ReturnFields.Count > 0)
         {
             args.Add("RETURN");
             args.Add(ReturnFields.Count);
+
             foreach (var field in ReturnFields)
             {
                 ArgumentException.ThrowIfNullOrWhiteSpace(field, nameof(ReturnFields));
@@ -302,7 +451,11 @@ public sealed record RespireSearchQueryOptions
 
         if (Limit is { } limit)
         {
-            if (limit.Offset < 0 || limit.Count < 0) throw new ArgumentOutOfRangeException(nameof(Limit));
+            if (limit.Offset < 0 || limit.Count < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(Limit));
+            }
+
             args.Add("LIMIT");
             args.Add(limit.Offset);
             args.Add(limit.Count);
@@ -310,7 +463,11 @@ public sealed record RespireSearchQueryOptions
 
         if (TimeoutMilliseconds is { } timeout)
         {
-            if (timeout <= 0) throw new ArgumentOutOfRangeException(nameof(TimeoutMilliseconds));
+            if (timeout <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(TimeoutMilliseconds));
+            }
+
             args.Add("TIMEOUT");
             args.Add(timeout);
         }
@@ -324,9 +481,15 @@ public sealed record RespireSearchQueryOptions
     {
         ArgumentNullException.ThrowIfNull(parameters);
         var count = parameters.Count + (reserved is null ? 0 : 1);
-        if (count == 0) return;
+
+        if (count == 0)
+        {
+            return;
+        }
+
         args.Add("PARAMS");
         args.Add(checked(count * 2));
+
         if (reserved is { } value)
         {
             args.Add(value.Key);
@@ -361,16 +524,28 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
     public const string VectorParameterName = "vector";
 
     /// <summary>Vector field name.</summary>
-    public string Field { get; init => field = RequireText(value, nameof(Field)); } = RequireText(Field, nameof(Field));
+    public string Field
+    {
+        get; init => field = RequireText(value, nameof(Field));
+    } = RequireText(Field, nameof(Field));
 
     /// <summary>Query vector bytes.</summary>
-    public ReadOnlyMemory<byte> Vector { get; init => field = RequireVector(value); } = RequireVector(Vector);
+    public ReadOnlyMemory<byte> Vector
+    {
+        get; init => field = RequireVector(value);
+    } = RequireVector(Vector);
 
     /// <summary>Number of nearest neighbours.</summary>
-    public int K { get; init => field = RequirePositive(value); } = RequirePositive(K);
+    public int K
+    {
+        get; init => field = RequirePositive(value);
+    } = RequirePositive(K);
 
     /// <summary>Alias used for distance score.</summary>
-    public string ScoreField { get; init => field = RequireText(value, nameof(ScoreField)); } = "vector_score";
+    public string ScoreField
+    {
+        get; init => field = RequireText(value, nameof(ScoreField));
+    } = "vector_score";
 
     /// <summary>
     /// Optional pre-filter. Build escaped values with <see cref="RespireSearchQueryBuilder"/> or mark
@@ -411,41 +586,92 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
 public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpression, string VectorField, ReadOnlyMemory<byte> Vector, int K, int Limit = 10)
 {
     /// <summary>Number of fused results to skip.</summary>
-    public int Skip { get; init; }
+    public int Skip
+    {
+        get; init;
+    }
 
     /// <summary>Optional escaped expression applied before vector ranking. Apply it to the text expression too when both legs require filtering.</summary>
-    public RespireSearchExpression? VectorFilter { get; init; }
+    public RespireSearchExpression? VectorFilter
+    {
+        get; init;
+    }
 
     /// <summary>Reciprocal-rank-fusion constant.</summary>
-    public int RrfConstant { get; init; } = 60;
+    public int RrfConstant
+    {
+        get; init;
+    } = 60;
 
     /// <summary>Reciprocal-rank-fusion window size.</summary>
-    public int? RrfWindow { get; init; }
+    public int? RrfWindow
+    {
+        get; init;
+    }
 
     /// <summary>Field names to load from matched documents.</summary>
-    public IReadOnlyList<string> LoadFields { get; init; } = [];
+    public IReadOnlyList<string> LoadFields
+    {
+        get; init;
+    } = [];
 
     /// <summary>
     /// Additional named parameters used by the text expression. The name
     /// <see cref="RespireVectorSearchRequest.VectorParameterName"/> is reserved for the vector.
     /// </summary>
-    public IReadOnlyDictionary<string, RespireValue> Parameters { get; init; } = RespireSearchEmpty.Values;
+    public IReadOnlyDictionary<string, RespireValue> Parameters
+    {
+        get; init;
+    } = RespireSearchEmpty.Values;
 
     /// <summary>Maximum server execution time in milliseconds.</summary>
-    public int? TimeoutMilliseconds { get; init; }
+    public int? TimeoutMilliseconds
+    {
+        get; init;
+    }
 
     internal RespireValue[] ToArguments()
     {
         TextExpression.RequireValid(nameof(TextExpression));
         ArgumentException.ThrowIfNullOrWhiteSpace(VectorField);
-        if (Vector.IsEmpty) throw new ArgumentException("Vector bytes are required.", nameof(Vector));
-        if (K <= 0) throw new ArgumentOutOfRangeException(nameof(K));
-        if (Limit < 0) throw new ArgumentOutOfRangeException(nameof(Limit));
-        if (Skip < 0) throw new ArgumentOutOfRangeException(nameof(Skip));
+
+        if (Vector.IsEmpty)
+        {
+            throw new ArgumentException("Vector bytes are required.", nameof(Vector));
+        }
+
+        if (K <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(K));
+        }
+
+        if (Limit < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Limit));
+        }
+
+        if (Skip < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(Skip));
+        }
+
         VectorFilter?.RequireValid(nameof(VectorFilter));
-        if (RrfConstant <= 0) throw new ArgumentOutOfRangeException(nameof(RrfConstant));
-        if (RrfWindow is <= 0) throw new ArgumentOutOfRangeException(nameof(RrfWindow));
-        if (TimeoutMilliseconds is <= 0) throw new ArgumentOutOfRangeException(nameof(TimeoutMilliseconds));
+
+        if (RrfConstant <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(RrfConstant));
+        }
+
+        if (RrfWindow is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(RrfWindow));
+        }
+
+        if (TimeoutMilliseconds is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(TimeoutMilliseconds));
+        }
+
         ArgumentNullException.ThrowIfNull(LoadFields);
         RespireSearchParameters.RejectReserved(Parameters, nameof(Parameters));
 
@@ -461,17 +687,20 @@ public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpres
             "K",
             K,
         };
+
         if (VectorFilter is { } filter)
         {
             args.Add("FILTER");
             args.Add(1);
             args.Add(filter.Value);
         }
+
         args.Add("COMBINE");
         args.Add("RRF");
         args.Add(RrfWindow is null ? 2 : 4);
         args.Add("CONSTANT");
         args.Add(RrfConstant);
+
         if (RrfWindow is { } window)
         {
             args.Add("WINDOW");
@@ -481,26 +710,38 @@ public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpres
         args.Add("LIMIT");
         args.Add(Skip);
         args.Add(Limit);
+
         if (LoadFields.Count > 0)
         {
             // Load the reserved key and score so document identity survives an explicit projection.
             var fields = new List<string> { "@__key", "@__score" };
+
             foreach (var field in LoadFields)
             {
                 ArgumentException.ThrowIfNullOrWhiteSpace(field);
-                if (field is "__key" or "@__key" or "__score" or "@__score") continue;
+
+                if (field is "__key" or "@__key" or "__score" or "@__score")
+                {
+                    continue;
+                }
+
                 fields.Add(field.StartsWith('@') ? field : "@" + field);
             }
 
             args.Add("LOAD");
             args.Add(fields.Count);
-            foreach (var field in fields) args.Add(field);
+
+            foreach (var field in fields)
+            {
+                args.Add(field);
+            }
         }
 
         RespireSearchQueryOptions.AddParameters(
             args,
             Parameters,
             new KeyValuePair<string, RespireValue>(RespireVectorSearchRequest.VectorParameterName, Vector));
+
         if (TimeoutMilliseconds is { } timeout)
         {
             args.Add("TIMEOUT");
@@ -517,10 +758,16 @@ public sealed record RespireSearchExplainOptions
     internal static readonly RespireSearchExplainOptions Default = new();
 
     /// <summary>Uses FT.EXPLAINCLI and joins its plan lines with <see cref="Environment.NewLine"/>.</summary>
-    public bool Cli { get; init; }
+    public bool Cli
+    {
+        get; init;
+    }
 
     /// <summary>Query dialect used to parse the expression, such as 2 for vector KNN syntax.</summary>
-    public int? Dialect { get; init; }
+    public int? Dialect
+    {
+        get; init;
+    }
 }
 
 internal static class RespireSearchDialect
@@ -530,14 +777,23 @@ internal static class RespireSearchDialect
     internal static void Validate(int? dialect, bool requiresParameters)
     {
         if (dialect is <= 0)
+        {
             throw new ArgumentOutOfRangeException("Dialect", dialect, "Dialect must be positive.");
+        }
+
         if (requiresParameters && dialect is null or < ParameterDialect)
+        {
             throw new ArgumentOutOfRangeException("Dialect", dialect, "Named parameters and vector queries require an explicit dialect 2 or later.");
+        }
     }
 
     internal static void Add(List<RespireValue> args, int? dialect)
     {
-        if (dialect is not { } value) return;
+        if (dialect is not { } value)
+        {
+            return;
+        }
+
         args.Add("DIALECT");
         args.Add(value);
     }
@@ -548,6 +804,7 @@ internal static class RespireSearchParameters
     internal static void RejectReserved(IReadOnlyDictionary<string, RespireValue> parameters, string parameterName)
     {
         ArgumentNullException.ThrowIfNull(parameters, parameterName);
+
         if (parameters.ContainsKey(RespireVectorSearchRequest.VectorParameterName))
         {
             throw new ArgumentException(

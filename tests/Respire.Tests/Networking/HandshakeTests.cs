@@ -1,9 +1,9 @@
 using Respire;
 using Respire.Commands;
 using Respire.Networking;
-using TUnit.Core;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
+using TUnit.Core;
 
 namespace Respire.Tests.Networking;
 
@@ -29,7 +29,11 @@ public class HandshakeTests
             };
             server.SuppressReply = _ =>
             {
-                if (server.CommandsSeen == capacity) initialCommands.TrySetResult();
+                if (server.CommandsSeen == capacity)
+                {
+                    initialCommands.TrySetResult();
+                }
+
                 return true;
             };
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -69,7 +73,8 @@ public class HandshakeTests
         var error = await Assert.That(async () => await RespireConnection.ConnectAsync(
             "127.0.0.1", server.Port,
             new RespireOptions { Password = "wrong", ClientName = "ordered", MaxInflightCommands = 2 }.ToConnectionOptions()
-                with { Protocol = RespireProtocol.Resp2, AdvertiseReplicaRedirects = advertiseRedirects }, cancellationToken: timeout.Token))
+                with
+            { Protocol = RespireProtocol.Resp2, AdvertiseReplicaRedirects = advertiseRedirects }, cancellationToken: timeout.Token))
             .Throws<RespireConnectionException>();
         await Assert.That(error!.Message).Contains("AUTH failed");
         await Assert.That(error.Message).Contains("invalid password");
@@ -84,7 +89,11 @@ public class HandshakeTests
         await using var server = new FakeRespServer { HandleLibraryInfo = false };
         server.SuppressReply = _ =>
         {
-            if (server.CommandsSeen == 2) full.TrySetResult();
+            if (server.CommandsSeen == 2)
+            {
+                full.TrySetResult();
+            }
+
             return true;
         };
         using var caller = new CancellationTokenSource();
@@ -98,6 +107,7 @@ public class HandshakeTests
                 CommandTimeout = callerCancellation ? null : TimeSpan.FromMilliseconds(200),
             }, cancellationToken: caller.Token);
         await full.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         if (callerCancellation)
         {
             caller.Cancel();
@@ -121,10 +131,15 @@ public class HandshakeTests
         await using var server = new FakeRespServer { HandleLibraryInfo = false };
         server.SuppressReply = _ =>
         {
-            if (server.CommandsSeen == 2) full.TrySetResult();
+            if (server.CommandsSeen == 2)
+            {
+                full.TrySetResult();
+            }
+
             return true;
         };
         using var caller = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         try
         {
             var connecting = RespireConnection.ConnectAsync("127.0.0.1", server.Port,
@@ -201,7 +216,10 @@ public class HandshakeTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var options = new RespireOptions
         {
-            Protocol = protocol, Password = "secret", ClientName = "wire-test", Database = 1,
+            Protocol = protocol,
+            Password = "secret",
+            ClientName = "wire-test",
+            Database = 1,
             LibraryName = "Respire(se-compat)",
         };
         await using var connection = await RespireConnection.ConnectAsync(
@@ -371,6 +389,7 @@ public class HandshakeTests
         };
 
         RespireConnectionException? failure = null;
+
         try
         {
             await using var _ = await RespireConnection.ConnectAsync(

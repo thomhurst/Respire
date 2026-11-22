@@ -28,7 +28,12 @@ public class ScriptingEngineTests
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
         } : null;
-        if (listener is not null) ActivitySource.AddActivityListener(listener);
+
+        if (listener is not null)
+        {
+            ActivitySource.AddActivityListener(listener);
+        }
+
         await using var server = new FakeRespServer(FakeRespServer.OkReply)
         {
             ReplyOverride = (_, command) => command switch
@@ -51,8 +56,11 @@ public class ScriptingEngineTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespireProtocol)protocol, Connections = 1, UseCluster = cluster,
-            ClusterTopologyRefreshInterval = null, ClientSideCache = cache ? new() : null,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            UseCluster = cluster,
+            ClusterTopologyRefreshInterval = null,
+            ClientSideCache = cache ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
@@ -90,7 +98,11 @@ public class ScriptingEngineTests
             },
             SuppressReply = command =>
             {
-                if (command != "INFO scriptingengines") return false;
+                if (command != "INFO scriptingengines")
+                {
+                    return false;
+                }
+
                 probeStarted.TrySetResult();
                 return true;
             },
@@ -99,16 +111,25 @@ public class ScriptingEngineTests
 #pragma warning disable RESP010
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = (RespireProtocol)protocol, Connections = 1, UseCluster = route != "cache",
-            ClusterTopologyRefreshInterval = null, ClientSideCache = route != "cluster" ? new() : null,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            UseCluster = route != "cache",
+            ClusterTopologyRefreshInterval = null,
+            ClientSideCache = route != "cluster" ? new() : null,
             Endpoints = [new("127.0.0.1", server.Port)],
         });
 #pragma warning restore RESP010
         using var tokenSource = new CancellationTokenSource();
         // Explicitly fence EVAL_RO too, so each route exercises its awaited-reply boundary.
         var command = RespireCommand.Create(operation, cacheMutation: RespireCacheMutation.Unknown);
-        if (!cancellation) server.CloseConnectionAfterCommand = server.CommandsSeen + 1;
+
+        if (!cancellation)
+        {
+            server.CloseConnectionAfterCommand = server.CommandsSeen + 1;
+        }
+
         var execution = client.ExecuteFireAndForgetAsync(command, ["return 42", 1, "private-key"], tokenSource.Token).AsTask();
+
         if (cancellation)
         {
             await probeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -164,11 +185,17 @@ public class ScriptingEngineTests
     private static long MeasureEngineInspection(Cmd1 command, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 32; i++)
         {
             GC.KeepAlive(ScriptingEngineInfo.ExpectedEngine(in command, "EVAL"));
-            if (allocate) _allocationControl = new byte[37];
+
+            if (allocate)
+            {
+                _allocationControl = new byte[37];
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -186,7 +213,9 @@ public class ScriptingEngineTests
     private const string Missing = "ERR Could not find scripting engine 'lua'";
     private const string Absent = "# Scripting Engines\r\nengines_count:0\r\nengines_total_used_memory:0\r\n";
     private const string Present = "# Scripting Engines\r\nengines_count:1\r\nengine_0:name=LUA,module=lua,abi_version=4\r\n";
+
     private static byte[] Error(string message) => Encoding.UTF8.GetBytes($"-{message}\r\n");
+
     private static byte[] Bulk(string value) => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
 
     [Test]
@@ -283,8 +312,13 @@ public class ScriptingEngineTests
         await using var server = new FakeRespServer(Error("ERR Could not find scripting engine 'python'"), Bulk(Present));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         Exception? error = null;
-        try { using var result = await client.ExecuteAsync("EVAL", [source, 0]); }
+
+        try
+        {
+            using var result = await client.ExecuteAsync("EVAL", [source, 0]);
+        }
         catch (Exception caught) { error = caught; }
+
         await Assert.That(error is RespireScriptingEngineUnavailableException).IsEqualTo(classified);
         await Assert.That(error is RespireServerException).IsEqualTo(!classified);
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(classified ? 2 : 1);
@@ -324,7 +358,8 @@ public class ScriptingEngineTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
             CommandTimeout = disableCommandTimeout ? null : TimeSpan.FromSeconds(10),
         });
 #pragma warning restore RESP010
@@ -358,7 +393,9 @@ public class ScriptingEngineTests
     {
         await using var server = new FakeRespServer(Error(Missing), response switch
         {
-            0 => Bulk(Present), 1 => Bulk(""), _ => Error("NOPERM no permission for INFO")
+            0 => Bulk(Present),
+            1 => Bulk(""),
+            _ => Error("NOPERM no permission for INFO")
         });
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var error = await Assert.That(async () => await EvaluateAsync(client))
@@ -407,9 +444,13 @@ public class ScriptingEngineTests
         {
             ReplyOverride = (id, command) => command == "INFO scriptingengines" ? Bulk(id == 0 ? Absent : Present) : null
         };
+
         await using (var first = await FakeRespServer.ConnectClientAsync(server.Port))
+        {
             await Assert.That(async () => await EvaluateAsync(first))
                 .ThrowsExactly<RespireScriptingEngineUnavailableException>();
+        }
+
         await using var second = await FakeRespServer.ConnectClientAsync(server.Port);
         await Assert.That(async () => await EvaluateAsync(second))
             .ThrowsExactly<RespireServerException>();
@@ -437,7 +478,11 @@ public class ScriptingEngineTests
         {
             SuppressReply = command =>
             {
-                if (command != "INFO scriptingengines") return false;
+                if (command != "INFO scriptingengines")
+                {
+                    return false;
+                }
+
                 probing.TrySetResult();
                 return true;
             }
@@ -460,8 +505,14 @@ public class ScriptingEngineTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         await Assert.That(async () =>
         {
-            if (function) await client.Functions.LoadAsync("#!lua name=sample\nreturn 1");
-            else await client.Scripts.LoadAsync(RespireScript.Create("return 42"));
+            if (function)
+            {
+                await client.Functions.LoadAsync("#!lua name=sample\nreturn 1");
+            }
+            else
+            {
+                await client.Scripts.LoadAsync(RespireScript.Create("return 42"));
+            }
         }).ThrowsExactly<RespireScriptingEngineUnavailableException>();
     }
 

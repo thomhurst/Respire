@@ -31,11 +31,13 @@ public class VectorSetCommandTests
             "*3\r\n,1\r\n,-0.5\r\n,0\r\n"u8.ToArray(), "#t\r\n"u8.ToArray(), Bulk(json), ":1\r\n"u8.ToArray(),
             Bulk(json), ":1\r\n"u8.ToArray(), info, Join("*1\r\n%1\r\n", Bulk(member), ",0.5\r\n"u8.ToArray()),
             Bulk(member), Join("*1\r\n", Bulk(member)), Join("*1\r\n", Bulk(member))];
+
         if (surface == 2)
         {
             var executed = Join($"*{replies.Length}\r\n", replies);
             replies = [FakeRespServer.OkReply, .. Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), replies.Length), executed];
         }
+
         await using var server = new FakeRespServer(replies);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var view = client.WithKeyPrefix("tenant:");
@@ -44,15 +46,41 @@ public class VectorSetCommandTests
         IRespireCommandQueue? queue = transaction ?? (IRespireCommandQueue?)batch;
         var pending = new List<Func<object?>>();
         var results = new List<object?>();
+
         async Task Capture<T>(Func<ValueTask<T>> immediate, Func<RespirePending<T>> deferred)
         {
-            if (queue is null) results.Add(await immediate());
-            else { var item = deferred(); pending.Add(() => item.Result); }
+            if (queue is null)
+            {
+                results.Add(await immediate());
+            }
+            else
+            {
+                var item = deferred();
+                pending.Add(() => item.Result);
+            }
         }
-        var add = new RespireVectorAddOptions { ReduceDimensions = 2, CheckAndSet = true,
-            Quantization = RespireVectorQuantization.None, ExplorationFactor = 50, AttributesJson = json, Links = 4 };
-        var search = new RespireVectorSearchOptions { IncludeScores = true, IncludeAttributes = true, Count = 5,
-            Epsilon = 0.25, ExplorationFactor = 60, Filter = ".Name == \"first\"", FilterExplorationFactor = 200, Exact = true, NoThread = true };
+
+        var add = new RespireVectorAddOptions
+        {
+            ReduceDimensions = 2,
+            CheckAndSet = true,
+            Quantization = RespireVectorQuantization.None,
+            ExplorationFactor = 50,
+            AttributesJson = json,
+            Links = 4
+        };
+        var search = new RespireVectorSearchOptions
+        {
+            IncludeScores = true,
+            IncludeAttributes = true,
+            Count = 5,
+            Epsilon = 0.25,
+            ExplorationFactor = 60,
+            Filter = ".Name == \"first\"",
+            FilterExplorationFactor = 200,
+            Exact = true,
+            NoThread = true
+        };
         var encoding = (RespireVectorEncoding)format;
         var attributes = new Attributes { Name = "first" };
         await Capture(() => view.VectorSets.AddAsync(key, vector, member, add, encoding), () => queue!.VectorSets.Add(key, vector, member, add, encoding));
@@ -72,10 +100,22 @@ public class VectorSetCommandTests
         await Capture(() => view.VectorSets.RandomMemberAsync(key), () => queue!.VectorSets.RandomMember(key));
         await Capture(() => view.VectorSets.RandomMembersAsync(key, -2), () => queue!.VectorSets.RandomMembers(key, -2));
         await Capture(() => view.VectorSets.RangeAsync(key, "-", "+", 10), () => queue!.VectorSets.Range(key, "-", "+", 10));
-        Array.Fill(member, (byte)42); Array.Fill(key, (byte)'x'); Array.Fill(json, (byte)'x'); Array.Fill(vector, 99);
+        Array.Fill(member, (byte)42);
+        Array.Fill(key, (byte)'x');
+        Array.Fill(json, (byte)'x');
+        Array.Fill(vector, 99);
         attributes.Name = "changed";
-        if (batch is not null) await batch.ExecuteAsync();
-        if (transaction is not null) await transaction.CommitAsync();
+
+        if (batch is not null)
+        {
+            await batch.ExecuteAsync();
+        }
+
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync();
+        }
+
         results.AddRange(pending.Select(read => read()));
         await client.DisposeAsync();
         await Assert.That((bool)results[0]!).IsTrue();
@@ -90,9 +130,15 @@ public class VectorSetCommandTests
         await Assert.That((byte[])results[14]!).IsEquivalentTo(expectedMember);
         var commands = server.ReceivedArguments.Where(args => Encoding.ASCII.GetString(args[0]).StartsWith('V')).ToArray();
         await Assert.That(commands.Length).IsEqualTo(17);
-        foreach (var command in commands) await Assert.That(Encoding.UTF8.GetString(command[1])).IsEqualTo("tenant:{vectors}:index");
+
+        foreach (var command in commands)
+        {
+            await Assert.That(Encoding.UTF8.GetString(command[1])).IsEqualTo("tenant:{vectors}:index");
+        }
+
         var written = commands[0];
         await Assert.That(Encoding.ASCII.GetString(written[2])).IsEqualTo("REDUCE");
+
         if (format == 0)
         {
             byte[] fp32 = new byte[12];
@@ -108,6 +154,7 @@ public class VectorSetCommandTests
                 .IsEquivalentTo(new[] { "VALUES", "3", "1", "-2.5", "0" });
             await Assert.That(written[9]).IsEquivalentTo(expectedMember);
         }
+
         await Assert.That(written[^3]).IsEquivalentTo(expectedJson);
         await Assert.That(commands[9][3]).IsEquivalentTo(expectedJson);
         await Assert.That(commands[11][3]).IsEquivalentTo(expectedJson);
@@ -118,6 +165,7 @@ public class VectorSetCommandTests
     public async Task ValuesEncodingIsInvariantAndRoundTripsSinglePrecision()
     {
         var originalCulture = CultureInfo.CurrentCulture;
+
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
@@ -130,6 +178,7 @@ public class VectorSetCommandTests
             await Assert.That(values[0]).IsEqualTo("1.25");
             await Assert.That(values[1]).IsEqualTo("1E-05");
             await Assert.That(values[2]).IsEqualTo("1E+20");
+
             for (var index = 0; index < vector.Length; index++)
             {
                 var parsed = float.Parse(values[index], NumberStyles.Float, CultureInfo.InvariantCulture);
@@ -170,7 +219,8 @@ public class VectorSetCommandTests
         await Assert.That(() => batch.VectorSets.Add("k", new[] { 1f }, "m", new() { Links = 3 })).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => transaction.VectorSets.Add("k", new[] { 1f }, "m", encoding: (RespireVectorEncoding)99)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.VectorSets.RandomMembersAsync("k", long.MinValue)).Throws<ArgumentOutOfRangeException>();
-        using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
         await Assert.That(async () => await client.VectorSets.AddAsync("k", new[] { 1f }, "m", cancellationToken: cancelled.Token)).Throws<OperationCanceledException>();
         await Assert.That(async () => await client.VectorSets.SearchAsync("k", new[] { 1f }, cancellationToken: cancelled.Token)).Throws<OperationCanceledException>();
         await Assert.That(async () => await client.VectorSets.SearchByMemberAsync("k", "m", cancellationToken: cancelled.Token)).Throws<OperationCanceledException>();
@@ -197,7 +247,15 @@ public class VectorSetCommandTests
         await Assert.That(copiedSlot).IsEqualTo(slot);
     }
 
-    public sealed class Attributes { public string Name { get; set; } = ""; }
+    public sealed class Attributes
+    {
+        public string Name
+        {
+            get; set;
+        } = "";
+    }
+
     private static byte[] Bulk(byte[] value) => Join($"${value.Length}\r\n", value, "\r\n"u8.ToArray());
+
     private static byte[] Join(string prefix, params byte[][] parts) => Encoding.ASCII.GetBytes(prefix).Concat(parts.SelectMany(x => x)).ToArray();
 }

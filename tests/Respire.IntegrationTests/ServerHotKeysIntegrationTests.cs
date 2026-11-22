@@ -31,17 +31,20 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
         Func<Task> prematureReset = async () => await peer.ResetAsync();
         await prematureReset.Should().ThrowAsync<RespireServerException>().WithMessage("*stop tracking first*");
         byte[] key = [0, 255, 32], value = [254, 0, 32];
+
         for (var index = 0; index < 64; index++)
         {
             await client.SetAsync(key, value);
             (await client.GetBytesAsync(key)).Should().Equal(value);
         }
+
         var active = (await tracker.GetAsync())!.Single();
         active.TrackingActive.Should().BeTrue();
         active.SampleRatio.Should().Be(1);
         active.CollectionStartUnixMilliseconds.Should().BeGreaterThan(0);
         active.SelectedSlots.Should().Equal(new RespireHotKeysSlotRange(0, 16383));
         active.SampledCommandsSelectedSlotsMicroseconds.Should().BeNull();
+
         if ((metrics & RespireHotKeysMetrics.Cpu) != 0)
         {
             active.ByCpuTime.Should().NotBeNull();
@@ -51,7 +54,12 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
             active.TotalCpuUserMilliseconds.Should().BeGreaterThanOrEqualTo(0);
             active.TotalCpuSystemMilliseconds.Should().BeGreaterThanOrEqualTo(0);
         }
-        else { active.ByCpuTime.Should().BeNull(); active.TotalCpuUserMilliseconds.Should().BeNull(); }
+        else
+        {
+            active.ByCpuTime.Should().BeNull();
+            active.TotalCpuUserMilliseconds.Should().BeNull();
+        }
+
         if ((metrics & RespireHotKeysMetrics.Network) != 0)
         {
             active.ByNetworkBytes!.Should().ContainSingle();
@@ -59,7 +67,11 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
             active.ByNetworkBytes[0].Bytes.Should().BeGreaterThan(0);
             active.TotalNetworkBytes.Should().BeGreaterThan(0);
         }
-        else { active.ByNetworkBytes.Should().BeNull(); active.TotalNetworkBytes.Should().BeNull(); }
+        else
+        {
+            active.ByNetworkBytes.Should().BeNull();
+            active.TotalNetworkBytes.Should().BeNull();
+        }
         // A different connection sees and stops the same server session.
         (await peer.StopAsync()).Should().BeTrue();
         (await tracker.StopAsync()).Should().BeFalse();
@@ -80,15 +92,26 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
         await client.Server.AclSetUserAsync("reader", ["reset", "on", ">hotkeys-test", "+ping"]);
         await using var restricted = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [tracker.Endpoint], Protocol = (RespireProtocol)protocol, Connections = 1,
-            Username = "reader", Password = "hotkeys-test",
+            Endpoints = [tracker.Endpoint],
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            Username = "reader",
+            Password = "hotkeys-test",
         });
         var restrictedTracker = await restricted.Server.GetHotKeysTrackerAsync();
         Func<Task> denied = async () => await restrictedTracker.GetAsync();
         (await denied.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("NOPERM");
         await client.DisposeAsync();
-        if (active.ByCpuTime is { } cpu) cpu[0].Key.Should().Equal(key);
-        if (active.ByNetworkBytes is { } network) network[0].Key.Should().Equal(key);
+
+        if (active.ByCpuTime is { } cpu)
+        {
+            cpu[0].Key.Should().Equal(key);
+        }
+
+        if (active.ByNetworkBytes is { } network)
+        {
+            network[0].Key.Should().Equal(key);
+        }
     }
 
     [Test]
@@ -104,11 +127,13 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
         await tracker.StartAsync(new() { DurationSeconds = 1 });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         RespireHotKeysSnapshot snapshot;
+
         do
         {
             await Task.Delay(25, deadline.Token);
             snapshot = (await tracker.GetAsync(deadline.Token))!.Single();
         } while (snapshot.TrackingActive);
+
         snapshot.CollectionDurationMilliseconds.Should().BeGreaterThanOrEqualTo(1000);
         (await tracker.StopAsync()).Should().BeFalse();
         await tracker.ResetAsync();
@@ -128,15 +153,26 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
         await Run(["redis-cli", "-e", "CONFIG", "SET", "cluster-announce-port", port.ToString()]);
         await Run(["redis-cli", "-e", "CLUSTER", "ADDSLOTSRANGE", "0", "16383"]);
         using var ready = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
         while (true)
         {
             var state = await container.ExecAsync(["redis-cli", "CLUSTER", "INFO"], ready.Token);
-            if (state.Stdout.Contains("cluster_state:ok", StringComparison.Ordinal)) break;
+
+            if (state.Stdout.Contains("cluster_state:ok", StringComparison.Ordinal))
+            {
+                break;
+            }
+
             await Task.Delay(50, ready.Token);
         }
+
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new(container.Hostname, port)], UseCluster = true, Protocol = (RespireProtocol)protocol, Connections = 1, AllowAdmin = true,
+            Endpoints = [new(container.Hostname, port)],
+            UseCluster = true,
+            Protocol = (RespireProtocol)protocol,
+            Connections = 1,
+            AllowAdmin = true,
         });
         var tracker = await client.WithKeyPrefix("ignored:").Server.GetHotKeysTrackerAsync();
         await tracker.StartAsync(new() { Slots = new[] { 3, 1, 2, 16383 }, SampleRatio = 2 });
@@ -150,7 +186,9 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
         results.Should().ContainSingle();
         results[0].Endpoint.Port.Should().Be(port);
         results[0].Value!.Single().SelectedSlots.Should().Equal(snapshot.SelectedSlots);
-        await tracker.StopAsync(); await tracker.ResetAsync();
+        await tracker.StopAsync();
+        await tracker.ResetAsync();
+
         async Task Run(string[] command)
         {
             var result = await container.ExecAsync(command);
@@ -169,7 +207,12 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         Func<Task>[] commands = [async () => await tracker.StartAsync(new()), async () => await tracker.GetAsync(),
             async () => await tracker.StopAsync(), async () => await tracker.ResetAsync()];
-        foreach (var command in commands) await command.Should().ThrowAsync<RespireServerException>();
+
+        foreach (var command in commands)
+        {
+            await command.Should().ThrowAsync<RespireServerException>();
+        }
+
         (await client.Server.GetHotKeysOnAllNodesAsync()).Single().Error.Should().BeOfType<RespireServerException>();
         (await client.Server.StartHotKeysOnAllNodesAsync(new())).Single().Error.Should().BeOfType<RespireServerException>();
         (await client.Server.StopHotKeysOnAllNodesAsync()).Single().Error.Should().BeOfType<RespireServerException>();

@@ -36,6 +36,7 @@ public class ClientCacheUnpopulatedStoreTests
             }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         Task invalidating = Task.CompletedTask;
+
         try
         {
             await held.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -48,9 +49,17 @@ public class ClientCacheUnpopulatedStoreTests
             await holder.WaitAsync(TimeSpan.FromSeconds(10));
             await invalidating.WaitAsync(TimeSpan.FromSeconds(10));
             using var response = queryRead ? RespValue.Integer(3) : RespValue.BulkString("old"u8.ToArray());
-            if (queryRead) cache.CompleteRead(in queryToken, in response, allowInsert: true);
-            else cache.CompleteRead(in read, in response, allowInsert: true);
+
+            if (queryRead)
+            {
+                cache.CompleteRead(in queryToken, in response, allowInsert: true);
+            }
+            else
+            {
+                cache.CompleteRead(in read, in response, allowInsert: true);
+            }
         }
+
         await Assert.That(cache.Count).IsEqualTo(0);
         await Assert.That(cache.InspectForTests().PendingQueryDependencyCount).IsEqualTo(0);
     }
@@ -64,11 +73,13 @@ public class ClientCacheUnpopulatedStoreTests
         RespireKey key = "key";
         var query = new ClientCacheCommandKey("STRLEN", key.AsValue());
         var request = new ClientSideCacheCoordinator.QueryRequest(query, key);
+
         for (var iteration = 0; iteration < 3; iteration++)
         {
             // An empty-store invalidation must not disable invalidation after first publication.
             cache.Invalidate(in key);
             using var response = queryRead ? RespValue.Integer(3) : RespValue.BulkString("new"u8.ToArray());
+
             if (queryRead)
             {
                 var token = cache.BeginRead("STRLEN", in request);
@@ -79,11 +90,16 @@ public class ClientCacheUnpopulatedStoreTests
                 var token = cache.BeginRead(in key);
                 cache.CompleteRead(in token, in response, allowInsert: true);
             }
+
             await Assert.That(cache.Count).IsEqualTo(1);
             cache.Invalidate(in key, RespireClientCacheInvalidationReason.ServerInvalidation);
             await Assert.That(cache.Count).IsEqualTo(0);
             await Assert.That(cache.SizeBytes).IsEqualTo(0);
-            if (iteration == 1) cache.FlushForContinuityLoss();
+
+            if (iteration == 1)
+            {
+                cache.FlushForContinuityLoss();
+            }
         }
     }
 }

@@ -15,7 +15,10 @@ public sealed class UndisposedPooledResultCodeFixProvider : CodeFixProvider
 {
     private const string Title = "Add 'using' so the pooled buffer is returned";
 
-    public override ImmutableArray<string> FixableDiagnosticIds { get; } =
+    public override ImmutableArray<string> FixableDiagnosticIds
+    {
+        get;
+    } =
         ImmutableArray.Create(DiagnosticIds.UndisposedPooledResult);
 
     public override FixAllProvider GetFixAllProvider() => WellKnownFixAllProviders.BatchFixer;
@@ -23,6 +26,7 @@ public sealed class UndisposedPooledResultCodeFixProvider : CodeFixProvider
     public override async Task RegisterCodeFixesAsync(CodeFixContext context)
     {
         var root = await context.Document.GetSyntaxRootAsync(context.CancellationToken).ConfigureAwait(false);
+
         if (root is null)
         {
             return;

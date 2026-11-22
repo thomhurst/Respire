@@ -195,7 +195,11 @@ public class ClusterTopologyRefreshSchedulerTests
         var clock = new SteppedClock();
         var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
         scheduler.Start();
-        for (var failure = 0; failure < 4; failure++) _ = scheduler.Complete(default, TopologyRefreshOutcome.Failed);
+
+        for (var failure = 0; failure < 4; failure++)
+        {
+            _ = scheduler.Complete(default, TopologyRefreshOutcome.Failed);
+        }
 
         scheduler.Request(TimeSpan.Zero);
         await Assert.That(scheduler.Next().Wait).IsEqualTo(TimeSpan.FromSeconds(40));
@@ -210,7 +214,11 @@ public class ClusterTopologyRefreshSchedulerTests
         var clock = new SteppedClock();
         var scheduler = new ClusterTopologyRefreshScheduler(null, clock);
         scheduler.Start();
-        for (var failure = 0; failure < 4; failure++) _ = scheduler.Complete(default, TopologyRefreshOutcome.Failed);
+
+        for (var failure = 0; failure < 4; failure++)
+        {
+            _ = scheduler.Complete(default, TopologyRefreshOutcome.Failed);
+        }
 
         scheduler.RequestPrimaryDisconnect();
         await Assert.That(scheduler.Next().Wait).IsEqualTo(TimeSpan.FromSeconds(40));
@@ -259,14 +267,25 @@ public class ClusterTopologyRefreshSchedulerTests
 
         var worker = scheduler.RunAsync((_, _) =>
         {
-            if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("boom");
+            if (Interlocked.Increment(ref calls) == 1)
+            {
+                throw new InvalidOperationException("boom");
+            }
+
             secondCall.TrySetResult();
             return Task.FromResult(TopologyRefreshOutcome.Refreshed);
         }, logger: null, stop.Token);
 
         scheduler.Request(TimeSpan.Zero, force: true);
+
         using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-            while (scheduler.ConsecutiveFailures == 0) await Task.Delay(5, timeout.Token);
+        {
+            while (scheduler.ConsecutiveFailures == 0)
+            {
+                await Task.Delay(5, timeout.Token);
+            }
+        }
+
         scheduler.Request(TimeSpan.Zero, force: true);
         await secondCall.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -439,8 +458,11 @@ public class ClusterTopologyRefreshSchedulerTests
     private sealed class SteppedClock : TimeProvider
     {
         private long _timestamp;
+
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
         public override long GetTimestamp() => Volatile.Read(ref _timestamp);
+
         internal void Advance(TimeSpan elapsed) => Interlocked.Add(ref _timestamp, elapsed.Ticks);
     }
 }

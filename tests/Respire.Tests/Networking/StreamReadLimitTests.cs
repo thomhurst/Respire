@@ -25,6 +25,7 @@ public class StreamReadLimitTests
         byte[] key = "{s}:one"u8.ToArray();
         (RespireKey Key, RespireStreamId After)[] streams = [(key, group ? ">" : "0"), ("{s}:two", group ? ">" : "0")];
         RespireStreamReadResult[] result;
+
         if (surface == 0)
         {
             var pending = group ? client.Streams.ReadGroupAsync(streams, "g", "c", options)
@@ -39,10 +40,19 @@ public class StreamReadLimitTests
             IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
             var pending = group ? queue.Streams.ReadGroup(streams, "g", "c", options) : queue.Streams.Read(options, streams);
             Array.Fill(key, (byte)'x');
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
+
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                await batch!.ExecuteAsync();
+            }
+
             result = pending.Result;
         }
+
         await Assert.That(result.Length).IsEqualTo(2);
         await Assert.That(result[0].Key).IsEqualTo((RespireKey)"{s}:one");
         await Assert.That(result[1].Entries[0].Id).IsEqualTo((RespireStreamId)"2-0");
@@ -59,16 +69,19 @@ public class StreamReadLimitTests
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         RespireStreamReadOptions[] invalid = [new() { MaxCount = 0 }, new() { MaxSize = -1 }, new() { Count = 3, MaxCount = 2 }];
+
         foreach (var options in invalid)
         {
             await Assert.That(async () => await client.Streams.ReadAsync(options, "key")).Throws<ArgumentException>();
             await Assert.That(async () => await client.Streams.ReadGroupOnceAsync("key", "g", "c", options)).Throws<ArgumentException>();
+
             foreach (var queue in new IRespireCommandQueue[] { batch, transaction })
             {
                 await Assert.That(() => queue.Streams.Read(options, "key")).Throws<ArgumentException>();
                 await Assert.That(() => queue.Streams.ReadGroup("key", "g", "c", options)).Throws<ArgumentException>();
             }
         }
+
         await Assert.That(() => batch.Streams.Read(new RespireStreamReadOptions { WaitFor = Timeout.InfiniteTimeSpan }, "key"))
             .Throws<ArgumentException>();
         await Assert.That(batch.Count).IsEqualTo(0);
@@ -84,17 +97,29 @@ public class StreamReadLimitTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
-            SuppressReply = _ => { received.TrySetResult(); return true; },
+            SuppressReply = _ =>
+            {
+                received.TrySetResult();
+                return true;
+            },
         };
         await using var client = Create(server.Port);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
         var options = new RespireStreamReadOptions { MaxCount = 2, MaxSize = 50, WaitFor = Timeout.InfiniteTimeSpan };
+
         async Task Read()
         {
-            if (group) await client.Streams.ReadGroupOnceAsync("key", "g", "c", options, cancellationToken: cancel.Token);
-            else await client.Streams.ReadAsync(options, "key", cancellationToken: cancel.Token);
+            if (group)
+            {
+                await client.Streams.ReadGroupOnceAsync("key", "g", "c", options, cancellationToken: cancel.Token);
+            }
+            else
+            {
+                await client.Streams.ReadAsync(options, "key", cancellationToken: cancel.Token);
+            }
         }
+
         var pending = Read();
         await received.Task.WaitAsync(timeout.Token);
         cancel.Cancel();

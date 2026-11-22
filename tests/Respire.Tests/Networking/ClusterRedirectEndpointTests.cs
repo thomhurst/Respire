@@ -50,6 +50,7 @@ public class ClusterRedirectEndpointTests
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray(), Encoding.ASCII.GetBytes($"-{message}\r\n"));
 #pragma warning disable RESP010 // Test-owned client isolates the scripted redirect endpoints and cached slot routes.
         await using var client = await RespireClient.ConnectAsync(Options(server));
+
 #pragma warning restore RESP010
 
         async Task Execute()
@@ -64,6 +65,7 @@ public class ClusterRedirectEndpointTests
                     break;
             }
         }
+
         var error = await Assert.That(async () => await Execute().WaitAsync(TimeSpan.FromSeconds(5)))
             .ThrowsExactly<RespireServerException>();
         await Assert.That(error!.Message).IsEqualTo(message);

@@ -56,7 +56,12 @@ public class ClusterReconnectBacklogTests
         router.BacklogAdmissionCheckedForTests = shouldBacklog =>
         {
             router.BacklogAdmissionCheckedForTests = null;
-            if (shouldBacklog) throw new InvalidOperationException("The initial route must be healthy.");
+
+            if (shouldBacklog)
+            {
+                throw new InvalidOperationException("The initial route must be healthy.");
+            }
+
             raced = true;
 #pragma warning disable RESP009 // Inject the disconnect synchronously between the precheck and acquisition.
             connection.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -87,9 +92,17 @@ public class ClusterReconnectBacklogTests
         await Assert.That(fixture.Server.ReceivedCommands.Any(IsApplicationCommand)).IsFalse();
         await fixture.ReleaseAsync();
         await pending.WaitAsync(Limit);
+
 #pragma warning disable RESP002 // Both execution branches were awaited through pending above.
-        if (keyless) await Assert.That(flush!.Result).IsTrue();
-        else await Assert.That(get!.Result).IsEqualTo("value");
+        if (keyless)
+        {
+            await Assert.That(flush!.Result).IsTrue();
+        }
+        else
+        {
+            await Assert.That(get!.Result).IsEqualTo("value");
+        }
+
 #pragma warning restore RESP002
         await Assert.That(fixture.Server.ReceivedCommands.Count(command => command == (keyless ? "FLUSHDB" : "GET {queue}race"))).IsEqualTo(1);
     }
@@ -128,7 +141,11 @@ public class ClusterReconnectBacklogTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Server.SuppressReply = command =>
         {
-            if (command != "GET {queue}first") return false;
+            if (command != "GET {queue}first")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -159,6 +176,7 @@ public class ClusterReconnectBacklogTests
         using var caller = new CancellationTokenSource();
         var pending = fixture.Client.GetStringAsync("{queue}unsent", caller.Token).AsTask();
         await fixture.Connecting.Task.WaitAsync(Limit);
+
         if (cancelCaller)
         {
             await caller.CancelAsync();
@@ -170,6 +188,7 @@ public class ClusterReconnectBacklogTests
             var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
             await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
         }
+
         var next = fixture.Client.GetStringAsync("{queue}next").AsTask();
         await fixture.ReleaseAsync();
         await Assert.That(await next.WaitAsync(Limit)).IsEqualTo("value");
@@ -184,11 +203,19 @@ public class ClusterReconnectBacklogTests
     {
         await using var fixture = await Fixture.CreateAsync();
         var bytes = "value"u8.ToArray();
+
         async Task SendAsync()
         {
-            if (fireAndForget) await fixture.Client.ExecuteFireAndForgetAsync("SET", ["{queue}key", bytes]);
-            else { using var reply = await fixture.Client.ExecuteAsync("SET", ["{queue}key", bytes]); }
+            if (fireAndForget)
+            {
+                await fixture.Client.ExecuteFireAndForgetAsync("SET", ["{queue}key", bytes]);
+            }
+            else
+            {
+                using var reply = await fixture.Client.ExecuteAsync("SET", ["{queue}key", bytes]);
+            }
         }
+
         var pending = SendAsync();
         await fixture.Connecting.Task.WaitAsync(Limit);
         Array.Fill(bytes, (byte)'x');
@@ -209,7 +236,11 @@ public class ClusterReconnectBacklogTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Server.SuppressReply = command =>
         {
-            if (command != "GET {queue}pending") return false;
+            if (command != "GET {queue}pending")
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -259,7 +290,9 @@ public class ClusterReconnectBacklogTests
     {
         await using var fixture = await Fixture.CreateAsync(reconnectPolicy: new()
         {
-            InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1,
+            InitialDelay = TimeSpan.Zero,
+            JitterRatio = 0,
+            MaxAttempts = 1,
         });
         var first = fixture.Client.GetStringAsync("{queue}first").AsTask();
         await fixture.Connecting.Task.WaitAsync(Limit);
@@ -283,9 +316,23 @@ public class ClusterReconnectBacklogTests
         var inTransaction = false;
         fixture.Server.ReplyOverride = (_, command) =>
         {
-            if (command == "MULTI") { inTransaction = true; return FakeRespServer.OkReply; }
-            if (command == "EXEC") { inTransaction = false; return "*2\r\n$5\r\nvalue\r\n+OK\r\n"u8.ToArray(); }
-            if (inTransaction) return "+QUEUED\r\n"u8.ToArray();
+            if (command == "MULTI")
+            {
+                inTransaction = true;
+                return FakeRespServer.OkReply;
+            }
+
+            if (command == "EXEC")
+            {
+                inTransaction = false;
+                return "*2\r\n$5\r\nvalue\r\n+OK\r\n"u8.ToArray();
+            }
+
+            if (inTransaction)
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
             return command.StartsWith("GET ", StringComparison.Ordinal) ? ValueReply : FakeRespServer.OkReply;
         };
         using var batch = transaction ? null : fixture.Client.CreateBatch();
@@ -326,15 +373,28 @@ public class ClusterReconnectBacklogTests
         var second = transaction ? commit!.Set("{queue}second", "value") : batch!.Set("{queue}second", "value");
         var execution = transaction ? CommitAsync(commit!, caller.Token) : batch!.TryExecuteAsync(caller.Token).AsTask();
         await fixture.Connecting.Task.WaitAsync(Limit);
-        if (cancelCaller) await caller.CancelAsync();
+
+        if (cancelCaller)
+        {
+            await caller.CancelAsync();
+        }
+
         if (transaction)
         {
             if (cancelCaller)
+            {
                 await Assert.That(async () => await execution.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            }
             else
+            {
                 await Assert.That(async () => await execution.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
+            }
         }
-        else await execution.WaitAsync(Limit);
+        else
+        {
+            await execution.WaitAsync(Limit);
+        }
+
         if (cancelCaller)
         {
             await Assert.That(first.Error).IsTypeOf<OperationCanceledException>();
@@ -345,6 +405,7 @@ public class ClusterReconnectBacklogTests
             await Assert.That(first.Error).IsTypeOf<RespireTimeoutException>();
             await Assert.That(((RespireTimeoutException)first.Error!).Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
         }
+
         await Assert.That(second.Error).IsSameReferenceAs(first.Error);
         await Assert.That(fixture.Server.ReceivedCommands.Any(IsApplicationCommand)).IsFalse();
         await fixture.ReleaseAsync();
@@ -356,7 +417,8 @@ public class ClusterReconnectBacklogTests
     {
         await using var fixture = await Fixture.CreateAsync(retryPolicy: new()
         {
-            InitialBackoff = TimeSpan.Zero, MaxAttempts = 2,
+            InitialBackoff = TimeSpan.Zero,
+            MaxAttempts = 2,
         });
         var attempts = 0;
         fixture.Server.ReplyOverride = (_, command) => command switch
@@ -393,8 +455,13 @@ public class ClusterReconnectBacklogTests
         var pending = fixture.Client.GetStringAsync("{queue}rejected").AsTask();
         await fixture.Connecting.Task.WaitAsync(Limit);
         var admission = fixture.Client.Core.Circuits!.Acquire(new("127.0.0.1", fixture.Server.Port), default);
-        try { admission.Failed(new RespireConnectionException("Injected node failure."), default); }
+
+        try
+        {
+            admission.Failed(new RespireConnectionException("Injected node failure."), default);
+        }
         finally { admission.Dispose(); }
+
         fixture.Resume.TrySetResult();
         await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireCircuitOpenException>();
         await Assert.That(fixture.Server.ReceivedCommands.Any(IsApplicationCommand)).IsFalse();
@@ -418,9 +485,14 @@ public class ClusterReconnectBacklogTests
 #pragma warning disable RESP010 // Each wire test requires its own isolated cluster and recovery gate.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            UseCluster = true, Endpoints = [new("127.0.0.1", primary.Port)], Connections = 1,
-            Protocol = RespireProtocol.Resp2, CommandTimeout = Limit, ConnectTimeout = Limit,
-            ClusterTopologyRefreshInterval = null, RetryPolicy = null,
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            CommandTimeout = Limit,
+            ConnectTimeout = Limit,
+            ClusterTopologyRefreshInterval = null,
+            RetryPolicy = null,
             TestingStreamFactory = async (host, port, token) =>
             {
                 if (port == replica.Port && Volatile.Read(ref gateReplacement))
@@ -428,7 +500,9 @@ public class ClusterReconnectBacklogTests
                     connecting.TrySetResult();
                     await resume.Task.WaitAsync(token);
                 }
+
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -448,13 +522,20 @@ public class ClusterReconnectBacklogTests
         var pending = reads.GetStringAsync("{queue}pending", caller.Token).AsTask();
         await connecting.Task.WaitAsync(Limit);
         await Assert.That(pending.IsCompleted).IsFalse();
+
         if (cancelCaller)
         {
             await caller.CancelAsync();
             await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
         }
+
         resume.TrySetResult();
-        if (!cancelCaller) await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo("value");
+
+        if (!cancelCaller)
+        {
+            await Assert.That(await pending.WaitAsync(Limit)).IsEqualTo("value");
+        }
+
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("GET ", StringComparison.Ordinal))).IsFalse();
         await Assert.That(replica.ReceivedCommands.Count(command => command == "GET {queue}pending")).IsEqualTo(cancelCaller ? 0 : 1);
     }
@@ -587,18 +668,30 @@ public class ClusterReconnectBacklogTests
     {
         switch (surface)
         {
-            case "string": return (await client.GetStringAsync(key))!;
-            case "bytes": return Encoding.UTF8.GetString((await client.GetBytesAsync(key))!);
-            case "typed": return (await client.GetAsync<string>(key))!;
+            case "string":
+                return (await client.GetStringAsync(key))!;
+            case "bytes":
+                return Encoding.UTF8.GetString((await client.GetBytesAsync(key))!);
+            case "typed":
+                return (await client.GetAsync<string>(key))!;
             case "stream":
                 await using (var stream = await client.Strings.GetStreamAsync(key))
-                using (var reader = new StreamReader(stream!)) return await reader.ReadToEndAsync();
-            case "write": return await client.SetAsync(key, "value") ? "OK" : "failed";
-            case "fire-and-forget": await client.ExecuteFireAndForgetAsync("SET", key, "value"); return "OK";
+                using (var reader = new StreamReader(stream!))
+                {
+                    return await reader.ReadToEndAsync();
+                }
+            case "write":
+                return await client.SetAsync(key, "value") ? "OK" : "failed";
+            case "fire-and-forget":
+                await client.ExecuteFireAndForgetAsync("SET", key, "value");
+                return "OK";
             default:
                 using (var reply = surface == "catalog"
                     ? await client.ExecuteAsync(RespireCommands.String.GET, key)
-                    : await client.ExecuteAsync("GET", key)) return reply.AsString()!;
+                    : await client.ExecuteAsync("GET", key))
+                {
+                    return reply.AsString()!;
+                }
         }
     }
 
@@ -612,11 +705,30 @@ public class ClusterReconnectBacklogTests
     private sealed class Fixture(FakeRespServer server, RespireClient client, RespireConnectionMultiplexer node,
         TaskCompletionSource connecting, TaskCompletionSource resume) : IAsyncDisposable
     {
-        internal FakeRespServer Server { get; } = server;
-        internal RespireClient Client { get; } = client;
-        internal RespireConnectionMultiplexer Node { get; } = node;
-        internal TaskCompletionSource Connecting { get; } = connecting;
-        internal TaskCompletionSource Resume { get; } = resume;
+        internal FakeRespServer Server
+        {
+            get;
+        } = server;
+
+        internal RespireClient Client
+        {
+            get;
+        } = client;
+
+        internal RespireConnectionMultiplexer Node
+        {
+            get;
+        } = node;
+
+        internal TaskCompletionSource Connecting
+        {
+            get;
+        } = connecting;
+
+        internal TaskCompletionSource Resume
+        {
+            get;
+        } = resume;
 
         internal static async Task<Fixture> CreateAsync(int capacity = 1024, TimeSpan? commandTimeout = null,
             RespireBacklogPolicy policy = RespireBacklogPolicy.Queue, RespireReconnectPolicy? reconnectPolicy = null,
@@ -632,6 +744,7 @@ public class ClusterReconnectBacklogTests
                     _ => command.StartsWith("GET ", StringComparison.Ordinal) ? ValueReply : null,
                 },
             };
+
             try
             {
                 await using var rejectedSeed = failPrimarySeed
@@ -641,14 +754,26 @@ public class ClusterReconnectBacklogTests
                 var gateReplacement = false;
                 var client = await RespireClient.ConnectAsync(new RespireOptions
                 {
-                    UseCluster = true, AllowAdmin = true, Endpoints = rejectedSeed is null ? [new("127.0.0.1", server.Port)]
-                        : [new("127.0.0.1", rejectedSeed.Port), new("127.0.0.1", server.Port)], Connections = 1,
-                    Protocol = cache ? RespireProtocol.Resp3 : RespireProtocol.Resp2, Password = "test",
-                    ConnectTimeout = Limit, CommandTimeout = commandTimeout ?? Limit, RetryPolicy = retryPolicy,
-                    BacklogCapacity = capacity, BacklogPolicy = policy, ReconnectPolicy = reconnectPolicy,
+                    UseCluster = true,
+                    AllowAdmin = true,
+                    Endpoints = rejectedSeed is null ? [new("127.0.0.1", server.Port)]
+                        : [new("127.0.0.1", rejectedSeed.Port), new("127.0.0.1", server.Port)],
+                    Connections = 1,
+                    Protocol = cache ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
+                    Password = "test",
+                    ConnectTimeout = Limit,
+                    CommandTimeout = commandTimeout ?? Limit,
+                    RetryPolicy = retryPolicy,
+                    BacklogCapacity = capacity,
+                    BacklogPolicy = policy,
+                    ReconnectPolicy = reconnectPolicy,
                     ClientSideCache = cache ? new() : null,
-                    CircuitBreaker = circuit ? new() { MinimumFailureCount = 1, FailureRateThreshold = 0.01,
-                        OpenDuration = TimeSpan.FromMinutes(1) } : null,
+                    CircuitBreaker = circuit ? new()
+                    {
+                        MinimumFailureCount = 1,
+                        FailureRateThreshold = 0.01,
+                        OpenDuration = TimeSpan.FromMinutes(1)
+                    } : null,
                     ClusterTopologyRefreshInterval = null,
                     TestingStreamFactory = async (host, port, token) =>
                     {
@@ -657,7 +782,9 @@ public class ClusterReconnectBacklogTests
                             connecting.TrySetResult();
                             await resume.Task.WaitAsync(token);
                         }
+
                         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                         try
                         {
                             await socket.ConnectAsync(host, port, token);
@@ -669,7 +796,12 @@ public class ClusterReconnectBacklogTests
                 var node = client.Core.Cluster!.GetMultiplexer(new("127.0.0.1", server.Port));
                 client.Core.Cluster.SetSlotOwner(ClusterHash.GetSlot("{queue}key"), node);
                 Volatile.Write(ref gateReplacement, true);
-                if (disconnectOnCreate) await node.GetConnection().DisposeAsync();
+
+                if (disconnectOnCreate)
+                {
+                    await node.GetConnection().DisposeAsync();
+                }
+
                 return new(server, client, node, connecting, resume);
             }
             catch { await server.DisposeAsync(); throw; }

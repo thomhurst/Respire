@@ -7,13 +7,26 @@ namespace Respire.Internal;
 internal sealed class KeyPrefix
 {
     private const int HashTagsDisabled = -2;
-    internal string? Text { get; }
-    internal byte[] Bytes { get; }
+
+    internal string? Text
+    {
+        get;
+    }
+
+    internal byte[] Bytes
+    {
+        get;
+    }
     private readonly int _tagStart;
     private readonly int _binaryTagStart;
     private readonly int _fixedSlot;
     private readonly bool _endsWithHighSurrogate;
-    internal string? ScanOwnerPrefix { get; }
+
+    internal string? ScanOwnerPrefix
+    {
+        get;
+    }
+
     internal bool HasSurrogateBoundary => _endsWithHighSurrogate;
 
     internal KeyPrefix(string text)
@@ -26,7 +39,10 @@ internal sealed class KeyPrefix
         var close = _tagStart < 0 ? -1 : text.AsSpan(_tagStart + 1).IndexOf('}');
         _fixedSlot = close > 0 ? ClusterHash.GetSlot(text) : -1;
         // An empty first tag disables tag selection, including later tags in the suffix.
-        if (close == 0) _tagStart = _binaryTagStart = HashTagsDisabled;
+        if (close == 0)
+        {
+            _tagStart = _binaryTagStart = HashTagsDisabled;
+        }
     }
 
     private KeyPrefix(string text, string scanOwnerPrefix) : this(text)
@@ -40,9 +56,11 @@ internal sealed class KeyPrefix
             key = new RespireKey(physical[Bytes.Length..].ToArray());
             return true;
         }
+
         if (_endsWithHighSurrogate)
         {
             var boundary = Bytes.Length - 3;
+
             if (physical.StartsWith(Bytes.AsSpan(0, boundary))
                 && Rune.DecodeFromUtf8(physical[boundary..], out var scalar, out var consumed) == OperationStatus.Done
                 && scalar.Value >= 0x10000
@@ -56,6 +74,7 @@ internal sealed class KeyPrefix
                 return true;
             }
         }
+
         key = default;
         return false;
     }
@@ -68,9 +87,11 @@ internal sealed class KeyPrefix
             key = new RespireKey(new KeyPrefix(prefix.Text + Text), null, snapshot ? bytes.ToArray() : bytes);
             return true;
         }
+
         key = default;
         return false;
     }
+
     /// <summary>Takes ownership of an already copied binary prefix.</summary>
     internal KeyPrefix(byte[] ownedBytes)
     {
@@ -78,7 +99,11 @@ internal sealed class KeyPrefix
         _tagStart = _binaryTagStart = Bytes.AsSpan().IndexOf((byte)'{');
         var close = _binaryTagStart < 0 ? -1 : Bytes.AsSpan(_binaryTagStart + 1).IndexOf((byte)'}');
         _fixedSlot = close > 0 ? ClusterHash.GetSlot(Bytes) : -1;
-        if (close == 0) _tagStart = _binaryTagStart = HashTagsDisabled;
+
+        if (close == 0)
+        {
+            _tagStart = _binaryTagStart = HashTagsDisabled;
+        }
     }
 
     internal KeyPrefix Append(string suffix)
@@ -103,23 +128,43 @@ internal sealed class KeyPrefix
     internal bool TryGetTaggedSlot(string? key, ReadOnlyMemory<byte> bytes, out int slot)
     {
         slot = _fixedSlot;
-        if (slot >= 0) return true;
-        if (_tagStart == HashTagsDisabled) return false;
+
+        if (slot >= 0)
+        {
+            return true;
+        }
+
+        if (_tagStart == HashTagsDisabled)
+        {
+            return false;
+        }
+
         if (key is not null)
         {
             // A binary prefix cannot be interpreted as UTF-16. The caller hashes the full
             // wire payload for mixed representations when there is no cached fixed tag.
-            if (Text is null) return false;
-            if (!TrySelectTag<char>(Text.AsSpan(), key.AsSpan(), _tagStart, '{', '}', out var prefixTag, out var suffixTag))
+            if (Text is null)
+            {
                 return false;
+            }
+
+            if (!TrySelectTag<char>(Text.AsSpan(), key.AsSpan(), _tagStart, '{', '}', out var prefixTag, out var suffixTag))
+            {
+                return false;
+            }
+
             slot = ClusterHash.GetTagSlot(prefixTag, suffixTag);
         }
         else
         {
             if (!TrySelectTag<byte>(Bytes, bytes.Span, _binaryTagStart, (byte)'{', (byte)'}', out var prefixTag, out var suffixTag))
+            {
                 return false;
+            }
+
             slot = ClusterHash.GetTagSlot(prefixTag, suffixTag);
         }
+
         return true;
     }
 
@@ -129,20 +174,36 @@ internal sealed class KeyPrefix
     {
         prefixTag = default;
         suffixTag = default;
+
         if (tagStart >= 0)
         {
             var close = suffix.IndexOf(closeBrace);
             prefixTag = prefix[(tagStart + 1)..];
-            if (close < 0 || prefixTag.IsEmpty && close == 0) return false;
+
+            if (close < 0 || prefixTag.IsEmpty && close == 0)
+            {
+                return false;
+            }
+
             suffixTag = suffix[..close];
             return true;
         }
 
         var open = suffix.IndexOf(openBrace);
-        if (open < 0) return false;
+
+        if (open < 0)
+        {
+            return false;
+        }
+
         var tag = suffix[(open + 1)..];
         var end = tag.IndexOf(closeBrace);
-        if (end <= 0) return false;
+
+        if (end <= 0)
+        {
+            return false;
+        }
+
         suffixTag = tag[..end];
         return true;
     }
@@ -153,9 +214,16 @@ internal sealed class KeyPrefix
 
     internal int GetWireLength(string? key, ReadOnlyMemory<byte> bytes)
     {
-        if (key is null) return checked(Bytes.Length + bytes.Length);
+        if (key is null)
+        {
+            return checked(Bytes.Length + bytes.Length);
+        }
+
         if (JoinsSurrogatePair(key))
+        {
             return checked(Bytes.Length + 1 + Encoding.UTF8.GetByteCount(key.AsSpan(1)));
+        }
+
         return checked(Bytes.Length + Encoding.UTF8.GetByteCount(key));
     }
 
@@ -167,7 +235,7 @@ internal sealed class KeyPrefix
             // Replace the cached trailing replacement character with the complete pair.
             var prefixLength = Bytes.Length - 3;
             Bytes.AsSpan(0, prefixLength).CopyTo(destination);
-            // stackalloc-audit[818fbc8c2390d0f2]: init: the collection initializer writes both chars;
+            // stackalloc-audit[d1dbd13b5900adde]: init: the collection initializer writes both chars;
             // read: Encoding.UTF8.GetBytes reads the 2 chars; failure: an indexing throw happens before the allocation is read.
             Span<char> pair = stackalloc char[2] { Text![^1], key![0] };
             var written = Encoding.UTF8.GetBytes(pair, destination[prefixLength..]);
@@ -175,8 +243,12 @@ internal sealed class KeyPrefix
         }
 
         Bytes.CopyTo(destination);
+
         if (key is not null)
+        {
             return Bytes.Length + Encoding.UTF8.GetBytes(key, destination[Bytes.Length..]);
+        }
+
         bytes.Span.CopyTo(destination[Bytes.Length..]);
         return Bytes.Length + bytes.Length;
     }

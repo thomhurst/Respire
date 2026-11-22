@@ -24,22 +24,41 @@ public class TimeSeriesCommandHookTests
         var hook = new RecordingHook();
         await using var client = await Connect(Options(server, hook));
         var series = new RespireTimeSeriesClient(client);
+
         foreach (var mode in new[] { "validate", "reject", "cancel" })
         {
             var admissions = 0;
             var rejection = new InvalidOperationException("denied");
-            hook.Before = _ => { admissions++; if (mode == "reject") throw rejection; };
+            hook.Before = _ =>
+            {
+                admissions++;
+
+                if (mode == "reject")
+                {
+                    throw rejection;
+                }
+            };
             hook.Completed.Clear();
             using var caller = new CancellationTokenSource();
-            if (mode == "cancel") caller.Cancel();
+
+            if (mode == "cancel")
+            {
+                caller.Cancel();
+            }
+
             var error = await Failure(async () =>
             {
                 if (input.EndsWith("label", StringComparison.Ordinal))
+                {
                     await series.QueryLabelValuesAsync(input switch
                     {
-                        "null-label" => null!, "empty-label" => "", _ => " ",
+                        "null-label" => null!,
+                        "empty-label" => "",
+                        _ => " ",
                     }, cancellationToken: caller.Token);
+                }
                 else
+                {
                     await series.CreateRuleAsync("source", "destination", RespireTimeSeriesAggregation.Avg,
                         input switch
                         {
@@ -47,6 +66,7 @@ public class TimeSeriesCommandHookTests
                             "negative-duration" => TimeSpan.FromMilliseconds(-1),
                             _ => TimeSpan.FromTicks(1),
                         }, cancellationToken: caller.Token);
+                }
             });
             var completion = hook.Completed.Single();
             await Assert.That(completion.Command).IsEqualTo(input.EndsWith("label", StringComparison.Ordinal) ? "TS.QUERYLABELS" : "TS.CREATERULE");
@@ -58,10 +78,23 @@ public class TimeSeriesCommandHookTests
             });
             await Assert.That(ReferenceEquals(error, completion.Error)).IsTrue();
             await Assert.That(admissions).IsEqualTo(1);
-            if (mode == "validate") await Assert.That(error is ArgumentException).IsTrue();
-            if (mode == "reject") await Assert.That(ReferenceEquals(error, rejection)).IsTrue();
-            if (mode == "cancel") await Assert.That(error is OperationCanceledException).IsTrue();
+
+            if (mode == "validate")
+            {
+                await Assert.That(error is ArgumentException).IsTrue();
+            }
+
+            if (mode == "reject")
+            {
+                await Assert.That(ReferenceEquals(error, rejection)).IsTrue();
+            }
+
+            if (mode == "cancel")
+            {
+                await Assert.That(error is OperationCanceledException).IsTrue();
+            }
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -96,8 +129,16 @@ public class TimeSeriesCommandHookTests
         await using var client = await Connect(Options(server, hook));
         var series = new RespireTimeSeriesClient(client);
         using var caller = new CancellationTokenSource();
-        if (cancel) caller.Cancel();
-        else hook.Before = _ => throw new InvalidOperationException("denied");
+
+        if (cancel)
+        {
+            caller.Cancel();
+        }
+        else
+        {
+            hook.Before = _ => throw new InvalidOperationException("denied");
+        }
+
         foreach (var operation in Operations)
         {
             hook.Completed.Clear();
@@ -107,6 +148,7 @@ public class TimeSeriesCommandHookTests
             await Assert.That(completion.Outcome).IsEqualTo(cancel ? RespireCommandOutcome.Canceled : RespireCommandOutcome.Rejected);
             await Assert.That(ReferenceEquals(error, completion.Error)).IsTrue();
         }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
@@ -149,17 +191,28 @@ public class TimeSeriesCommandHookTests
         var hook = new RecordingHook();
         await using var client = await Connect(Options(server, hook));
         Exception? error = null;
-        try { await new RespireTimeSeriesClient(client).MultiAddAsync([new("a", 1, 1), new("b", 2, 2)], 1); }
+
+        try
+        {
+            await new RespireTimeSeriesClient(client).MultiAddAsync([new("a", 1, 1), new("b", 2, 2)], 1);
+        }
         catch (Exception caught) { error = caught; }
+
         var completion = hook.Completed.Single();
         await Assert.That(completion.Command).IsEqualTo("TS.MADD");
         await Assert.That(completion.Outcome).IsEqualTo(mode == "success" ? RespireCommandOutcome.Succeeded : RespireCommandOutcome.Failed);
         await Assert.That(ReferenceEquals(error, completion.Error)).IsTrue();
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+
         if (mode is "malformed" or "server-error")
+        {
             await Assert.That(error is RespireTimeSeriesMultiAddInterruptedException).IsTrue();
+        }
+
         if (mode == "sample-error")
+        {
             await Assert.That(error is RespireTimeSeriesMultiAddException).IsTrue();
+        }
     }
 
     [Test]
@@ -172,8 +225,20 @@ public class TimeSeriesCommandHookTests
         Task<RespireTimeSeriesSample?>? admitted = null;
         Task<RespireTimeSeriesSample?>? completed = null;
         Task<RespireTimeSeriesSample?>? projected = null;
-        hook.Before = command => { if (command == "TS.INFO") admitted = series.GetAsync("admitted").AsTask(); };
-        hook.After = command => { if (command == "TS.INFO") completed = series.GetAsync("completed").AsTask(); };
+        hook.Before = command =>
+        {
+            if (command == "TS.INFO")
+            {
+                admitted = series.GetAsync("admitted").AsTask();
+            }
+        };
+        hook.After = command =>
+        {
+            if (command == "TS.INFO")
+            {
+                completed = series.GetAsync("completed").AsTask();
+            }
+        };
         var failure = new InvalidOperationException("projection failed");
         var error = await Failure(async () => await series.GetRawInfoAsync<int>("info", result =>
         {
@@ -197,7 +262,11 @@ public class TimeSeriesCommandHookTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("TS.MADD second ", StringComparison.Ordinal)) return false;
+                if (!command.StartsWith("TS.MADD second ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 attempted.TrySetResult();
                 return true;
             },
@@ -251,7 +320,8 @@ public class TimeSeriesCommandHookTests
         var hook = new RecordingHook();
         await using var client = await Connect(Options(server, hook) with
         {
-            Protocol = RespireProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespireProtocol.Resp3,
+            ClientSideCache = new(),
         });
         var cache = client.Core.ClientCache!;
         var key = new RespireKey("tenant:a");
@@ -288,6 +358,7 @@ public class TimeSeriesCommandHookTests
     {
         internal IRespireClient Inner = null!;
         internal readonly List<string> Methods = [];
+
         protected override object? Invoke(MethodInfo? method, object?[]? arguments)
         {
             Methods.Add(method!.Name);
@@ -306,28 +377,71 @@ public class TimeSeriesCommandHookTests
     {
         switch (operation)
         {
-            case "TS.CREATE": await series.CreateAsync("a", cancellationToken: token); break;
-            case "TS.ALTER": await series.AlterAsync("a", new(), token); break;
-            case "TS.ADD": await series.AddAsync("a", 1, 1, cancellationToken: token); break;
-            case "TS.MADD": await series.MultiAddAsync([new("a", 1, 1), new("b", 2, 2)], 1, token); break;
-            case "TS.INCRBY": await series.IncrementByAsync("a", 1, cancellationToken: token); break;
-            case "TS.DECRBY": await series.DecrementByAsync("a", 1, cancellationToken: token); break;
-            case "TS.GET": await series.GetAsync("a", cancellationToken: token); break;
-            case "TS.MGET": await series.MultiGetAsync(["room=1"], cancellationToken: token); break;
-            case "TS.RANGE": await series.RangeAsync("a", new(0, 10), cancellationToken: token); break;
-            case "TS.REVRANGE": await series.ReverseRangeAsync("a", new(0, 10), cancellationToken: token); break;
-            case "TS.MRANGE": await series.MultiRangeAsync(new(0, 10), new() { Filters = ["room=1"] }, token); break;
-            case "TS.MREVRANGE": await series.MultiReverseRangeAsync(new(0, 10), new() { Filters = ["room=1"] }, token); break;
-            case "TS.DEL": await series.DeleteRangeAsync("a", new(0, 10), token); break;
-            case "TS.CREATERULE": await series.CreateRuleAsync("a", "b", RespireTimeSeriesAggregation.Avg, 1L, cancellationToken: token); break;
-            case "TS.DELETERULE": await series.DeleteRuleAsync("a", "b", token); break;
-            case "TS.INFO": await series.GetInfoAsync("a", token); break;
-            case "TS.QUERYINDEX": await series.QueryIndexAsync(["room=1"], token); break;
-            case "TS.NRANGE": await series.RangeKeysAsync("a", new(0, 10), cancellationToken: token); break;
-            case "TS.NREVRANGE": await series.ReverseRangeKeysAsync("a", new(0, 10), cancellationToken: token); break;
-            case "TS.QUERYLABELS": await series.QueryLabelsAsync(cancellationToken: token); break;
-            case "TS.READ": await series.ReadAsync("a", 0, cancellationToken: token); break;
-            default: throw new ArgumentOutOfRangeException(nameof(operation));
+            case "TS.CREATE":
+                await series.CreateAsync("a", cancellationToken: token);
+                break;
+            case "TS.ALTER":
+                await series.AlterAsync("a", new(), token);
+                break;
+            case "TS.ADD":
+                await series.AddAsync("a", 1, 1, cancellationToken: token);
+                break;
+            case "TS.MADD":
+                await series.MultiAddAsync([new("a", 1, 1), new("b", 2, 2)], 1, token);
+                break;
+            case "TS.INCRBY":
+                await series.IncrementByAsync("a", 1, cancellationToken: token);
+                break;
+            case "TS.DECRBY":
+                await series.DecrementByAsync("a", 1, cancellationToken: token);
+                break;
+            case "TS.GET":
+                await series.GetAsync("a", cancellationToken: token);
+                break;
+            case "TS.MGET":
+                await series.MultiGetAsync(["room=1"], cancellationToken: token);
+                break;
+            case "TS.RANGE":
+                await series.RangeAsync("a", new(0, 10), cancellationToken: token);
+                break;
+            case "TS.REVRANGE":
+                await series.ReverseRangeAsync("a", new(0, 10), cancellationToken: token);
+                break;
+            case "TS.MRANGE":
+                await series.MultiRangeAsync(new(0, 10), new() { Filters = ["room=1"] }, token);
+                break;
+            case "TS.MREVRANGE":
+                await series.MultiReverseRangeAsync(new(0, 10), new() { Filters = ["room=1"] }, token);
+                break;
+            case "TS.DEL":
+                await series.DeleteRangeAsync("a", new(0, 10), token);
+                break;
+            case "TS.CREATERULE":
+                await series.CreateRuleAsync("a", "b", RespireTimeSeriesAggregation.Avg, 1L, cancellationToken: token);
+                break;
+            case "TS.DELETERULE":
+                await series.DeleteRuleAsync("a", "b", token);
+                break;
+            case "TS.INFO":
+                await series.GetInfoAsync("a", token);
+                break;
+            case "TS.QUERYINDEX":
+                await series.QueryIndexAsync(["room=1"], token);
+                break;
+            case "TS.NRANGE":
+                await series.RangeKeysAsync("a", new(0, 10), cancellationToken: token);
+                break;
+            case "TS.NREVRANGE":
+                await series.ReverseRangeKeysAsync("a", new(0, 10), cancellationToken: token);
+                break;
+            case "TS.QUERYLABELS":
+                await series.QueryLabelsAsync(cancellationToken: token);
+                break;
+            case "TS.READ":
+                await series.ReadAsync("a", 0, cancellationToken: token);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(operation));
         }
     }
 
@@ -344,8 +458,12 @@ public class TimeSeriesCommandHookTests
 
     private static async Task<Exception> Failure(Func<Task> action)
     {
-        try { await action(); }
+        try
+        {
+            await action();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure.");
     }
 
@@ -353,8 +471,18 @@ public class TimeSeriesCommandHookTests
     {
         internal Action<string>? Before;
         internal Action<string>? After;
-        internal ConcurrentQueue<(string Command, RespireCommandOutcome Outcome, Exception? Error)> Completed { get; } = new();
-        public override object? OnExecuting(RespireCommandContext context) { Before?.Invoke(context.Command); return null; }
+
+        internal ConcurrentQueue<(string Command, RespireCommandOutcome Outcome, Exception? Error)> Completed
+        {
+            get;
+        } = new();
+
+        public override object? OnExecuting(RespireCommandContext context)
+        {
+            Before?.Invoke(context.Command);
+            return null;
+        }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context.Command, outcome, error));

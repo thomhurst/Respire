@@ -86,7 +86,9 @@ public class CredentialFormattingTests
         ];
 
         foreach (var provider in providers)
+        {
             await Assert.That(provider.ToString()).IsEqualTo(provider.GetType().FullName);
+        }
     }
 
     private sealed class UnformattableProvider : IRespireCredentialProvider

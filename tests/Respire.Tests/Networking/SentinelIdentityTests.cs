@@ -43,12 +43,20 @@ public partial class SentinelIdentityTests
     private static long MeasureSourceEquality(SentinelSwitchSource source, SentinelSwitchSource same, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             if (!source.Equals(same) || source.GetHashCode() != same.GetHashCode())
+            {
                 throw new InvalidOperationException("Equivalent source snapshots must remain equal.");
-            if (allocate) GC.KeepAlive(AllocateControl());
+            }
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateControl());
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -83,14 +91,26 @@ public partial class SentinelIdentityTests
         var source = new SentinelAddressEvidence(new("former.test", 6379), sourceAddresses);
         var candidate = new SentinelAddressEvidence(new("primary.test", 6379),
             [.. Enumerable.Range(1, 15).Select(index => $"198.51.100.{index}"), "192.0.2.16"]);
+
         if (sourceAddresses[15] != "::ffff:192.0.2.16" || source.Addresses![15] != "192.0.2.16")
+        {
             throw new InvalidOperationException("Evidence must normalize its own snapshot.");
+        }
+
         sourceAddresses[15] = "203.0.113.99";
+
         if (source.Addresses[15] != "192.0.2.16")
+        {
             throw new InvalidOperationException("Evidence must retain its snapshot after source mutation.");
+        }
+
         var alreadyNormalized = SentinelAddressEvidence.FromSnapshot(source.Endpoint, source.Addresses);
+
         if (alreadyNormalized.Addresses != source.Addresses)
+        {
             throw new InvalidOperationException("Normalized snapshots must reuse their address storage.");
+        }
+
         _ = MeasureMatching(source, candidate, false);
         _ = MeasureMatching(source, candidate, true);
         var (allocated, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
@@ -98,28 +118,51 @@ public partial class SentinelIdentityTests
             if (handshake is not null)
             {
                 File.WriteAllText(handshake + ".ready", "");
+
                 if (!SpinWait.SpinUntil(() => File.Exists(handshake + ".continue"), TimeSpan.FromSeconds(10)))
+                {
                     throw new TimeoutException("Parent did not release the Sentinel measurement.");
+                }
+
                 if (System.Runtime.GCSettings.LatencyMode != System.Runtime.GCLatencyMode.NoGCRegion)
+                {
                     throw new InvalidOperationException("Parent activity interrupted the Sentinel child region.");
+                }
             }
-            if (mode == "lost-region") GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+
+            if (mode == "lost-region")
+            {
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+            }
+
             return (MeasureMatching(source, candidate, mode == "allocating"), MeasureMatching(source, candidate, true));
         });
         Console.WriteLine($"Sentinel matching: {allocated} bytes; positive control: {control} bytes.");
+
         if (allocated != 0 || control < 37_000)
+        {
             throw new InvalidOperationException($"Expected zero Sentinel matching allocations and a positive control; observed {allocated} and {control} bytes.");
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static long MeasureMatching(SentinelAddressEvidence source, SentinelAddressEvidence candidate, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
-            if (!source.CouldMatch(candidate)) throw new InvalidOperationException("The final address must match.");
-            if (allocate) GC.KeepAlive(AllocateControl());
+            if (!source.CouldMatch(candidate))
+            {
+                throw new InvalidOperationException("The final address must match.");
+            }
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateControl());
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -137,7 +180,8 @@ public partial class SentinelIdentityTests
         };
         var options = new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, SentinelPrimaryName = "mymaster",
+            Protocol = RespireProtocol.Resp2,
+            SentinelPrimaryName = "mymaster",
             Endpoints = [new("127.0.0.1", reporter.Port)],
         };
         var selected = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
@@ -167,12 +211,18 @@ public partial class SentinelIdentityTests
     private static long MeasureDuplicate(SentinelHint hint, RespireEndpoint source, string[] addresses, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             var duplicate = hint.WithSourceAddresses(source, addresses);
             GC.KeepAlive(duplicate.Sources[0].Endpoint.Host);
-            if (allocate) GC.KeepAlive(AllocateControl());
+
+            if (allocate)
+            {
+                GC.KeepAlive(AllocateControl());
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -201,12 +251,14 @@ public partial class SentinelIdentityTests
         await Assert.That(SentinelEndpointIdentity.EndpointComparer.Instance.Equals(left, right)).IsEqualTo(same);
         await Assert.That(new SentinelHintKey("down", left) == new SentinelHintKey("down", right)).IsEqualTo(same);
         await Assert.That(new SentinelValidatedPrimary(left, left) == new SentinelValidatedPrimary(right, right)).IsEqualTo(same);
+
         if (same)
         {
             await Assert.That(first.GetHashCode()).IsEqualTo(second.GetHashCode());
             await Assert.That(new SentinelValidatedPrimary(left, left).GetHashCode())
                 .IsEqualTo(new SentinelValidatedPrimary(right, right).GetHashCode());
         }
+
         var state = new SentinelDiscoveryState([left]);
         await Assert.That(state.TryAdd(right)).IsEqualTo(!same);
         await Assert.That(state.TryAdd(new(rightHost, 6380))).IsTrue();
@@ -217,6 +269,7 @@ public partial class SentinelIdentityTests
     public async Task SeededAddressSetsSeparatePossibleDemotionFromOwnershipProof()
     {
         var random = new Random(794);
+
         for (var iteration = 0; iteration < 128; iteration++)
         {
             var port = random.Next(1000, 60000);

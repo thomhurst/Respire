@@ -35,13 +35,17 @@ public sealed class StreamingCommandHookTests
 #pragma warning disable RESP010 // This test owns the cluster client and reentrant hook to isolate redirected upload/download scopes.
         await using var client = await RespireClient.ConnectAsync(Options(first, hook) with
         {
-            UseCluster = true, ClusterTopologyRefreshInterval = null,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
         });
 #pragma warning restore RESP010
         Task<long>? nested = null;
         hook.Before = context =>
         {
-            if (context.Command == operation) nested = client.Strings.LengthAsync("nested").AsTask();
+            if (context.Command == operation)
+            {
+                nested = client.Strings.LengthAsync("nested").AsTask();
+            }
         };
         using var source = new MemoryStream(new byte[16]);
         await Execute(client, route, source);
@@ -90,8 +94,13 @@ public sealed class StreamingCommandHookTests
     public async Task UploadResultIncludesConversionAndCleanupOnce(string route, bool serverError)
     {
         await using var server = Server();
-        if (serverError) server.ReplyOverride = (_, command) => command.StartsWith("SET ", StringComparison.Ordinal)
+
+        if (serverError)
+        {
+            server.ReplyOverride = (_, command) => command.StartsWith("SET ", StringComparison.Ordinal)
             ? "-ERR failed\r\n"u8.ToArray() : null;
+        }
+
         var hook = new Hook { ThrowOnCompleted = true };
 #pragma warning disable RESP010 // This test owns the client and dedicated pool to observe upload conversion and lease cleanup at hook completion.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook));
@@ -100,8 +109,13 @@ public sealed class StreamingCommandHookTests
         hook.After = () => borrowedAtCompletion = client.Core.DedicatedPool.CaptureRetirementState().Borrowed;
         using var source = new MemoryStream(new byte[16]);
         Exception? error = null;
-        try { await Execute(client, route, source); }
+
+        try
+        {
+            await Execute(client, route, source);
+        }
         catch (Exception failure) { error = failure; }
+
         var completion = hook.Completed.Single();
         await Assert.That(completion.Context.Command).IsEqualTo("SET");
         await Assert.That(completion.Outcome).IsEqualTo(serverError ? RespireCommandOutcome.Failed : RespireCommandOutcome.Succeeded);
@@ -152,7 +166,11 @@ public sealed class StreamingCommandHookTests
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.SuppressReply = command =>
         {
-            if (!command.StartsWith("GET ", StringComparison.Ordinal) && !command.StartsWith("SET ", StringComparison.Ordinal)) return false;
+            if (!command.StartsWith("GET ", StringComparison.Ordinal) && !command.StartsWith("SET ", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
             received.TrySetResult();
             return true;
         };
@@ -163,19 +181,30 @@ public sealed class StreamingCommandHookTests
         using var source = new MemoryStream(new byte[16]);
         using var cancellation = new CancellationTokenSource();
         var baseline = server.CommandsSeen;
-        if (!dispatched) cancellation.Cancel();
+
+        if (!dispatched)
+        {
+            cancellation.Cancel();
+        }
+
         var pending = Execute(client, route, source, cancellation.Token);
+
         if (dispatched)
         {
             await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
         }
+
         var error = await Failure(async () => await pending);
         await Assert.That(error is OperationCanceledException).IsTrue();
         await Assert.That(hook.Completed.Single().Error).IsSameReferenceAs(error);
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(RespireCommandOutcome.Canceled);
         await Assert.That(hook.Entered.Single().CancellationToken).IsEqualTo(cancellation.Token);
-        if (!dispatched) await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+
+        if (!dispatched)
+        {
+            await Assert.That(server.CommandsSeen).IsEqualTo(baseline);
+        }
     }
 
     [Test]
@@ -199,24 +228,36 @@ public sealed class StreamingCommandHookTests
 #pragma warning restore RESP010
         Stream? stream = null;
         Exception? error = null;
-        try { stream = await client.Strings.GetStreamAsync("key"); }
+
+        try
+        {
+            stream = await client.Strings.GetStreamAsync("key");
+        }
         catch (Exception failure) { error = failure; }
+
         await Assert.That(hook.Completed.Single().Outcome).IsEqualTo(reply == "error" ? RespireCommandOutcome.Failed : RespireCommandOutcome.Succeeded);
         await Assert.That(hook.Completed.Single().Error).IsSameReferenceAs(error);
+
         if (stream is not null)
         {
             using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var bytes = new byte[4];
             await stream.ReadExactlyAsync(bytes, guard.Token);
+
             if (reply == "later-failure")
             {
                 server.CloseConnections();
                 await Assert.That(async () => await stream.ReadAsync(bytes, guard.Token)).Throws<Exception>();
             }
-            else await Assert.That(await stream.ReadAsync(bytes, guard.Token)).IsEqualTo(0);
+            else
+            {
+                await Assert.That(await stream.ReadAsync(bytes, guard.Token)).IsEqualTo(0);
+            }
+
             await stream.DisposeAsync();
             await stream.DisposeAsync();
         }
+
         await Assert.That(hook.Completed.Count).IsEqualTo(1);
     }
 
@@ -230,7 +271,7 @@ public sealed class StreamingCommandHookTests
         // The first read belongs to the upload whose buffer lifetime is under test.
 #pragma warning disable RESP010 // This test owns the client and gated socket to observe hook completion only after borrowed upload memory is released.
         await using var client = await RespireClient.ConnectAsync(Options(server, hook) with
-            { CommandTimeout = null, LibraryName = null });
+        { CommandTimeout = null, LibraryName = null });
 #pragma warning restore RESP010
         await server.ConnectionAccepted;
         var connection = client.Core.Multiplexer.GetConnection();
@@ -242,18 +283,27 @@ public sealed class StreamingCommandHookTests
         using var cancellation = new CancellationTokenSource();
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var pending = client.SetAsync("key", payload, cancellationToken: cancellation.Token).AsTask();
+
         try
         {
             while (connection.CaptureTimeoutDiagnostics().InflightBytes == 0 || socket.Poll(0, SelectMode.SelectWrite))
             {
-                if (pending.IsCompleted) await pending;
+                if (pending.IsCompleted)
+                {
+                    await pending;
+                }
+
                 await Task.Delay(1, guard.Token);
             }
+
             cancellation.Cancel();
             // Observe response cancellation independently of the write barrier.
             while (!connection.InspectForTests().Inflight.TryPeek(out var response)
                 || !PendingResponse.IsCompleted(response.State) || response.InspectForTests().ReferenceCount != 1)
+            {
                 await Task.Delay(1, guard.Token);
+            }
+
             await Assert.That(pending.IsCompleted).IsFalse();
             await Assert.That(hook.Completed.Count).IsEqualTo(0);
             reads.TrySetResult();
@@ -271,34 +321,63 @@ public sealed class StreamingCommandHookTests
     {
         switch (route)
         {
-            case "download": using (await client.Strings.GetStreamAsync("key", token)) { } break;
-            case "stream": await client.Strings.SetAsync("key", source, 16, cancellationToken: token); break;
-            case "sequence": await client.Strings.SetAsync("key", new ReadOnlySequence<byte>(new byte[16]), cancellationToken: token); break;
-            case "gathered": await client.SetAsync("key", new byte[16 * 1024], cancellationToken: token); break;
-            default: throw new ArgumentOutOfRangeException(nameof(route));
+            case "download":
+                using (await client.Strings.GetStreamAsync("key", token))
+                {
+                }
+                break;
+            case "stream":
+                await client.Strings.SetAsync("key", source, 16, cancellationToken: token);
+                break;
+            case "sequence":
+                await client.Strings.SetAsync("key", new ReadOnlySequence<byte>(new byte[16]), cancellationToken: token);
+                break;
+            case "gathered":
+                await client.SetAsync("key", new byte[16 * 1024], cancellationToken: token);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(route));
         }
     }
 
     private static FakeRespServer Server() => new(64, FakeRespServer.OkReply);
+
     private static RespireOptions Options(FakeRespServer server, RespireCommandHook hook) => new()
     {
-        Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2,
-        Connections = 1, ThreadPoolMonitoring = false, CommandTimeout = TimeSpan.FromSeconds(5), CommandHook = hook,
+        Endpoints = [new("127.0.0.1", server.Port)],
+        Protocol = RespireProtocol.Resp2,
+        Connections = 1,
+        ThreadPoolMonitoring = false,
+        CommandTimeout = TimeSpan.FromSeconds(5),
+        CommandHook = hook,
     };
+
     private static async Task<Exception> Failure(Func<Task> action)
     {
-        try { await action(); }
+        try
+        {
+            await action();
+        }
         catch (Exception error) { return error; }
+
         throw new InvalidOperationException("Expected failure");
     }
+
     private sealed class FailingSource(Exception error) : MemoryStream
     {
         public override bool CanSeek => false;
         internal bool Disposed;
+
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             => ValueTask.FromException<int>(error);
-        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
     }
+
     private sealed class Hook : RespireCommandHook
     {
         internal Action<RespireCommandContext>? Before;
@@ -306,17 +385,23 @@ public sealed class StreamingCommandHookTests
         internal bool ThrowOnCompleted;
         internal readonly ConcurrentQueue<RespireCommandContext> Entered = new();
         internal readonly ConcurrentQueue<(RespireCommandContext Context, object? State, RespireCommandOutcome Outcome, Exception? Error)> Completed = new();
+
         public override object? OnExecuting(RespireCommandContext context)
         {
             Entered.Enqueue(context);
             Before?.Invoke(context);
             return context;
         }
+
         public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
         {
             Completed.Enqueue((context, state, outcome, error));
             After?.Invoke();
-            if (ThrowOnCompleted) throw new InvalidOperationException("Observer failure");
+
+            if (ThrowOnCompleted)
+            {
+                throw new InvalidOperationException("Observer failure");
+            }
         }
     }
 }

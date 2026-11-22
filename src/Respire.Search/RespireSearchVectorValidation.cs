@@ -13,7 +13,12 @@ public static class RespireSearchVectorValidation
     internal static void ValidateHashLength(long length, RespireSearchVectorOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if (options.Dimensions <= 0) throw new ArgumentOutOfRangeException(nameof(options));
+
+        if (options.Dimensions <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options));
+        }
+
         var size = options.Type switch
         {
             RespireSearchVectorType.Float32 => 4,
@@ -22,8 +27,11 @@ public static class RespireSearchVectorValidation
             RespireSearchVectorType.Int8 or RespireSearchVectorType.UInt8 => 1,
             _ => throw new ArgumentOutOfRangeException(nameof(options)),
         };
+
         if (length != (long)options.Dimensions * size)
+        {
             throw new ArgumentException("Hash vector byte length must match dimensions times element size.", "value");
+        }
     }
 
     /// <summary>Validates a FLOAT32 JSON vector, including finite values.</summary>
@@ -31,10 +39,19 @@ public static class RespireSearchVectorValidation
     {
         ArgumentNullException.ThrowIfNull(value);
         ArgumentNullException.ThrowIfNull(options);
+
         if (options.Type != RespireSearchVectorType.Float32 || options.Dimensions <= 0 || value.Length != options.Dimensions)
+        {
             throw new ArgumentException("JSON float vector must match FLOAT32 schema dimensions.", nameof(value));
+        }
+
         foreach (var element in value)
-            if (!float.IsFinite(element)) throw new ArgumentException("JSON vector values must be finite.", nameof(value));
+        {
+            if (!float.IsFinite(element))
+            {
+                throw new ArgumentException("JSON vector values must be finite.", nameof(value));
+            }
+        }
     }
 
     /// <summary>Validates a FLOAT64 JSON vector, including finite values.</summary>
@@ -42,9 +59,18 @@ public static class RespireSearchVectorValidation
     {
         ArgumentNullException.ThrowIfNull(value);
         ArgumentNullException.ThrowIfNull(options);
+
         if (options.Type != RespireSearchVectorType.Float64 || options.Dimensions <= 0 || value.Length != options.Dimensions)
+        {
             throw new ArgumentException("JSON double vector must match FLOAT64 schema dimensions.", nameof(value));
+        }
+
         foreach (var element in value)
-            if (!double.IsFinite(element)) throw new ArgumentException("JSON vector values must be finite.", nameof(value));
+        {
+            if (!double.IsFinite(element))
+            {
+                throw new ArgumentException("JSON vector values must be finite.", nameof(value));
+            }
+        }
     }
 }

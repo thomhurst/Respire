@@ -41,10 +41,13 @@ public class TypedSerializationAllocationTests
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = [new("127.0.0.1", server.Port)], Protocol = RespireProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
             TestingStreamFactory = async (host, port, token) =>
             {
                 var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
                 try
                 {
                     await socket.ConnectAsync(host, port, token);
@@ -59,6 +62,7 @@ public class TypedSerializationAllocationTests
         var serialized = client.Serialize(payload);
         var payloadLength = serialized.ToString().Length;
         RespireValue raw = poco ? serialized : 42;
+
         for (var warmup = 0; warmup < 4; warmup++)
         {
             _ = await Sample(baseline: false, allocate: warmup == 3);
@@ -70,12 +74,14 @@ public class TypedSerializationAllocationTests
         // state: the minimum of interleaved rounds. A per-command regression still shows
         // in every round, and the control proves the measurement sees 37 bytes per command.
         long actual = long.MaxValue, baseline = long.MaxValue, rawControl = long.MaxValue;
+
         for (var round = 0; round < MeasuredRounds; round++)
         {
             actual = Math.Min(actual, await Sample(baseline: false, allocate: false));
             baseline = Math.Min(baseline, await Sample(baseline: true, allocate: false));
             rawControl = Math.Min(rawControl, await Sample(baseline: true, allocate: false));
         }
+
         var control = await Sample(baseline: false, allocate: true);
         _ = MeasurePayloadArrays(payloadLength);
         var ownedBytes = AllocationMeasurement.WithoutConcurrentGc(() => MeasurePayloadArrays(payloadLength));
@@ -90,9 +96,15 @@ public class TypedSerializationAllocationTests
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var connection = client.Core.Multiplexer.GetConnection();
-            while (!connection.IsFlushLoopWaiting) await Task.Delay(1, deadline.Token);
+
+            while (!connection.IsFlushLoopWaiting)
+            {
+                await Task.Delay(1, deadline.Token);
+            }
+
             transport!.Pause();
             long bytes;
+
             try
             {
                 // Suspend the first flush before counting. Socket completion, receive
@@ -108,6 +120,7 @@ public class TypedSerializationAllocationTests
             {
                 transport.Release();
             }
+
             await Drain(pending).WaitAsync(deadline.Token);
             // A distinct response type provides a FIFO barrier after SET's receive
             // references have returned to the pool, before the next sample is armed.
@@ -119,20 +132,35 @@ public class TypedSerializationAllocationTests
     private static async Task Drain(ValueTask<bool>[] pending)
     {
         foreach (var operation in pending)
-            if (!await operation) throw new InvalidOperationException("SET did not succeed.");
+        {
+            if (!await operation)
+            {
+                throw new InvalidOperationException("SET did not succeed.");
+            }
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static long MeasureJson(RespireSystemTextJsonSerializer serializer, ArrayBufferWriter<byte> destination, bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < Count; index++)
         {
             destination.Clear();
             serializer.Serialize(destination, 42);
-            if (serializer.Deserialize<int>(destination.WrittenSpan) != 42) throw new InvalidOperationException();
-            if (allocate) Volatile.Write(ref _escape, new byte[37]);
+
+            if (serializer.Deserialize<int>(destination.WrittenSpan) != 42)
+            {
+                throw new InvalidOperationException();
+            }
+
+            if (allocate)
+            {
+                Volatile.Write(ref _escape, new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -143,16 +171,26 @@ public class TypedSerializationAllocationTests
         // Warm this thread's serialization/write scratch before counting; no await in the region.
         pending[1] = Send();
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 2; index < pending.Length; index++)
         {
             pending[index] = Send();
-            if (allocate) Volatile.Write(ref _escape, new byte[37]);
+
+            if (allocate)
+            {
+                Volatile.Write(ref _escape, new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
 
         ValueTask<bool> Send()
         {
-            if (baseline) return client.SetAsync(poco ? "payload" : "number", raw);
+            if (baseline)
+            {
+                return client.SetAsync(poco ? "payload" : "number", raw);
+            }
+
             return poco ? client.SetAsync("payload", payload) : client.SetAsync<int>("number", 42);
         }
     }
@@ -161,7 +199,12 @@ public class TypedSerializationAllocationTests
     private static long MeasurePayloadArrays(int length)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var index = 0; index < Count; index++) Volatile.Write(ref _escape, new byte[length]);
+
+        for (var index = 0; index < Count; index++)
+        {
+            Volatile.Write(ref _escape, new byte[length]);
+        }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -170,8 +213,16 @@ public class TypedSerializationAllocationTests
     private sealed class PausedWriteStream(Stream inner) : Stream
     {
         private volatile bool _paused;
-        public TaskCompletionSource WriteStarted { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource ResumeWrites { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource WriteStarted
+        {
+            get; private set;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ResumeWrites
+        {
+            get; private set;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public void Pause()
         {
@@ -198,19 +249,38 @@ public class TypedSerializationAllocationTests
 
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             => inner.ReadAsync(buffer, cancellationToken);
+
         public override bool CanRead => inner.CanRead;
+
         public override bool CanSeek => false;
+
         public override bool CanWrite => inner.CanWrite;
+
         public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override long Position
+        {
+            get => throw new NotSupportedException(); set => throw new NotSupportedException();
+        }
+
         public override void Flush() => inner.Flush();
+
         public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
         public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
+
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
         public override void SetLength(long value) => throw new NotSupportedException();
+
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { Release(); inner.Dispose(); }
+            if (disposing)
+            {
+                Release();
+                inner.Dispose();
+            }
+
             base.Dispose(disposing);
         }
     }

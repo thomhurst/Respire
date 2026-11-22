@@ -15,9 +15,11 @@ public class ServerFlushCommandTests
     {
         await using var primary = new FakeRespServer(8, FakeRespServer.OkReply);
         await using var seed = new FakeRespServer(8, FakeRespServer.OkReply);
+
         byte[] Topology(int owner, int replica) => System.Text.Encoding.ASCII.GetBytes(
             $"*1\r\n*4\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner}\r\n" +
             $"*2\r\n$9\r\n127.0.0.1\r\n:{replica}\r\n");
+
         var topology = demoteSeed ? Topology(seed.Port, primary.Port) : Topology(primary.Port, seed.Port);
         seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology
             : "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
@@ -31,7 +33,10 @@ public class ServerFlushCommandTests
 #pragma warning disable RESP010 // This flush-routing test owns a cluster client whose seed can be demoted before queue execution.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, AllowAdmin = true, ClusterTopologyRefreshInterval = null,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            AllowAdmin = true,
+            ClusterTopologyRefreshInterval = null,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 #pragma warning restore RESP010
@@ -41,7 +46,16 @@ public class ServerFlushCommandTests
         IRespireCommandQueue queue = transaction ? tx : batch;
         var database = queue.Server.FlushDatabase();
         var all = queue.Server.FlushAll();
-        if (transaction) await tx.CommitAsync(); else await batch.ExecuteAsync();
+
+        if (transaction)
+        {
+            await tx.CommitAsync();
+        }
+        else
+        {
+            await batch.ExecuteAsync();
+        }
+
         await Assert.That(database.Result).IsTrue();
         await Assert.That(all.Result).IsTrue();
         await Assert.That(seed.ReceivedCommands.Any(command => command.StartsWith("FLUSH", StringComparison.Ordinal))).IsFalse();
@@ -74,7 +88,9 @@ public class ServerFlushCommandTests
 #pragma warning disable RESP010 // This flush test owns its cluster client and scripted batch/transaction replies to identify the sole execution node.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, UseCluster = true, AllowAdmin = true,
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            AllowAdmin = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 #pragma warning restore RESP010
@@ -83,20 +99,35 @@ public class ServerFlushCommandTests
         IRespireCommandQueue queue = transaction ? tx : batch;
         var database = queue.Server.FlushDatabase(mode);
         var all = queue.Server.FlushAll(mode);
+
         if (transaction)
         {
             var key = Enumerable.Range(0, 100).Select(index => $"key:{index}")
                 .First(candidate => Respire.Internal.ClusterHash.GetSlot(candidate) >= 8192);
             _ = queue.Set(key, (RespireValue)"value");
         }
-        if (transaction) await tx.CommitAsync(); else await batch.ExecuteAsync();
+
+        if (transaction)
+        {
+            await tx.CommitAsync();
+        }
+        else
+        {
+            await batch.ExecuteAsync();
+        }
+
         await Assert.That(database.Result).IsTrue();
         await Assert.That(all.Result).IsTrue();
         var participants = new[] { first, second, seed };
         await Assert.That(seed.ReceivedCommands.Any(command => command.StartsWith("FLUSH", StringComparison.Ordinal))).IsFalse();
         await Assert.That(participants.Count(server => server.ReceivedCommands.Any(command => command.StartsWith("FLUSH", StringComparison.Ordinal))))
             .IsEqualTo(1);
-        if (transaction) await Assert.That(first.ReceivedCommands).IsEmpty();
+
+        if (transaction)
+        {
+            await Assert.That(first.ReceivedCommands).IsEmpty();
+        }
+
         await Assert.That(participants.SelectMany(server => server.ReceivedCommands)
             .Where(command => command.StartsWith("FLUSH", StringComparison.Ordinal)).ToArray())
             .IsEquivalentTo(new[] { "FLUSHDB" + suffix, "FLUSHALL" + suffix });
@@ -109,14 +140,20 @@ public class ServerFlushCommandTests
     public async Task EveryModePreservesWireForm(int execution)
     {
         byte[][] replies = Enumerable.Repeat(FakeRespServer.OkReply, 6).ToArray();
+
         if (execution == 2)
+        {
             replies = [FakeRespServer.OkReply, .. Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), 6),
                 [.. "*6\r\n"u8, .. replies.SelectMany(reply => reply)]];
+        }
+
         await using var server = new FakeRespServer(replies);
 #pragma warning disable RESP010 // This wire-format test owns an admin client shared only by its prefixed view, batch and transaction.
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, AllowAdmin = true, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            AllowAdmin = true,
+            Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
 #pragma warning restore RESP010
@@ -125,6 +162,7 @@ public class ServerFlushCommandTests
         await using var tx = client.CreateTransaction();
         IRespireCommandQueue queue = execution == 2 ? tx : batch;
         var pending = new List<RespirePending<bool>>();
+
         foreach (var mode in new[] { RespireServerFlushMode.Default, RespireServerFlushMode.Sync, RespireServerFlushMode.Async })
         {
             if (execution == 0)
@@ -146,9 +184,22 @@ public class ServerFlushCommandTests
                 pending.Add(queue.Server.FlushAll(mode));
             }
         }
-        if (execution == 1) await batch.ExecuteAsync();
-        if (execution == 2) await tx.CommitAsync();
-        foreach (var result in pending) await Assert.That(result.Result).IsTrue();
+
+        if (execution == 1)
+        {
+            await batch.ExecuteAsync();
+        }
+
+        if (execution == 2)
+        {
+            await tx.CommitAsync();
+        }
+
+        foreach (var result in pending)
+        {
+            await Assert.That(result.Result).IsTrue();
+        }
+
         await Assert.That(server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC").ToArray())
             .IsEquivalentTo(new[] { "FLUSHDB", "FLUSHALL", "FLUSHDB SYNC", "FLUSHALL SYNC", "FLUSHDB ASYNC", "FLUSHALL ASYNC" });
     }
@@ -162,16 +213,20 @@ public class ServerFlushCommandTests
 #pragma warning disable RESP010 // This validation test owns its AllowAdmin setting and queues to verify rejection before sending or queueing.
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Protocol = RespireProtocol.Resp2, AllowAdmin = allowAdmin, Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            AllowAdmin = allowAdmin,
+            Connections = 1,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
 #pragma warning restore RESP010
         using var batch = client.CreateBatch();
         await using var tx = client.CreateTransaction();
+
         if (allowAdmin)
         {
             await Assert.That(async () => await client.Server.FlushDatabaseAsync((RespireServerFlushMode)99, default)).ThrowsExactly<ArgumentOutOfRangeException>();
             await Assert.That(async () => await client.Server.FlushAllAsync((RespireServerFlushMode)99, default)).ThrowsExactly<ArgumentOutOfRangeException>();
+
             foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
             {
                 await Assert.That(() => queue.Server.FlushDatabase((RespireServerFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
@@ -184,6 +239,7 @@ public class ServerFlushCommandTests
             {
                 await Assert.That(async () => await client.Server.FlushDatabaseAsync(mode, default)).ThrowsExactly<NotSupportedException>();
                 await Assert.That(async () => await client.Server.FlushAllAsync(mode, default)).ThrowsExactly<NotSupportedException>();
+
                 foreach (IRespireCommandQueue queue in new IRespireCommandQueue[] { batch, tx })
                 {
                     await Assert.That(() => queue.Server.FlushDatabase(mode)).ThrowsExactly<NotSupportedException>();
@@ -191,6 +247,7 @@ public class ServerFlushCommandTests
                 }
             }
         }
+
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(tx.Count).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands).IsEmpty();

@@ -1,5 +1,5 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Buffers.Text;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
@@ -53,6 +53,7 @@ public readonly struct RespireStreamId : IEquatable<RespireStreamId>, IComparabl
         var rightParts = ParseComparable(right);
 
         var rankComparison = leftParts.Rank.CompareTo(rightParts.Rank);
+
         if (rankComparison != 0)
         {
             return rankComparison;
@@ -113,6 +114,7 @@ public readonly struct RespireStreamId : IEquatable<RespireStreamId>, IComparabl
         var millisecondsText = separator < 0 ? value.AsSpan() : value.AsSpan(0, separator);
         var sequenceText = separator < 0 ? ReadOnlySpan<char>.Empty : value.AsSpan(separator + 1);
         var parsedSequence = 0UL;
+
         if (!ulong.TryParse(
                 millisecondsText, NumberStyles.None, CultureInfo.InvariantCulture, out var milliseconds)
             || (!sequenceText.IsEmpty
@@ -155,18 +157,30 @@ public readonly record struct RespireStreamEntry
     }
 
     /// <summary>The entry id.</summary>
-    public RespireStreamId Id { get; }
+    public RespireStreamId Id
+    {
+        get;
+    }
 
     /// <summary>Idle time before this delivery from XREADGROUP CLAIM; null when the server omits this metadata.</summary>
     /// <remarks>Redis 8.4 also supplies zero for new entries delivered with CLAIM.</remarks>
-    public TimeSpan? PreviousIdleTime { get; }
+    public TimeSpan? PreviousIdleTime
+    {
+        get;
+    }
 
     /// <summary>Delivery count before this delivery from XREADGROUP CLAIM; null when the server omits this metadata.</summary>
     /// <remarks>Redis 8.4 also supplies zero for new entries delivered with CLAIM.</remarks>
-    public long? PreviousDeliveryCount { get; }
+    public long? PreviousDeliveryCount
+    {
+        get;
+    }
 
     /// <summary>The entry's field/value pairs.</summary>
-    public IReadOnlyList<KeyValuePair<string, byte[]>> Fields { get; }
+    public IReadOnlyList<KeyValuePair<string, byte[]>> Fields
+    {
+        get;
+    }
 
     /// <summary>The field's raw bytes, or null when absent.</summary>
     public byte[]? this[string field]
@@ -286,22 +300,40 @@ public readonly record struct RespireStreamAddOptions
     private readonly bool? _createStream;
 
     /// <summary>Gets the entry id, or null to let Redis generate one.</summary>
-    public RespireStreamId? Id { get; init; }
+    public RespireStreamId? Id
+    {
+        get; init;
+    }
 
     /// <summary>Gets the maximum stream length; mutually exclusive with MinId.</summary>
-    public long? MaxLength { get; init; }
+    public long? MaxLength
+    {
+        get; init;
+    }
 
     /// <summary>Evicts entries older than this numeric stream id. Requires Redis 6.2+.</summary>
-    public RespireStreamId? MinId { get; init; }
+    public RespireStreamId? MinId
+    {
+        get; init;
+    }
 
     /// <summary>Limits approximate trimming work. Requires a threshold and Redis 6.2+; zero disables the limit.</summary>
-    public long? Limit { get; init; }
+    public long? Limit
+    {
+        get; init;
+    }
 
     /// <summary>Redis 8.2+ reference handling when trimming. Null preserves the legacy wire format.</summary>
-    public RespireStreamReferencePolicy? ReferencePolicy { get; init; }
+    public RespireStreamReferencePolicy? ReferencePolicy
+    {
+        get; init;
+    }
 
     /// <summary>Redis 8.6+ producer deduplication. Requires an automatically generated entry ID; null omits it.</summary>
-    public RespireStreamIdempotency? Idempotency { get; init; }
+    public RespireStreamIdempotency? Idempotency
+    {
+        get; init;
+    }
 
     /// <summary>Gets whether trimming may be approximate. Defaults to true.</summary>
     /// <remarks>Unlike XADD, <see cref="RespireStreamTrimOptions.Approximate"/> defaults to false for XTRIM.</remarks>
@@ -320,7 +352,10 @@ public readonly record struct RespireStreamAddOptions
 
     internal RespireStreamTrimOptions ToTrimOptions() => new()
     {
-        MaxLength = MaxLength, MinId = MinId, Approximate = ApproximateTrim, Limit = Limit,
+        MaxLength = MaxLength,
+        MinId = MinId,
+        Approximate = ApproximateTrim,
+        Limit = Limit,
         ReferencePolicy = ReferencePolicy,
     };
 
@@ -580,7 +615,6 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     public ValueTask<RespireStreamEntry[]> ClaimAsync(RespireKey key, string group, string consumer, TimeSpan minIdle, RespireStreamId ids, CancellationToken cancellationToken)
         => ClaimAsync(key, group, consumer, minIdle, [ids], cancellationToken);
 
-
     private static readonly TimeSpan BlockInterval = TimeSpan.FromSeconds(5);
     private static readonly Verb XDel = new("XDEL");
     internal static readonly Verb XTrim = new("XTRIM");
@@ -618,8 +652,12 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         CancellationToken cancellationToken)
     {
         if (!TryAttachIdempotency(in options, out var attached))
+        {
             return AddOptionalAsync(BuildAddCommand(client, key, options, fields), cancellationToken);
+        }
+
         var owner = DispatchResponseSource<RespireStreamId?>.Start();
+
         try
         {
             var arguments = BuildAddArguments(attached, fields, snapshotValues: true, out var idempotencyOffset);
@@ -637,8 +675,12 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         ReadOnlySpan<(string Field, RespireValue Value)> fields, CancellationToken cancellationToken)
     {
         if (!TryAttachIdempotency(default, out var attached))
+        {
             return AddRequiredAsync(BuildAddCommand(client, key, default, fields), cancellationToken);
+        }
+
         var owner = DispatchResponseSource<RespireStreamId>.Start();
+
         try
         {
             var arguments = BuildAddArguments(attached, fields, snapshotValues: true, out var idempotencyOffset);
@@ -657,8 +699,13 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     private bool TryAttachIdempotency(in RespireStreamAddOptions options, out RespireStreamAddOptions attached)
     {
         attached = options;
+
         if (options.Idempotency is not null || options.Id is { } id && id.Value != "*"
-            || !client.Core.TryGetStreamProducerId(out var producerId)) return false;
+            || !client.Core.TryGetStreamProducerId(out var producerId))
+        {
+            return false;
+        }
+
         var messageId = new byte[16];
         _ = Guid.NewGuid().TryWriteBytes(messageId);
         attached = options with { Idempotency = RespireStreamIdempotency.Owned(producerId, messageId) };
@@ -702,6 +749,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         // One AddAsync owns one command timeout, so the legacy fallback spends only what the probe left.
         var deadline = LogicalCommandRetry.CreateDeadline(client.Core.Options.CommandTimeout);
         string? id;
+
         try
         {
             id = await client.StringOrNullUnhookedAsync("XADD", new Cmd1N(Verbs.XAddIdempotent, key, arguments),
@@ -721,6 +769,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
             id = await AddWithinDeadlineAsync(new Cmd1N(Verbs.XAdd, key, plain), deadline, cancellationToken, observation)
                 .ConfigureAwait(false);
         }
+
         return id is null ? default(RespireStreamId?) : new RespireStreamId(id);
     }
 
@@ -730,11 +779,20 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (!deadline.IsSet)
+        {
             return await client.StringOrNullUnhookedAsync("XADD", command, cancellationToken, observation).ConfigureAwait(false);
+        }
+
         var commandTimeout = client.Core.Options.CommandTimeout!.Value;
         var remaining = deadline.RemainingMilliseconds;
-        if (remaining == 0) throw new RespireTimeoutException("XADD", commandTimeout);
+
+        if (remaining == 0)
+        {
+            throw new RespireTimeoutException("XADD", commandTimeout);
+        }
+
         using var timeout = CommandTimeoutCancellation.Create(cancellationToken, TimeSpan.FromMilliseconds(remaining));
+
         try
         {
             return await client.StringOrNullUnhookedAsync("XADD", command, timeout.Token, observation).ConfigureAwait(false);
@@ -764,12 +822,17 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         out int idempotencyOffset)
     {
         var trim = options.ToTrimOptions();
+
         if (options.Idempotency is not null && options.Id is { } explicitId && explicitId.Value != "*")
+        {
             throw new ArgumentException("Idempotency requires an automatically generated entry ID (*).", nameof(options));
+        }
+
         var optionCount = (options.CreateStream ? 0 : 1) + (options.Idempotency?.ArgumentCount ?? 0)
             + trim.ValidateAndCountArguments(requireThreshold: false, nameof(options));
         var args = new RespireValue[optionCount + 1 + fields.Length * 2];
         var offset = 0;
+
         if (!options.CreateStream)
         {
             args[offset++] = "NOMKSTREAM";
@@ -777,9 +840,14 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
 
         offset += trim.CopyArgumentsTo(args.AsSpan(offset));
         idempotencyOffset = offset;
-        if (options.Idempotency is { } idempotency) offset += idempotency.CopyArgumentsTo(args.AsSpan(offset));
+
+        if (options.Idempotency is { } idempotency)
+        {
+            offset += idempotency.CopyArgumentsTo(args.AsSpan(offset));
+        }
 
         args[offset++] = options.Id?.Value ?? "*";
+
         for (var i = 0; i < fields.Length; i++)
         {
             args[offset + i * 2] = fields[i].Field;
@@ -855,6 +923,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     {
         RequireIds(ids);
         var args = new RespireValue[ids.Length];
+
         for (var i = 0; i < ids.Length; i++)
         {
             args[i] = ids[i].Value;
@@ -894,6 +963,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         CancellationToken cancellationToken = default)
     {
         var from = (startAt ?? RespireStreamId.New).Value;
+
         if (client.Core.Options.CommandHook is { } hook)
         {
             // Construct before admission; BUSYGROUP reduction belongs inside the scope.
@@ -903,6 +973,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
                 : await CreateGroupHookedAsync(hook,
                     new Cmd3(Verbs.XGroupCreate, client.Key(in key), group, from), cancellationToken).ConfigureAwait(false);
         }
+
         try
         {
             if (createStream)
@@ -964,7 +1035,11 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         string consumer,
         CancellationToken cancellationToken = default)
     {
-        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         return client.FlagAsync(
             "XGROUP CREATECONSUMER", new Cmd3(XGroupCreateConsumer, client.Key(in key), group, consumer),
             cancellationToken);
@@ -982,7 +1057,10 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
             throw new ArgumentOutOfRangeException(nameof(entriesAdded), "Entries added must be non-negative.");
         }
 
-        if (client.Core.Options.CommandHook is null) cancellationToken.ThrowIfCancellationRequested();
+        if (client.Core.Options.CommandHook is null)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
 
         if (entriesAdded is { } added && maxDeletedId is { } deleted)
         {
@@ -1051,6 +1129,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         RespireClient client, RespireKey key, string group, ReadOnlySpan<RespireStreamId> ids)
     {
         var args = new RespireValue[ids.Length];
+
         for (var i = 0; i < ids.Length; i++)
         {
             args[i] = ids[i].Value;
@@ -1155,25 +1234,31 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     {
         var owner = DispatchResponseSource<bool>.Start();
         Exception? failure = null;
+
         try
         {
             RespireValue resolvedKey;
+
             try
             {
                 ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
                 resolvedKey = client.Key(in key);
             }
             catch (Exception error) { failure = error; throw; }
+
             var cursor = startAt ?? RespireStreamId.Beginning;
             // Admit an initially canceled call, but preserve quiet exit after a fetched batch.
             var admitFirstPage = client.Core.Options.CommandHook is not null;
+
             while (admitFirstPage || !cancellationToken.IsCancellationRequested)
             {
                 admitFirstPage = false;
                 RespireStreamEntry[] entries;
+
                 try
                 {
                     var state = (Commands: this, Key: resolvedKey, Group: group);
+
                     if (startAt is null)
                     {
                         entries = await client.ConvertBlockingResponseAsync("XREADGROUP",
@@ -1199,10 +1284,27 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
                     }
                 }
                 catch (Exception error) { failure = error; throw; }
-                if (entries.Length == 0 && startAt is not null) yield break;
-                foreach (var entry in entries) yield return entry;
-                if (startAt is null) continue;
-                if (entries[^1].Id == cursor) yield break;
+
+                if (entries.Length == 0 && startAt is not null)
+                {
+                    yield break;
+                }
+
+                foreach (var entry in entries)
+                {
+                    yield return entry;
+                }
+
+                if (startAt is null)
+                {
+                    continue;
+                }
+
+                if (entries[^1].Id == cursor)
+                {
+                    yield break;
+                }
+
                 cursor = entries[^1].Id;
             }
         }
@@ -1213,6 +1315,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     private RespireStreamEntry[] ParseReadReply(in RespValue reply, RespireValue resolvedKey, string group)
     {
         var streams = reply.AsArray();
+
         if (streams.Length == 0)
         {
             return [];
@@ -1234,6 +1337,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     {
         var elements = entriesValue.AsArray();
         var entries = new RespireStreamEntry[elements.Length];
+
         for (var i = 0; i < elements.Length; i++)
         {
             entries[i] = ParseEntry(in elements[i], client, resolvedKey, group);
@@ -1267,6 +1371,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     {
         var values = value.AsArray();
         var ids = new RespireStreamId[values.Length];
+
         for (var i = 0; i < values.Length; i++)
         {
             ids[i] = new RespireStreamId(values[i].AsString());
@@ -1281,10 +1386,12 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         var entry = entryValue.AsArray();
         var id = new RespireStreamId(entry.Length > 0 ? entry[0].AsString() : string.Empty);
         KeyValuePair<string, byte[]>[] fields = [];
+
         if (entry.Length > 1 && !entry[1].IsNull)
         {
             var flat = entry[1].AsArray();
             fields = new KeyValuePair<string, byte[]>[flat.Length / 2];
+
             for (var f = 0; f < fields.Length; f++)
             {
                 fields[f] = new KeyValuePair<string, byte[]>(
@@ -1293,7 +1400,10 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         }
 
         if (entry.Length == 3 || entry.Length > 4)
+        {
             throw new RespireProtocolException("A stream entry must contain either two or four elements.");
+        }
+
         return new RespireStreamEntry(id, fields, client, resolvedKey, group,
             entry.Length == 4 ? TimeSpan.FromMilliseconds(entry[2].AsInteger()) : null,
             entry.Length == 4 ? entry[3].AsInteger() : null);
@@ -1312,6 +1422,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     private static RespireStreamPendingSummary ParsePendingSummary(in RespValue reply)
     {
         var values = reply.AsArray();
+
         if (values.Length == 0)
         {
             return new RespireStreamPendingSummary(0, null, null, []);
@@ -1331,6 +1442,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     {
         var values = value.AsArray();
         var consumers = new RespireStreamConsumerPendingCount[values.Length];
+
         for (var i = 0; i < values.Length; i++)
         {
             var consumer = values[i].AsArray();
@@ -1346,6 +1458,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     {
         var values = reply.AsArray();
         var pending = new RespireStreamPendingEntry[values.Length];
+
         for (var i = 0; i < values.Length; i++)
         {
             var item = values[i].AsArray();
@@ -1427,6 +1540,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     {
         var values = reply.AsArray();
         var groups = new RespireStreamGroupInfo[values.Length];
+
         for (var i = 0; i < values.Length; i++)
         {
             var fields = values[i].AsArray();
@@ -1472,6 +1586,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
     {
         var values = reply.AsArray();
         var consumers = new RespireStreamConsumerInfo[values.Length];
+
         for (var i = 0; i < values.Length; i++)
         {
             var fields = values[i].AsArray();

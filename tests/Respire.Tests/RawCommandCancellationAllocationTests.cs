@@ -16,6 +16,7 @@ public class RawCommandCancellationAllocationTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var token = cancellation.Token;
+
         if (dynamic)
         {
             var command = new DynamicCommand(["STRLEN", "key"], 1);
@@ -36,8 +37,11 @@ public class RawCommandCancellationAllocationTests
         var copy = command;
         var measured = AllocationMeasurement.WithoutConcurrentGc(() =>
             (Bytes: Measure(in copy, token, false), Control: Measure(in copy, token, true)));
+
         if (measured.Bytes != 0 || measured.Control < 37_000)
+        {
             throw new InvalidOperationException($"Expected no response cancellation allocation and a positive control; observed {measured}.");
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -45,13 +49,21 @@ public class RawCommandCancellationAllocationTests
         where TCommand : struct, IRespCommand
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var index = 0; index < 1_000; index++)
         {
             if (command.GetResponseCancellationToken(token) != token ||
                 command.GetResponseCancellationToken(default) != default)
+            {
                 throw new InvalidOperationException("The raw command changed its response cancellation token.");
-            if (control) GC.KeepAlive(new byte[37]);
+            }
+
+            if (control)
+            {
+                GC.KeepAlive(new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 }

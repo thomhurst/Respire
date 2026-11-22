@@ -17,6 +17,7 @@ public class ErrorObservationTests
         using var configuration = new MetricConfigurationScope();
         using var capture = new Capture();
         var owner = ErrorObservation.StartFailure();
+
         try
         {
             Parallel.For(0, 128, _ => owner.RecordRetry());
@@ -40,9 +41,18 @@ public class ErrorObservationTests
         var owner = ErrorObservation.StartFailure();
         var error = new IOException();
         owner.RecordHandled(error);
-        if (publishFinal) owner.PublishFinal(error);
-        else owner.Complete();
+
+        if (publishFinal)
+        {
+            owner.PublishFinal(error);
+        }
+        else
+        {
+            owner.Complete();
+        }
+
         var borrower = owner.Borrow();
+
         try
         {
             await Assert.That(borrower.RecordHandled(error)).IsFalse();
@@ -83,6 +93,7 @@ public class ErrorObservationTests
         var second = ErrorObservation.StartFailure();
         var borrower = first.Borrow();
         var nested = borrower.Borrow();
+
         try
         {
             first.RecordHandled(error);
@@ -109,6 +120,7 @@ public class ErrorObservationTests
         var borrower = owner.Borrow();
         owner.Complete();
         var other = ErrorObservation.StartFailure();
+
         try
         {
             borrower.RecordHandled(new IOException());
@@ -134,9 +146,14 @@ public class ErrorObservationTests
         await Assert.That(old.PublishFinal(error)).IsFalse();
         // Retain rentals to exhaust the bounded pool, independently of pool ordering.
         var rentals = new List<ErrorObservation.FinalOwner>();
+
         try
         {
-            for (var i = 0; i < 33; i++) rentals.Add(ErrorObservation.StartFailure());
+            for (var i = 0; i < 33; i++)
+            {
+                rentals.Add(ErrorObservation.StartFailure());
+            }
+
             await Assert.That(old.PublishFinal(error)).IsFalse();
             await Assert.That(borrower.RecordHandled(error)).IsFalse();
             await Assert.That(old.Borrow().RecordHandled(error)).IsFalse();
@@ -146,7 +163,7 @@ public class ErrorObservationTests
             rentals[0].PublishFinal(error);
             await Assert.That(capture.Items.Last().RetryAttempts).IsEqualTo(0);
         }
-        finally { foreach (var rental in rentals) rental.Complete(); }
+        finally { foreach (var rental in rentals) { rental.Complete(); } }
     }
 
     [Test]
@@ -158,9 +175,19 @@ public class ErrorObservationTests
         cancellation.Cancel();
         Exception expected = cancelled ? new OperationCanceledException(cancellation.Token) : new IOException();
         Exception? actual = null;
-        try { CompleteBeforeFinally(expected); } catch (Exception error) { actual = error; }
+
+        try
+        {
+            CompleteBeforeFinally(expected);
+        }
+        catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
-        if (cancelled) await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+
+        if (cancelled)
+        {
+            await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+        }
     }
 
     private static void CompleteBeforeFinally(Exception error)
@@ -172,17 +199,25 @@ public class ErrorObservationTests
         borrower.Complete();
         owner.Complete();
         var rentals = new List<ErrorObservation.FinalOwner>();
+
         try
         {
-            for (var i = 0; i < 33; i++) rentals.Add(ErrorObservation.StartFailure());
-            try { throw error; }
+            for (var i = 0; i < 33; i++)
+            {
+                rentals.Add(ErrorObservation.StartFailure());
+            }
+
+            try
+            {
+                throw error;
+            }
             finally
             {
                 ownerCopy.Complete();
                 borrowerCopy.Complete();
             }
         }
-        finally { foreach (var rental in rentals) rental.Complete(); }
+        finally { foreach (var rental in rentals) { rental.Complete(); } }
     }
 
     [Test]
@@ -208,15 +243,20 @@ public class ErrorObservationTests
         var owner = ErrorObservation.StartFailure();
         var borrowers = Enumerable.Range(0, 32).Select(_ => owner.Borrow()).ToArray();
         var error = new IOException();
+
         try
         {
-            await Task.WhenAll(borrowers.Select(borrower => Task.Run(() => { borrower.RecordHandled(error); borrower.Complete(); })));
+            await Task.WhenAll(borrowers.Select(borrower => Task.Run(() =>
+            {
+                borrower.RecordHandled(error);
+                borrower.Complete();
+            })));
             owner.PublishFinal(error);
             await Assert.That(capture.Items.Count).IsEqualTo(33);
             await Assert.That(capture.Items.Last().RetryAttempts).IsEqualTo(32);
             await Assert.That(capture.Items.Where(item => item.Internal).Select(item => item.RetryAttempts).Distinct().Count()).IsEqualTo(32);
         }
-        finally { owner.Complete(); foreach (var borrower in borrowers) borrower.Complete(); }
+        finally { owner.Complete();  foreach (var borrower in borrowers) { borrower.Complete(); } }
     }
 
     [Test]
@@ -240,6 +280,7 @@ public class ErrorObservationTests
         var owner = ErrorObservation.StartFailure();
         var borrower = owner.Borrow();
         var error = new IOException();
+
         try
         {
             owner.PublishFinal(error);
@@ -269,15 +310,24 @@ public class ErrorObservationTests
         owner.PublishFinal(expected);
         var rentals = new List<ErrorObservation.FinalOwner>();
         Exception? actual = null;
+
         try
         {
             if (reuse)
             {
                 borrower.Complete();
                 owner.Complete();
-                for (var i = 0; i < 33; i++) rentals.Add(ErrorObservation.StartFailure());
+
+                for (var i = 0; i < 33; i++)
+                {
+                    rentals.Add(ErrorObservation.StartFailure());
+                }
             }
-            try { throw expected; }
+
+            try
+            {
+                throw expected;
+            }
             catch (Exception error)
             {
                 owner.RecordHandled(error);
@@ -290,9 +340,15 @@ public class ErrorObservationTests
             finally { borrower.Complete(); owner.Complete(); }
         }
         catch (Exception error) { actual = error; }
-        finally { foreach (var rental in rentals) rental.Complete(); }
+        finally { foreach (var rental in rentals) { rental.Complete(); } }
+
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
-        if (cancelled) await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+
+        if (cancelled)
+        {
+            await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+        }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
     }
 
@@ -323,6 +379,7 @@ public class ErrorObservationTests
         var stale = new ErrorObservation.FinalOwner(new ErrorObservation.Lease(observation, 1));
         var current = new ErrorObservation.FinalOwner(new ErrorObservation.Lease(observation, 2));
         var error = new IOException();
+
         try
         {
             await Assert.That(stale.RecordHandled(error)).IsFalse();
@@ -344,6 +401,7 @@ public class ErrorObservationTests
         var observation = new ErrorObservation.Observation { Generation = 1, References = int.MaxValue, RetryAttempts = int.MaxValue };
         var owner = new ErrorObservation.FinalOwner(new ErrorObservation.Lease(observation, 1));
         var error = new IOException();
+
         try
         {
             await Assert.That(owner.Borrow().RecordHandled(error)).IsFalse();
@@ -364,6 +422,7 @@ public class ErrorObservationTests
         var owner = ErrorObservation.StartFailure();
         var borrowers = Enumerable.Range(0, 32).Select(_ => owner.Borrow()).ToArray();
         var error = new IOException();
+
         try
         {
             var final = Task.Run(() => owner.PublishFinal(error));
@@ -373,7 +432,7 @@ public class ErrorObservationTests
             await Assert.That(capture.Items.Single(item => !item.Internal).RetryAttempts).IsEqualTo(retries.Count(accepted => accepted));
             await Assert.That(borrowers[0].RecordHandled(error)).IsFalse();
         }
-        finally { foreach (var borrower in borrowers) borrower.Complete(); owner.Complete(); }
+        finally { foreach (var borrower in borrowers) { borrower.Complete(); }  owner.Complete(); }
     }
 
     [Test]
@@ -385,11 +444,16 @@ public class ErrorObservationTests
         using var capture = new Capture(onMeasurement: () =>
         {
             entered.Set();
-            if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Exporter was not released.");
+
+            if (!release.Wait(TimeSpan.FromSeconds(10)))
+            {
+                throw new TimeoutException("Exporter was not released.");
+            }
         });
         var owner = ErrorObservation.StartFailure();
         var borrower = owner.Borrow();
         var publication = Task.Run(() => owner.PublishFinal(new IOException()));
+
         try
         {
             await Assert.That(entered.Wait(TimeSpan.FromSeconds(5))).IsTrue();
@@ -415,16 +479,31 @@ public class ErrorObservationTests
         cancellation.Cancel();
         Exception expected = cancelled ? new OperationCanceledException(cancellation.Token) : new IOException();
         Exception? actual = null;
-        try { await ObserveWithOwnerAsync(ValueTask.FromException<int>(expected)); } catch (Exception error) { actual = error; }
+
+        try
+        {
+            await ObserveWithOwnerAsync(ValueTask.FromException<int>(expected));
+        }
+        catch (Exception error) { actual = error; }
+
         await Assert.That(ReferenceEquals(actual, expected)).IsTrue();
-        if (cancelled) await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+
+        if (cancelled)
+        {
+            await Assert.That(((OperationCanceledException)actual!).CancellationToken).IsEqualTo(cancellation.Token);
+        }
+
         await Assert.That(capture.Items.Count).IsEqualTo(1);
     }
 
     private static async ValueTask<int> ObserveWithOwnerAsync(ValueTask<int> operation)
     {
         var owner = default(ErrorObservation.FinalOwner);
-        try { return await operation.ConfigureAwait(false); }
+
+        try
+        {
+            return await operation.ConfigureAwait(false);
+        }
         catch (Exception failure)
         {
             owner = ErrorObservation.StartFailure();
@@ -454,14 +533,24 @@ public class ErrorObservationTests
     private static long Measure(bool allocate)
     {
         var before = GC.GetAllocatedBytesForCurrentThread();
+
         for (var i = 0; i < 1_000; i++)
         {
 #pragma warning disable RESP009 // This warmed synchronous allocation probe consumes an already-completed operation on the measuring thread.
             var result = ObserveWithOwnerAsync(new ValueTask<int>(42)).GetAwaiter().GetResult();
+
 #pragma warning restore RESP009
-            if (result != 42) throw new InvalidOperationException();
-            if (allocate) Volatile.Write(ref _allocationAnchor, new byte[37]);
+            if (result != 42)
+            {
+                throw new InvalidOperationException();
+            }
+
+            if (allocate)
+            {
+                Volatile.Write(ref _allocationAnchor, new byte[37]);
+            }
         }
+
         return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
@@ -469,28 +558,45 @@ public class ErrorObservationTests
     {
         private readonly MeterListener _listener = new();
         internal readonly ConcurrentQueue<(bool Internal, int RetryAttempts)> Items = new();
+
         internal Capture(bool throwOnMeasurement = false, Action? onMeasurement = null)
         {
             _listener.InstrumentPublished = (instrument, listener) =>
             {
                 if (ReferenceEquals(instrument.Meter, RespireTelemetry.Meter) && instrument.Name == "redis.client.errors")
+                {
                     listener.EnableMeasurementEvents(instrument);
+                }
             };
             _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
             {
                 var internallyHandled = false;
                 var retryAttempts = 0;
+
                 foreach (var tag in tags)
                 {
-                    if (tag.Key == "redis.client.errors.internal") internallyHandled = (bool)tag.Value!;
-                    if (tag.Key == "redis.client.operation.retry_attempts") retryAttempts = (int)tag.Value!;
+                    if (tag.Key == "redis.client.errors.internal")
+                    {
+                        internallyHandled = (bool)tag.Value!;
+                    }
+
+                    if (tag.Key == "redis.client.operation.retry_attempts")
+                    {
+                        retryAttempts = (int)tag.Value!;
+                    }
                 }
+
                 Items.Enqueue((internallyHandled, retryAttempts));
                 onMeasurement?.Invoke();
-                if (throwOnMeasurement) throw new InvalidOperationException("Exporter failure");
+
+                if (throwOnMeasurement)
+                {
+                    throw new InvalidOperationException("Exporter failure");
+                }
             });
             _listener.Start();
         }
+
         public void Dispose() => _listener.Dispose();
     }
 }
