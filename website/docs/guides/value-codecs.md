@@ -10,6 +10,7 @@ Wrap your serializer in `RespireValueCodecSerializer` to frame and optionally co
 the stored format changes.
 
 ```csharp
+using Respire;
 using Respire.Compression;
 using Respire.Serialization;
 
@@ -145,6 +146,7 @@ Install `Respire.Compression.Lz4` to use `RespireLz4ValueCodec`. It implements t
 and Deflate and keeps its K4os dependency out of the core package.
 
 ```csharp
+using Respire;
 using Respire.Compression;
 using Respire.Compression.Lz4;
 using Respire.Serialization;
@@ -178,6 +180,7 @@ Install `Respire.Compression.Zstd` to use `RespireZstdValueCodec` with the same 
 contracts.
 
 ```csharp
+using Respire;
 using Respire.Compression;
 using Respire.Compression.Zstd;
 using Respire.Serialization;
