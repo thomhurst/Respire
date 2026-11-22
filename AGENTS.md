@@ -18,7 +18,7 @@ Several PR builds failed with `CS1010: Newline in constant` because a tool expan
 
 ## C# style
 
-For C# changes, follow the [shared EditorConfig profile](https://github.com/thomhurst/editorconfig/blob/main/.editorconfig) and [C# style guide](https://github.com/thomhurst/editorconfig/blob/main/csharp.md). Use the repository's local settings if these references are unavailable, and report the unavailable references.
+For C# changes, follow the [shared EditorConfig profile](https://github.com/thomhurst/editorconfig/blob/0cef31e579d76c43b19a02024e672c1d0173629c/.editorconfig) and [C# style guide](https://github.com/thomhurst/editorconfig/blob/0cef31e579d76c43b19a02024e672c1d0173629c/csharp.md). Use the repository's local settings if these references are unavailable, and report the unavailable references.
 
 Use braces for all control-flow bodies, including single statements. Separate logical groups with one blank line and keep related statements together. Preserve the supported language version and local EditorConfig overrides.
 
