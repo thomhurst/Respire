@@ -44,6 +44,7 @@ var percentiles = await probabilistic.TDigestQuantileAsync("latency:api", [0.5, 
 
 - Cuckoo insert and insert-if-absent return a `RespireCuckooInsertResult` per item (`Inserted`, `AlreadyExists` or `FilterFull`), so a full filter is not reported as success.
 - Top-K add and increment return evicted items as nullable byte arrays, preserving binary items.
+- t-digest CDF, rank, and reverse-rank queries accept `double.NegativeInfinity` and `double.PositiveInfinity` as probes for the distribution bounds. Observations added to a t-digest must be finite.
 - Keys receive the `WithKeyPrefix` prefix. Multi-key merges route by destination and source keys and enforce Cluster slot rules.
 - Mutations, including merges, invalidate only the written key (the merge destination) in the client-side cache.
 
