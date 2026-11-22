@@ -93,6 +93,9 @@ public class HybridSearchTests(HybridRedisVersions fixture)
             all.Should().OnlyContain(hit => hit.Record.Vector.IsEmpty);
             var raw = await client.Search.HybridSearchAsync(store.IndexName(collection.Name), query);
             all.Select(hit => hit.Score).Should().Equal(raw.Documents.Select(document => document.Score));
+            List<VectorSearchResult<Movie>> alwaysTrue = await Collect(hybrid.HybridSearchAsync(
+                new float[] { 1, 0 }, ["Grapes"], 3, new() { Filter = _ => true }));
+            alwaysTrue.Select(hit => (hit.Record.Id, hit.Score)).Should().Equal(all.Select(hit => (hit.Record.Id, hit.Score)));
             var top = await Collect(hybrid.HybridSearchAsync(new float[] { 1, 0 }, ["Oranges"], 1));
             top.Should().ContainSingle().Which.Record.Id.Should().Be("2");
             var page = await Collect(hybrid.HybridSearchAsync(new float[] { 1, 0 }, ["healthy"], 3, new() { Skip = 2, IncludeVectors = true }));
