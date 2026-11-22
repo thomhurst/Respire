@@ -175,9 +175,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     }
 
     private static string FormatCandidateEndpoints(RespireOptions options)
-        => options.Endpoints.Count == 0
+    {
+        IList<RespireEndpoint>? endpoints = options.Endpoints;
+        return endpoints is null or { Count: 0 }
             ? "(no endpoints)"
-            : string.Join(", ", options.Endpoints);
+            : string.Join(", ", endpoints);
+    }
 
     /// <summary>
     /// Creates a client without connecting; the first command connects. Useful for dependency
