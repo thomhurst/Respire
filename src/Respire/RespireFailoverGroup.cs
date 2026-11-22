@@ -16,7 +16,7 @@ public sealed record RespireFailoverCandidate(RespireOptions Options, int Priori
 /// <summary>Health and failback settings for a Redis failover group.</summary>
 public sealed record RespireFailoverGroupOptions
 {
-    /// <summary>Delay between health probe rounds. Defaults to one second.</summary>
+    /// <summary>Delay between health probe rounds. At least one millisecond. Defaults to one second.</summary>
     public TimeSpan ProbeInterval
     {
         get; init;
@@ -67,7 +67,7 @@ public sealed record RespireFailoverGroupOptions
     {
         RetryPolicy?.Validate();
 
-        if (!IsTimerCompatible(ProbeInterval))
+        if (ProbeInterval < TimeSpan.FromMilliseconds(1) || !IsTimerCompatible(ProbeInterval))
         {
             throw new ArgumentOutOfRangeException(nameof(ProbeInterval));
         }

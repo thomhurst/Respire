@@ -1169,6 +1169,25 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task ConnectAsync_RejectsProbeIntervalBelowOneMillisecondBeforeConnecting()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        RespireFailoverGroupOptions options = FastOptions() with
+        {
+            ProbeInterval = TimeSpan.FromTicks(TimeSpan.TicksPerMillisecond - 1),
+        };
+
+        ArgumentOutOfRangeException? exception = await Assert.That(async () =>
+        {
+            await using RespireFailoverGroup group = await RespireFailoverGroup.ConnectAsync(
+                [Candidate(server, priority: 0)], options);
+        }).ThrowsExactly<ArgumentOutOfRangeException>();
+
+        await Assert.That(exception!.ParamName).IsEqualTo(nameof(RespireFailoverGroupOptions.ProbeInterval));
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task ConnectAsync_RejectsProbeIntervalBeyondTimerLimit()
     {
         var options = FastOptions() with { ProbeInterval = TimeSpan.FromDays(50) };
@@ -1181,21 +1200,23 @@ public class FailoverGroupTests
     [Test]
     public async Task DisposeAsync_StopsProbesAndRejectsActiveClientAccess()
     {
-        await using var server = new FakeRespServer(FakeRespServer.PongReply);
-        server.DelayReply(replyIndex: 1, milliseconds: 200);
-        var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, priority: 0)], FastOptions());
-        await WaitUntilAsync(() => server.CommandsSeen >= 2);
+        int probesReceived = 0;
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            SuppressReply = command => command == "PING" && Interlocked.Increment(ref probesReceived) > 1,
+        };
+        await using RespireFailoverGroup group = await RespireFailoverGroup.ConnectAsync(
+            [Candidate(server, priority: 0)], FastOptions());
+        await WaitUntilAsync(() => Volatile.Read(ref probesReceived) >= 2);
         await group.DisposeAsync();
-        var commandCount = server.CommandsSeen;
+        int commandCount = server.CommandsSeen;
 
-        // The server reports the peer closed only after it finishes the delayed reply and reads every byte
-        // the client sent, so a queued post-disposal probe would already be counted.
+        // With the second probe unanswered, the server can read through peer closure without sending a late reply.
         await server.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
 
         await Assert.That(group.IsConnected).IsFalse();
         await Assert.That(server.CommandsSeen).IsEqualTo(commandCount);
         await Assert.That(() => group.ActiveClient).ThrowsExactly<ObjectDisposedException>();
-        await group.DisposeAsync();
     }
 
     [Test]
