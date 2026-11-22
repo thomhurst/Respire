@@ -176,8 +176,8 @@ Costs and bounds:
   `HybridCache` context. L2 keys, payload format, serializers, and factory coalescing are
   unchanged.
 - Size `MaxObservedKeys` for your working set. Expired or evicted entries release idle
-  observations; a sweep runs every `ObservationSweepInterval` (default 30 seconds). Active
-  requests keep observations until they finish.
+  observations. The sweep runs every `ObservationSweepInterval`, which defaults to 30 seconds
+  and must be at least 1 millisecond. Active requests keep observations until they finish.
 - The provider's own L2 writes also notify the tracker, so a miss or `SetAsync` can retire its
   first L1 entry. The next read reloads L2, then L1 serves until the next invalidation.
 - Local `RemoveByTagAsync` writes the shared tag marker once. `MaxRememberedTagInvalidations`

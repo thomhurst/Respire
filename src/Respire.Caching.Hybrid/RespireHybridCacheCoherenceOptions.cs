@@ -52,6 +52,7 @@ public sealed class RespireHybridCacheCoherenceOptions
     } = 1_024;
 
     /// <summary>How often expired local entries release idle subscriptions. Defaults to 30 seconds.</summary>
+    /// <remarks>The interval must be at least 1 millisecond.</remarks>
     public TimeSpan ObservationSweepInterval
     {
         get; set;

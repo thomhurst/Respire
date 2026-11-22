@@ -22,10 +22,10 @@ public static class RespireHybridCacheServiceCollectionExtensions
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxObservedKeys, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxRememberedTagInvalidations, 1);
 
-        if (options.ObservationSweepInterval <= TimeSpan.Zero
-            || options.ObservationSweepInterval.TotalMilliseconds > uint.MaxValue - 1)
+        if (options.ObservationSweepInterval.TotalMilliseconds is < 1 or > uint.MaxValue - 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(configure), "ObservationSweepInterval must be a positive timer interval.");
+            throw new ArgumentOutOfRangeException(nameof(configure),
+                "ObservationSweepInterval must be between 1 and 4,294,967,294 milliseconds.");
         }
 
         ArgumentNullException.ThrowIfNull(options.TrackingOptions);
