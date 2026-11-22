@@ -367,8 +367,17 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
         return false;
     }
 
-    private static bool SupportedList(Type type) => type == typeof(List<string>) || type == typeof(List<int>)
-        || type == typeof(List<double>) || type == typeof(List<float>) || type == typeof(List<bool>);
+    private static bool SupportedList(Type type)
+    {
+        if (!type.IsGenericType || type.GetGenericTypeDefinition() != typeof(List<>))
+        {
+            return false;
+        }
+
+        Type elementType = type.GenericTypeArguments[0];
+        Type scalarType = Nullable.GetUnderlyingType(elementType) ?? elementType;
+        return scalarType == typeof(string) || scalarType == typeof(bool) || NumericType(scalarType);
+    }
 
     private static Expression UnwrapSpan(Expression expression)
     {
