@@ -439,9 +439,19 @@ public partial interface IRespireClient : IAsyncDisposable
     /// observe the latest server value. Writes still invalidate cached entries.
     /// </summary>
     /// <remarks>
-    /// The view shares this client's connections and keeps its key prefix and read routing; disposing
-    /// it is a no-op. Returns the same client when client-side caching is disabled. Custom
-    /// implementations and decorators must implement this member; decorators should forward it.
+    /// <para>
+    /// When caching is disabled or already bypassed, <see cref="RespireClient"/> returns the same
+    /// instance. Disposing the result has the same effect as disposing the original client.
+    /// If that client owns the connections, disposal closes them. Leave disposal of the original
+    /// client to its owner.
+    /// </para>
+    /// <para>
+    /// A new bypass view shares the client's connections and keeps its key prefix and read routing.
+    /// Disposing a new view is a no-op.
+    /// </para>
+    /// <para>
+    /// Custom implementations and decorators must implement this member. Decorators should forward it.
+    /// </para>
     /// </remarks>
     IRespireClient WithoutClientCache();
 }
