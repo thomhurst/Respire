@@ -15,7 +15,6 @@ foreach ($definition in $ast.EndBlock.Statements) {
 
 function gh {
     $global:LASTEXITCODE = 0
-    if ($args -contains 'number,labels') { return '[]' }
     return $fixturePrs
 }
 function Get-MainCandidate {}
@@ -92,4 +91,33 @@ $MaxOpenPrs = 1
 $fixturePrs = '[{"number":99,"isDraft":true,"labels":[],"statusCheckRollup":[]}]'
 Assert-QueueCount 'Open PR limit reached' 5 0
 
-Write-Host 'Issue/PR loop queue count tests passed.'
+$MaxOpenPrs = 15
+$fixtureIssues = @()
+$fixturePrs = '[{"number":99,"isDraft":true,"labels":[{"name":"on-hold"}],"statusCheckRollup":[]}]'
+
+$script:lastIssues = $null
+if ($null -ne (Get-TriageItem) -or $null -ne (Get-DiscoveryItem)) {
+    throw 'An uninitialized survey scheduled triage or discovery.'
+}
+
+Reset-SurveyStats
+$null = Get-Candidates
+$triage = Get-TriageItem
+if ($triage.Kind -ne 'triage' -or $triage.Queueable -ne 0 -or $triage.Items.Count -ne 1 -or
+    $triage.Items[0].Kind -ne 'pr' -or $triage.Items[0].Number -ne 99) {
+    throw 'A completed survey with no issues should schedule an audit of the parked PR.'
+}
+
+$fixturePrs = '[]'
+Reset-SurveyStats
+$null = Get-Candidates
+if ($null -ne (Get-TriageItem)) {
+    throw 'A completed survey with no issues or parked PRs scheduled triage.'
+}
+
+$discovery = Get-DiscoveryItem
+if ($discovery.Kind -ne 'discovery' -or $discovery.Queueable -ne 0) {
+    throw 'A completed survey with no issues or due audits should schedule discovery.'
+}
+
+Write-Host 'Issue/PR loop queue count and scheduling tests passed.'
