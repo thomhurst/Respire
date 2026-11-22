@@ -78,6 +78,9 @@ Settings live under `Aspire:Respire`, with per-client overrides under
 6. Apply global `Aspire:Respire:Options`, then named `Aspire:Respire:<connectionName>:Options`.
 7. Run `configureOptions` once, when the singleton is resolved.
 
+Aspire validates the topology after applying these settings. To use a connection string such as
+`seed-a:6379,seed-b:6380`, set `UseCluster` to `true` in the global or named `Options` section.
+
 ```json
 {
   "Aspire": {
