@@ -255,7 +255,14 @@ internal sealed class WriteBuffer
     public void FailWrite(Exception exception)
     {
         ReleaseBorrowedPayloads();
-        Interlocked.Exchange(ref _writeCompletion, null)?.TrySetException(exception);
+        var completion = Interlocked.Exchange(ref _writeCompletion, null);
+
+        if (completion is not null && completion.TrySetException(exception))
+        {
+            // Waiters can cancel while the flush loop still owns the write. Observe the
+            // late fault here so it remains available to waiters even if none await it.
+            _ = completion.Task.Exception;
+        }
     }
 
     /// <summary>Truncates back to a marked position (used to undo a partially written command).</summary>

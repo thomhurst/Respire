@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -534,6 +535,102 @@ public sealed class StreamedSetTests
         await source.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await pool.WaitForReturnAsync(source.CapturedBuffer!).WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pool.Returned.Contains(source.CapturedBuffer!)).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task CancelledStreamedSetObservesGatedWriteFailureDuringTeardown()
+    {
+        var writeFailure = new ObjectDisposedException(nameof(NetworkStream));
+        var control = new InvalidOperationException("Unobserved task positive control.");
+        var unobserved = new ConcurrentQueue<Exception>();
+
+        void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs args)
+        {
+            foreach (var error in args.Exception.Flatten().InnerExceptions)
+            {
+                var cause = error.GetBaseException();
+
+                if (ReferenceEquals(cause, writeFailure) || ReferenceEquals(cause, control))
+                {
+                    unobserved.Enqueue(cause);
+                }
+            }
+
+            if (ReferenceEquals(args.Exception.InnerException, control))
+            {
+                args.SetObserved();
+            }
+        }
+
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+
+        try
+        {
+            await CancelWhilePayloadWriteIsGatedAsync(writeFailure);
+            AbandonFaultedTask(control);
+
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                await Task.Yield();
+            }
+
+            await Assert.That(unobserved.Contains(control)).IsTrue();
+            await Assert.That(unobserved.Contains(writeFailure)).IsFalse();
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void AbandonFaultedTask(Exception failure) => _ = Task.FromException(failure);
+
+    private static async Task CancelWhilePayloadWriteIsGatedAsync(Exception writeFailure)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var server = new CountingSetServer();
+        GatedWriteStream? transport = null;
+        var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespireProtocol.Resp2,
+            CommandTimeout = null,
+            TestingStreamFactory = async (host, port, cancellationToken) =>
+            {
+                var client = new TcpClient();
+                await client.ConnectAsync(host, port, cancellationToken);
+                return transport = new GatedWriteStream(client);
+            },
+        }, cancellationToken: timeout.Token);
+
+        try
+        {
+            using var source = new MemoryStream([1]);
+            using var cancellation = new CancellationTokenSource();
+            transport!.GateSecondWrite(writeFailure);
+            var command = new StreamedSetCommand((RespireValue)"cancel-gated-write", source,
+                source.Length, default, RespireSetWhen.Always);
+            var send = connection.SendCheckedAsync(in command, cancellationToken: cancellation.Token, commandName: "SET").AsTask();
+
+            await transport.SecondWriteStarted.WaitAsync(timeout.Token);
+            cancellation.Cancel();
+
+            try
+            {
+                using var response = await send.WaitAsync(timeout.Token);
+                throw new InvalidOperationException("The gated upload should have been cancelled.");
+            }
+            catch (OperationCanceledException error) when (error.CancellationToken == cancellation.Token) { }
+        }
+        finally
+        {
+            // Deliver the socket fault after the caller's wait has ended, then join the flush loop.
+            transport!.OpenSecondWrite();
+            await connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
     }
 
     [Test]
@@ -1912,6 +2009,7 @@ public sealed class StreamedSetTests
         private readonly TaskCompletionSource _writeStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _secondWriteStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private TaskCompletionSource _secondWriteGate = CreateOpenGate();
+        private Exception? _secondWriteFailure;
         private TaskCompletionSource _gate = CreateOpenGate();
         private int _writeCount;
 
@@ -1936,7 +2034,11 @@ public sealed class StreamedSetTests
 
         internal void OpenGate() => _gate.TrySetResult();
 
-        internal void GateSecondWrite() => _secondWriteGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal void GateSecondWrite(Exception? failure = null)
+        {
+            _secondWriteFailure = failure;
+            _secondWriteGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
 
         internal void OpenSecondWrite() => _secondWriteGate.TrySetResult();
 
@@ -1946,6 +2048,11 @@ public sealed class StreamedSetTests
             {
                 _secondWriteStarted.TrySetResult();
                 await _secondWriteGate.Task.WaitAsync(cancellationToken);
+
+                if (_secondWriteFailure is { } failure)
+                {
+                    throw failure;
+                }
             }
 
             _writeStarted.TrySetResult();
@@ -1979,7 +2086,12 @@ public sealed class StreamedSetTests
             if (disposing)
             {
                 OpenGate();
-                OpenSecondWrite();
+                // An injected failure is released explicitly after the caller has left its wait.
+                if (_secondWriteFailure is null)
+                {
+                    OpenSecondWrite();
+                }
+
                 _inner.Dispose();
                 client.Dispose();
             }
