@@ -61,10 +61,14 @@ public class LifetimeWireTests
     [Test]
     [Arguments("HSET", false)]
     [Arguments("HDEL", false)]
+    [Arguments("HMSET", false)]
+    [Arguments("EXPIRE", false)]
     [Arguments("PEXPIRE", false)]
     [Arguments("PERSIST", false)]
     [Arguments("HSET", true)]
     [Arguments("HDEL", true)]
+    [Arguments("HMSET", true)]
+    [Arguments("EXPIRE", true)]
     [Arguments("PEXPIRE", true)]
     [Arguments("PERSIST", true)]
     public async Task AdmissionMutationsInvalidateAndFenceCachedReads(string operation, bool cancel)
@@ -114,7 +118,9 @@ public class LifetimeWireTests
         {
             "HSET" => database.HashSetAsync("key", "field", "new"),
             "HDEL" => database.HashSetAsync("key", "field", RedisValue.Null),
-            "PEXPIRE" => database.KeyExpireAsync("key", TimeSpan.FromMinutes(1)),
+            "HMSET" => database.HashSetAsync("key", [new HashEntry("field", "new")]),
+            "EXPIRE" => database.KeyExpireAsync("key", TimeSpan.FromMinutes(1)),
+            "PEXPIRE" => database.KeyExpireAsync("key", TimeSpan.FromMilliseconds(60001)),
             "PERSIST" => database.KeyExpireAsync("key", (TimeSpan?)null),
             _ => throw new ArgumentOutOfRangeException(nameof(operation)),
         };
@@ -137,13 +143,48 @@ public class LifetimeWireTests
 
         if (!cancel)
         {
-            Assert.True(await mutation);
+            if (mutation is Task<bool> result)
+            {
+                Assert.True(await result);
+            }
+            else
+            {
+                await mutation;
+            }
         }
 
         Assert.Equal("value", await read.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Equal(0, client.ClientSideCache.Count);
         Assert.Equal("value", await client.Hashes.GetStringAsync("key", "field"));
         Assert.Equal(1, client.ClientSideCache.Count);
+    }
+
+    [Test]
+    public async Task ExpiryCommandsUseThePrecisionOfTheEncodedMilliseconds()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
+        await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+        });
+        var database = connection.GetDatabase();
+
+        Assert.True(await database.KeyExpireAsync("key", TimeSpan.FromMilliseconds(1501), ExpireWhen.HasExpiry));
+        Assert.True(await database.KeyExpireAsync("key", TimeSpan.FromTicks(-TimeSpan.TicksPerSecond - 1)));
+        Assert.True(await database.KeyExpireAsync("key", DateTime.UnixEpoch.AddMilliseconds(1501), ExpireWhen.GreaterThanCurrentExpiry));
+        Assert.True(await database.KeyExpireAsync("key", DateTime.UnixEpoch.AddSeconds(-1), ExpireWhen.LessThanCurrentExpiry));
+        Assert.True(await database.KeyExpireAsync("key", (TimeSpan?)null));
+        Assert.True(await database.KeyExpireAsync("key", DateTime.MaxValue));
+        Assert.Equal(new[]
+        {
+            "PEXPIRE key 1501 XX",
+            "EXPIRE key -1",
+            "PEXPIREAT key 1501 GT",
+            "EXPIREAT key -1 LT",
+            "PERSIST key",
+            "PERSIST key",
+        }, server.ReceivedCommands);
     }
 
     [Test]
@@ -228,23 +269,25 @@ public class LifetimeWireTests
             var tasks = new List<Task>();
             var expected = new List<string>();
             tasks.Add(database.HashSetAsync("hold", [new HashEntry("field", "value")]));
-            Assert.Equal("HSET hold field value", await received.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal("HMSET hold field value", await received.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)));
 
             for (var index = 0; index < 16; index++)
             {
                 tasks.Add(database.HashSetAsync($"key{index}", [new HashEntry("field", "value")], flags));
                 tasks.Add(database.KeyExpireAsync($"key{index}", TimeSpan.FromSeconds(30), flags));
-                expected.Add($"HSET key{index} field value");
-                expected.Add($"PEXPIRE key{index} 30000");
+                expected.Add($"HMSET key{index} field value");
+                expected.Add($"EXPIRE key{index} 30");
             }
+
+            await server.SendRawAsync(FakeRespServer.OkReply);
 
             foreach (var command in expected)
             {
-                await server.SendRawAsync(":1\r\n"u8.ToArray());
                 Assert.Equal(command, await received.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)));
+                await server.SendRawAsync(command.StartsWith("HMSET ", StringComparison.Ordinal)
+                    ? FakeRespServer.OkReply : ":1\r\n"u8.ToArray());
             }
 
-            await server.SendRawAsync(":1\r\n"u8.ToArray());
             await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(10));
         }
         finally { await connection.CloseAsync(allowCommandsToComplete: false); }
@@ -253,7 +296,7 @@ public class LifetimeWireTests
     [Test]
     public async Task BatchUsesOneOrderedPipelineEvenWithMultipleNativeConnections()
     {
-        await using var server = new FakeRespServer(2, ":1\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
@@ -275,14 +318,14 @@ public class LifetimeWireTests
         await Task.WhenAll(set, expiry).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(await expiry);
         var commands = server.ReceivedCommands.Skip(before).ToArray();
-        Assert.Equal(new[] { "HSET key field value", "PEXPIRE key 30000" }, commands);
+        Assert.Equal(new[] { "HMSET key field value", "EXPIRE key 30" }, commands);
         Assert.Single(server.ReceivedConnectionIds.Skip(before).Distinct());
     }
 
     [Test]
     public async Task ColdIndividualCommandsPipelineInCallerOrder()
     {
-        await using var server = new FakeRespServer(":1\r\n"u8.ToArray()) { MinimumCommandsBeforeReply = 2 };
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray()) { MinimumCommandsBeforeReply = 2 };
         await using var connection = RespireConnectionMultiplexer.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
@@ -291,7 +334,7 @@ public class LifetimeWireTests
         var first = connection.GetDatabase().HashSetAsync("key", [new HashEntry("field", "value")]);
         var second = connection.GetDatabase().KeyExpireAsync("key", TimeSpan.FromSeconds(30));
         await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal(new[] { "HSET key field value", "PEXPIRE key 30000" }, server.ReceivedCommands);
+        Assert.Equal(new[] { "HMSET key field value", "EXPIRE key 30" }, server.ReceivedCommands);
     }
 
     [Test]
@@ -304,12 +347,12 @@ public class LifetimeWireTests
         {
             SuppressReply = command =>
             {
-                if (command.StartsWith("PEXPIRE ", StringComparison.Ordinal))
+                if (command.StartsWith("EXPIRE ", StringComparison.Ordinal))
                 {
                     received.TrySetResult();
                 }
 
-                return command.StartsWith("HSET ", StringComparison.Ordinal) || command.StartsWith("PEXPIRE ", StringComparison.Ordinal);
+                return command.StartsWith("HMSET ", StringComparison.Ordinal) || command.StartsWith("EXPIRE ", StringComparison.Ordinal);
             },
         };
         var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -324,7 +367,7 @@ public class LifetimeWireTests
         if (drain)
         {
             Assert.False(close.IsCompleted);
-            await server.SendRawAsync(":1\r\n:1\r\n"u8.ToArray());
+            await server.SendRawAsync("+OK\r\n:1\r\n"u8.ToArray());
             await set;
             Assert.True(await expire);
         }
@@ -350,7 +393,7 @@ public class LifetimeWireTests
         {
             SuppressReply = command =>
             {
-                if (!command.StartsWith("HSET ", StringComparison.Ordinal))
+                if (!command.StartsWith("HMSET ", StringComparison.Ordinal))
                 {
                     return false;
                 }
@@ -368,7 +411,7 @@ public class LifetimeWireTests
         if (drain)
         {
             Assert.False(close.IsCompleted);
-            await server.SendRawAsync(":1\r\n"u8.ToArray());
+            await server.SendRawAsync(FakeRespServer.OkReply);
             await set;
         }
         else

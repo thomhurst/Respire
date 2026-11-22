@@ -46,6 +46,69 @@ public class HashListTests(RedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task HashEntryArrayWorksWithHmsetPermission(int protocol)
+    {
+        using var control = await ConnectionMultiplexer.ConnectAsync(fixture.IsolatedStackExchangeConnectionString);
+        var server = control.GetServer(fixture.Host, fixture.Port);
+        var username = "hash-acl-" + Guid.NewGuid().ToString("N");
+        await server.ExecuteAsync("ACL", "SETUSER", username, "on", ">password", "~*", "+@all", "-hset");
+
+        try
+        {
+            await using var connection = RespireConnectionMultiplexer.Create(Options(protocol) with
+            {
+                Username = username,
+                Password = "password",
+            });
+            var database = connection.GetDatabase();
+            await database.HashSetAsync("hash", [new("first", "one"), new("second", "two")]);
+
+            var entries = await control.GetDatabase().HashGetAsync("hash", ["first", "second"]);
+            Assert.Equal(new RedisValue[] { "one", "two" }, entries);
+        }
+        finally
+        {
+            await server.ExecuteAsync("ACL", "DELUSER", username);
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task WholeSecondExpiryWorksWithExpireAndExpireAtPermissions(int protocol)
+    {
+        using var control = await ConnectionMultiplexer.ConnectAsync(fixture.IsolatedStackExchangeConnectionString);
+        var server = control.GetServer(fixture.Host, fixture.Port);
+        var username = "expiry-acl-" + Guid.NewGuid().ToString("N");
+        await server.ExecuteAsync("ACL", "SETUSER", username, "on", ">password", "~*", "+@all", "-pexpire", "-pexpireat");
+
+        try
+        {
+            var admin = control.GetDatabase();
+            await admin.StringSetAsync("relative", "value");
+            await admin.StringSetAsync("absolute", "value");
+            await using var connection = RespireConnectionMultiplexer.Create(Options(protocol) with
+            {
+                Username = username,
+                Password = "password",
+            });
+            var database = connection.GetDatabase();
+            var timestamp = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 60).UtcDateTime;
+
+            Assert.True(await database.KeyExpireAsync("relative", TimeSpan.FromMinutes(1), ExpireWhen.HasNoExpiry));
+            Assert.False(await database.KeyExpireAsync("relative", TimeSpan.FromMinutes(1), ExpireWhen.HasNoExpiry));
+            Assert.True(await database.KeyExpireAsync("absolute", timestamp));
+            Assert.Equal(timestamp, await admin.KeyExpireTimeAsync("absolute"));
+        }
+        finally
+        {
+            await server.ExecuteAsync("ACL", "DELUSER", username);
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task ListCommandsPreserveSignedIndexesCountsAndMoveResults(int protocol)
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));

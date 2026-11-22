@@ -31,9 +31,10 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
     }
 
     internal static bool SupportsCommand(RespireCommand command) => command.Name is
-        "HGET" or "HMGET" or "HGETALL" or "HLEN" or "HSET" or "HSETNX" or "HDEL"
+        "HGET" or "HMGET" or "HGETALL" or "HLEN" or "HSET" or "HMSET" or "HSETNX" or "HDEL"
         or "LLEN" or "LINDEX" or "LRANGE" or "LPUSH" or "LPUSHX" or "RPUSH" or "RPUSHX"
-        or "LREM" or "LTRIM" or "RPOPLPUSH" or "PEXPIRE" or "PEXPIREAT" or "PERSIST"
+        or "LREM" or "LTRIM" or "RPOPLPUSH"
+        or "EXPIRE" or "EXPIREAT" or "PEXPIRE" or "PEXPIREAT" or "PERSIST"
         or "DEL" or "EXISTS" or "PTTL" or "GET" or "MGET" or "INCR" or "DECR" or "INCRBY" or "DECRBY"
         or "SADD" or "SREM" or "SMEMBERS" or "SCARD" or "ZADD" or "ZREM" or "ZCARD" or "ZCOUNT"
         or "ZRANGE" or "ZREVRANGE" or "ZRANGEBYSCORE" or "ZREVRANGEBYSCORE" or "ZSCAN"
