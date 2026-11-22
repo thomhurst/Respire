@@ -3,7 +3,9 @@
 $ErrorActionPreference = 'Stop'
 $agentLocks = Join-Path $PSScriptRoot 'AgentLocks.ps1'
 $suffix = [Guid]::NewGuid().ToString('N')
-$testRoot = Join-Path ([IO.Path]::GetTempPath()) "released-worktree-tests-$suffix"
+# Exercise the /var alias even when the macOS runner has a canonical TMPDIR.
+$tempBase = if ($IsMacOS) { '/var/tmp/' } else { [IO.Path]::GetTempPath() }
+$testRoot = Join-Path $tempBase "released-worktree-tests-$suffix"
 $repo = Join-Path $testRoot 'repo'
 $owner = "release-tests-$suffix"
 $locks = [Collections.Generic.List[string]]::new()
@@ -60,6 +62,7 @@ try {
     Push-Location $path
     try { Lock release -LockName $key } finally { Pop-Location }
     Assert (-not (Test-Path $path)) 'Clean checkout survived release.'
+    Assert (@(& git -C $repo worktree list --porcelain) -notcontains 'branch refs/heads/clean') 'Clean worktree registration survived release.'
     Assert ((& git -C $repo rev-parse clean) -eq $head) 'Unpublished branch was lost.'
     Invoke-TestGit -C $repo worktree add $path clean
     Assert ((& git -C $path rev-parse HEAD) -eq $head) 'Cannot re-checkout retained branch.'
@@ -200,7 +203,7 @@ try {
     }
     Pop-Location -ErrorAction SilentlyContinue
     $resolved = [IO.Path]::GetFullPath($testRoot)
-    $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    $temp = [IO.Path]::GetFullPath($tempBase).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
     if (-not $resolved.StartsWith($temp, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe test cleanup path.' }
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }

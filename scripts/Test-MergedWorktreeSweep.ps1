@@ -153,10 +153,13 @@ exit 0
     $branchRace = New-MergedCheckout 'pr-215-branch-race' 215
     $checkoutRace = New-MergedCheckout 'pr-216-checkout-race' 216
     $replacementCheckout = Join-Path $testRoot 'replacement-checkout'
-    $global:sweepTestAfterRemove[($branchRace -replace '\\', '/')] = {
+    # The sweep removes the paths reported by Git, which can resolve /var on macOS.
+    $branchRaceGitPath = & $gitExecutable -C $branchRace rev-parse --show-toplevel
+    $checkoutRaceGitPath = & $gitExecutable -C $checkoutRace rev-parse --show-toplevel
+    $global:sweepTestAfterRemove[($branchRaceGitPath -replace '\\', '/')] = {
         & $global:sweepTestGit -C $repo update-ref refs/heads/pr-215-branch-race $oldMain
     }.GetNewClosure()
-    $global:sweepTestAfterRemove[($checkoutRace -replace '\\', '/')] = {
+    $global:sweepTestAfterRemove[($checkoutRaceGitPath -replace '\\', '/')] = {
         & $global:sweepTestGit -C $repo worktree add --force $replacementCheckout pr-216-checkout-race 2>$null | Out-Null
     }.GetNewClosure()
     $setup = New-MergedCheckout 'pr-218-stale-setup' 218 -Detached
