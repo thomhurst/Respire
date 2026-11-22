@@ -49,11 +49,13 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
     internal static RespireEndpoint Parse(string value, int defaultPort)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        value = value.Trim();
+        value = value.TrimStart();
 
         if (value.StartsWith("!@", StringComparison.Ordinal))
             throw new RespireConfigurationException("Endpoint '!@name' uses a Linux abstract Unix socket, which Respire does not support. Use a filesystem socket (!/path) instead.");
         if (value[0] == '!') return UnixSocket(value[1..]);
+
+        value = value.TrimEnd();
         if (value.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
             || value.StartsWith("redis+unix://", StringComparison.OrdinalIgnoreCase))
         {

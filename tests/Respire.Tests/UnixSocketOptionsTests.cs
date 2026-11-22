@@ -23,12 +23,20 @@ public class UnixSocketOptionsTests
     }
 
     [Test]
+    public async Task SocketEndpointRoundTripPreservesTrailingSpace()
+    {
+        var endpoint = RespireEndpoint.UnixSocket("/tmp/redis.sock ");
+        await Assert.That(RespireEndpoint.Parse(endpoint.ToString())).IsEqualTo(endpoint);
+        await Assert.That(RespireEndpoint.Parse($" {endpoint}")).IsEqualTo(endpoint);
+    }
+
+    [Test]
     [Arguments("unix")]
     [Arguments("redis+unix")]
     public async Task UriDecodesSocketPathAndKeepsDatabaseInQuery(string scheme)
     {
-        var options = RespireOptions.Parse($"{scheme}:///tmp/Redis%20%23%3F.sock?db=4&protocol=3&connections=2");
-        await Assert.That(options.Endpoints.Single().Host).IsEqualTo("/tmp/Redis #?.sock");
+        var options = RespireOptions.Parse($"{scheme}:///tmp/Redis%20%23%3F.sock%20?db=4&protocol=3&connections=2");
+        await Assert.That(options.Endpoints.Single().Host).IsEqualTo("/tmp/Redis #?.sock ");
         await Assert.That(options.Database).IsEqualTo(4);
         await Assert.That(options.Protocol).IsEqualTo(RespireProtocol.Resp3);
         await Assert.That(options.Connections).IsEqualTo(2);
@@ -37,7 +45,7 @@ public class UnixSocketOptionsTests
     [Test]
     public async Task StackExchangeSyntaxKeepsAuthenticationAndTimeouts()
     {
-        var options = RespireOptions.Parse("!/tmp/redis.sock,user=app,password=secret,defaultDatabase=2,connectTimeout=1234");
+        var options = RespireOptions.Parse("!/tmp/redis.sock ,user=app,password=secret,defaultDatabase=2,connectTimeout=1234");
         await Assert.That(options.Endpoints.Single()).IsEqualTo(RespireEndpoint.UnixSocket("/tmp/redis.sock"));
         await Assert.That(options.Username).IsEqualTo("app");
         await Assert.That(options.Password).IsEqualTo("secret");
