@@ -14,7 +14,7 @@ public sealed partial class RespireFakeServer
     {
         var stream = Find(args[1])?.Stream;
         var ids = args[2..].Select(StreamId).ToArray();
-        var removed = stream is null ? 0 : ids.Count(stream.Entries.Remove);
+        int removed = stream is null ? 0 : ids.Count(stream.Delete);
 
         if (removed > 0)
         {
@@ -200,7 +200,7 @@ public sealed partial class RespireFakeServer
 
             if (script == StreamWorkerScripts.AckAndDelete && _streamWorkerVersion >= new Version(8, 2)
                 && stream.Groups.Values.All(other => other.Last >= id && !other.Pending.ContainsKey(id))
-                && stream.Entries.Remove(id))
+                && stream.Delete(id))
             {
                 TouchWatchedKey(args[3]);
             }
@@ -307,7 +307,7 @@ public sealed partial class RespireFakeServer
 
         foreach (var (id, fields) in stream.Entries.Where(pair => pair.Key > group.Last).Take(count - selected))
         {
-            group.Last = id;
+            AdvanceStreamGroup(stream, group, id);
             group.Pending[id] = new(args[5], Now);
             entries.Add(StreamFields(id, fields));
         }

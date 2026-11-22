@@ -1,3 +1,4 @@
+using Respire.Internal;
 using Respire.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -70,5 +71,76 @@ public class FakeStreamWorkerStateTests
         await Assert.That(group.EntriesRead).IsEqualTo(1L);
         await Assert.That(group.Lag).IsEqualTo(0L);
         await Assert.That(group.LastDeliveredId).IsEqualTo((RespireStreamId)"1-0");
+    }
+
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task GroupLagRecoversAfterReadingPastAnUnreadDeletion(int protocol, bool nativeClaim)
+    {
+        await using var server = new RespireFakeServer(new RespireFakeClock(), true, true, new Version(8, 10));
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1000-0" }, ("f", "first"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1000-1" }, ("f", "middle"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1000-2" }, ("f", "last"));
+        await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
+        await client.Streams.ReadGroupOnceAsync("s", "g", "a", new() { Count = 1 });
+
+        var before = (await client.Streams.GroupInfoAsync("s")).Single();
+        await Assert.That(before.EntriesRead).IsEqualTo(1L);
+        await Assert.That(before.Lag).IsEqualTo(2L);
+
+        await Assert.That(await client.Streams.RemoveAsync("s", "1000-1")).IsEqualTo(1L);
+        var fragmented = (await client.Streams.GroupInfoAsync("s")).Single();
+        await Assert.That(fragmented.EntriesRead).IsEqualTo(1L);
+        await Assert.That(fragmented.Lag).IsNull();
+
+        if (nativeClaim)
+        {
+            // The clock has not advanced, so the pending entry is too young to reclaim.
+            using var reply = await client.Scripts.ExecuteAsync(StreamWorkerScripts.CapabilityClaim, ["s"],
+                ["g", "a", 1, "0-0", 1]);
+        }
+        else
+        {
+            await client.Streams.ReadGroupOnceAsync("s", "g", "a", new() { Count = 1 });
+        }
+
+        var caughtUp = (await client.Streams.GroupInfoAsync("s")).Single();
+        await Assert.That(caughtUp.LastDeliveredId).IsEqualTo((RespireStreamId)"1000-2");
+        await Assert.That(caughtUp.EntriesRead).IsEqualTo(3L);
+        await Assert.That(caughtUp.Lag).IsEqualTo(0L);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task GroupLagCountsRemainingEntriesAfterPrefixDeletion(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1000-0" }, ("f", "first"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1000-1" }, ("f", "second"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1000-2" }, ("f", "third"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1000-3" }, ("f", "last"));
+        await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
+        await client.Streams.ReadGroupOnceAsync("s", "g", "a", new() { Count = 1 });
+
+        await Assert.That(await client.Streams.RemoveAsync("s", "1000-0", "1000-1")).IsEqualTo(2L);
+        var afterPrefix = (await client.Streams.GroupInfoAsync("s")).Single();
+        await Assert.That(afterPrefix.EntriesRead).IsEqualTo(1L);
+        await Assert.That(afterPrefix.Lag).IsEqualTo(2L);
+
+        await client.Streams.ReadGroupOnceAsync("s", "g", "a", new() { Count = 1 });
+        var afterRead = (await client.Streams.GroupInfoAsync("s")).Single();
+        await Assert.That(afterRead.EntriesRead).IsEqualTo(3L);
+        await Assert.That(afterRead.Lag).IsEqualTo(1L);
+
+        await Assert.That(await client.Streams.RemoveAsync("s", "1000-2", "1000-3")).IsEqualTo(2L);
+        var empty = (await client.Streams.GroupInfoAsync("s")).Single();
+        await Assert.That(empty.EntriesRead).IsEqualTo(3L);
+        await Assert.That(empty.Lag).IsEqualTo(0L);
     }
 }
