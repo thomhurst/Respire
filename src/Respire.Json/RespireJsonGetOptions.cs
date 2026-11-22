@@ -6,7 +6,10 @@ public sealed class RespireJsonGetOptions
     private readonly IReadOnlyList<RespireJsonPath> _paths = [RespireJsonPath.Root];
 
     /// <summary>Paths to return. Defaults to the legacy root path <c>.</c>.</summary>
-    /// <remarks>Do not mix legacy and JSONPath (<c>$</c>) paths; Redis rejects the request.</remarks>
+    /// <remarks>
+    /// You can mix legacy and JSONPath (<c>$</c>) paths. When any path uses JSONPath in a
+    /// multi-path request, Redis returns an array of matches for each path in the result object.
+    /// </remarks>
     /// <exception cref="ArgumentNullException">The value is null.</exception>
     /// <exception cref="ArgumentException">The value is empty.</exception>
     public IReadOnlyList<RespireJsonPath> Paths
