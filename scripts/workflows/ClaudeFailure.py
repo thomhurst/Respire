@@ -1,4 +1,4 @@
-"""Write a credential-safe job summary for a failed Claude Code action."""
+"""Write a credential-safe job summary for a failed Claude Code run."""
 
 import json
 import os
@@ -46,19 +46,31 @@ RESULT_ERRORS = {
     "error_max_structured_output_retries": "Structured output failed. Check the workflow's Claude output schema.",
 }
 
+# Tool names come from the execution file. Print only names known to this workflow.
+KNOWN_TOOLS = ("Bash", "Edit", "Glob", "Grep", "Read", "WebFetch", "WebSearch", "Write")
 
-def failure_message(messages):
-    if isinstance(messages, list):
-        messages = [item for item in messages if isinstance(item, dict)]
-    else:
-        messages = []
-    result = next((item for item in reversed(messages) if item.get("type") == "result"), None)
+
+def read_execution_messages(execution):
+    try:
+        messages = json.loads(execution.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return []
+    if not isinstance(messages, list):
+        return []
+    return [item for item in messages if isinstance(item, dict)]
+
+
+def last_result(messages):
+    return next((item for item in reversed(messages) if item.get("type") == "result"), None)
+
+
+def failure_message(messages, result):
     if result is None:
         return "No Claude result was available. Check the action log for setup or SDK startup errors."
 
     subtype = result.get("subtype")
     if subtype == "success" and result.get("is_error") is False:
-        return "Action failed after Claude completed. Check the action log for the failing step."
+        return "The job failed after Claude completed. Check the action log for the failing step."
     if isinstance(subtype, str) and subtype in RESULT_ERRORS:
         return RESULT_ERRORS[subtype]
 
@@ -81,14 +93,29 @@ def failure_message(messages):
     return "Unclassified Claude failure. Check the action log and report recurring errors to Claude Code Action."
 
 
+def denied_tools_message(result):
+    denials = result.get("permission_denials") if result is not None else None
+    if not isinstance(denials, list) or not denials:
+        return None
+
+    counts = {}
+    for denial in denials:
+        name = denial.get("tool_name") if isinstance(denial, dict) else None
+        name = name if name in KNOWN_TOOLS else "unknown tool"
+        counts[name] = counts.get(name, 0) + 1
+    tools = ", ".join(f"{name} ({counts[name]})" for name in sorted(counts))
+    return f"Denied tools: {tools}."
+
+
 def report_failure(execution, summary):
-    try:
-        messages = json.loads(execution.read_text(encoding="utf-8"))
-    except (OSError, ValueError, RecursionError):
-        messages = None
+    messages = read_execution_messages(execution)
+    result = last_result(messages)
 
     # Publish only fixed messages. The transcript can contain credentials and untrusted text.
-    message = failure_message(messages)
+    message = failure_message(messages, result)
+    denied_tools = denied_tools_message(result)
+    if denied_tools is not None:
+        message += f"\n\n{denied_tools}"
     with summary.open("a", encoding="utf-8") as output:
         output.write(f"### Claude Code failure\n\n{message}\n")
     print(message)
