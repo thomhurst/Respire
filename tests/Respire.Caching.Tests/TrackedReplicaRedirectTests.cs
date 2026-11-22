@@ -67,8 +67,20 @@ public class TrackedReplicaRedirectTests
         var getPrefix = "EVAL " + RespireDistributedCache.GetAndRefreshScript.Source;
         var correctionPrefix = "EVAL " + RespireDistributedCache.CapRefreshedTtlScript.Source;
         var normal = fixture.Target.ReplyOverride!;
-        fixture.Target.ReplyOverride = (id, command) => command.StartsWith(getPrefix, StringComparison.Ordinal)
-            ? "*2\r\n:1\r\n$1\r\nx\r\n"u8.ToArray() : normal(id, command);
+        fixture.Target.ReplyOverride = (id, command) =>
+        {
+            if (command.StartsWith(getPrefix, StringComparison.Ordinal))
+            {
+                return "*3\r\n:1\r\n$1\r\nx\r\n*4\r\n$1\r\n1\r\n$1\r\n2\r\n:4102444800000\r\n:120000\r\n"u8.ToArray();
+            }
+
+            if (command.StartsWith(correctionPrefix, StringComparison.Ordinal))
+            {
+                return ":4102444799000\r\n"u8.ToArray();
+            }
+
+            return normal(id, command);
+        };
         // Both the read and the first correction exceed the tolerance. The next correction
         // must still use the physical target after the first pass establishes ordering.
         fixture.Target.DelayCommand(getPrefix, 1100);
@@ -86,8 +98,11 @@ public class TrackedReplicaRedirectTests
             await Assert.That(await cache.GetAsync("key")).IsEquivalentTo("x"u8.ToArray());
         }
 
-        await Assert.That(fixture.Target.ReceivedCommands.Count(command =>
-            command.StartsWith(correctionPrefix, StringComparison.Ordinal))).IsGreaterThanOrEqualTo(2);
+        string[] corrections = fixture.Target.ReceivedCommands.Where(command =>
+            command.StartsWith(correctionPrefix, StringComparison.Ordinal)).ToArray();
+        await Assert.That(corrections.Length).IsGreaterThanOrEqualTo(2);
+        await Assert.That(corrections[0].EndsWith(" 4102444800000", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(corrections[1].EndsWith(" 4102444799000", StringComparison.Ordinal)).IsTrue();
         await Assert.That(fixture.Source.ReceivedCommands.Any(command =>
             command.StartsWith(correctionPrefix, StringComparison.Ordinal)
             || command.StartsWith($"EVALSHA {RespireDistributedCache.CapRefreshedTtlScript.Sha1} ", StringComparison.Ordinal))).IsFalse();

@@ -548,12 +548,14 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             RespireDistributedCache.GetAndRefreshScript, [key], ["0", staleNowTicks])).Dispose();
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task DelayedGet_CrossingAbsoluteDeadline_ExpiresOnlyItsOwnReArm(bool replace)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DelayedGet_CrossingAbsoluteDeadline_ExpiresOnlyItsOwnReArm(bool replace, bool retryCorrection)
     {
         const string Key = "delayed-get";
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(3);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(retryCorrection ? 5 : 3);
         var sliding = TimeSpan.FromSeconds(30);
         await Cache.SetAsync(Key, [1], new DistributedCacheEntryOptions
         {
@@ -563,18 +565,32 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         var delayedClient = new ScriptInterceptingClient(Client, async (call, send) =>
         {
-            if (call != 1)
+            if (call > (retryCorrection ? 2 : 1))
             {
                 return await send();
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(1));
+            await Task.Delay(TimeSpan.FromSeconds(retryCorrection && call == 1 ? 2 : 1));
+            long previousTtl = call == 2 ? await PttlAsync(Key) : 0;
             var reply = await send();
 
             try
             {
                 var untilDeadline = deadline - DateTimeOffset.UtcNow;
-                await Assert.That(await PttlAsync(Key)).IsGreaterThan((long)untilDeadline.TotalMilliseconds + 500);
+                long ttl = await PttlAsync(Key);
+                await Assert.That(ttl).IsGreaterThan((long)untilDeadline.TotalMilliseconds + 500);
+
+                if (retryCorrection && call == 1)
+                {
+                    return reply;
+                }
+
+                if (call == 2)
+                {
+                    // This pass shortened the original TTL and changed the timestamp the retry must match.
+                    await Assert.That(ttl).IsLessThan(previousTtl - 500);
+                }
+
                 await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(0, untilDeadline.TotalMilliseconds) + 100));
 
                 if (replace)
