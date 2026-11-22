@@ -634,7 +634,7 @@ public sealed class RespireProbabilisticClient
     private ValueTask<double[]> TDigestQuantileUnhookedAsync(RespireKey key, IReadOnlyList<double> quantiles, CancellationToken cancellationToken = default)
         => TDigestValuesAsync(key, quantiles, ValidateQuantiles, TDigestQuantileCommand, cancellationToken);
 
-    /// <summary>Estimates cumulative distribution fractions for values.</summary>
+    /// <summary>Estimates cumulative distribution fractions for values, including infinite bounds.</summary>
     public ValueTask<double[]> TDigestCdfAsync(RespireKey key, IReadOnlyList<double> values, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "TDIGEST.CDF", cancellationToken,
@@ -643,9 +643,11 @@ public sealed class RespireProbabilisticClient
             : TDigestCdfUnhookedAsync(key, values, cancellationToken);
 
     private ValueTask<double[]> TDigestCdfUnhookedAsync(RespireKey key, IReadOnlyList<double> values, CancellationToken cancellationToken = default)
-        => TDigestValuesAsync(key, values, ValidateFiniteValues, TDigestCdfCommand, cancellationToken);
+    {
+        return TDigestValuesAsync(key, values, ValidateTDigestProbes, TDigestCdfCommand, cancellationToken);
+    }
 
-    /// <summary>Estimates ascending ranks for values.</summary>
+    /// <summary>Estimates ascending ranks for values, including infinite bounds.</summary>
     public ValueTask<long[]> TDigestRankAsync(RespireKey key, IReadOnlyList<double> values, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "TDIGEST.RANK", cancellationToken,
@@ -654,9 +656,11 @@ public sealed class RespireProbabilisticClient
             : TDigestRankUnhookedAsync(key, values, cancellationToken);
 
     private ValueTask<long[]> TDigestRankUnhookedAsync(RespireKey key, IReadOnlyList<double> values, CancellationToken cancellationToken = default)
-        => TDigestIntegerValuesAsync(key, values, ValidateFiniteValues, TDigestRankCommand, cancellationToken);
+    {
+        return TDigestIntegerValuesAsync(key, values, TDigestRankCommand, cancellationToken);
+    }
 
-    /// <summary>Estimates descending ranks for values.</summary>
+    /// <summary>Estimates descending ranks for values, including infinite bounds.</summary>
     public ValueTask<long[]> TDigestReverseRankAsync(RespireKey key, IReadOnlyList<double> values, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "TDIGEST.REVRANK", cancellationToken,
@@ -665,7 +669,9 @@ public sealed class RespireProbabilisticClient
             : TDigestReverseRankUnhookedAsync(key, values, cancellationToken);
 
     private ValueTask<long[]> TDigestReverseRankUnhookedAsync(RespireKey key, IReadOnlyList<double> values, CancellationToken cancellationToken = default)
-        => TDigestIntegerValuesAsync(key, values, ValidateFiniteValues, TDigestReverseRankCommand, cancellationToken);
+    {
+        return TDigestIntegerValuesAsync(key, values, TDigestReverseRankCommand, cancellationToken);
+    }
 
     /// <summary>Estimates values at ascending ranks.</summary>
     public ValueTask<double[]> TDigestByRankAsync(RespireKey key, IReadOnlyList<long> ranks, CancellationToken cancellationToken = default)
@@ -718,7 +724,8 @@ public sealed class RespireProbabilisticClient
     private async ValueTask<double[]> TDigestValuesAsync(RespireKey key, IReadOnlyList<double> values, Action<IReadOnlyList<double>> validate, RespireCommand command, CancellationToken cancellationToken)
     {
         validate(values);
-        using var result = await DispatchAsync(command, [key, .. values.Select(static value => (RespireValue)value)], cancellationToken).ConfigureAwait(false);
+
+        using var result = await DispatchAsync(command, [key, .. values.Select(ToTDigestArgument)], cancellationToken).ConfigureAwait(false);
         var output = new double[result.Count];
 
         for (var index = 0; index < output.Length; index++)
@@ -729,11 +736,22 @@ public sealed class RespireProbabilisticClient
         return output;
     }
 
-    private async ValueTask<long[]> TDigestIntegerValuesAsync(RespireKey key, IReadOnlyList<double> values, Action<IReadOnlyList<double>> validate, RespireCommand command, CancellationToken cancellationToken)
+    private async ValueTask<long[]> TDigestIntegerValuesAsync(RespireKey key, IReadOnlyList<double> values, RespireCommand command, CancellationToken cancellationToken)
     {
-        validate(values);
-        using var result = await DispatchAsync(command, [key, .. values.Select(static value => (RespireValue)value)], cancellationToken).ConfigureAwait(false);
+        ValidateTDigestProbes(values);
+
+        using var result = await DispatchAsync(command, [key, .. values.Select(ToTDigestArgument)], cancellationToken).ConfigureAwait(false);
         return ReadIntegers(result);
+    }
+
+    private static RespireValue ToTDigestArgument(double value)
+    {
+        return value switch
+        {
+            double.NegativeInfinity => "-inf",
+            double.PositiveInfinity => "inf",
+            _ => value,
+        };
     }
 
     private async ValueTask<double[]> TDigestRankValuesAsync(RespireKey key, IReadOnlyList<long> ranks, RespireCommand command, CancellationToken cancellationToken)
@@ -984,7 +1002,7 @@ public sealed class RespireProbabilisticClient
         }
     }
 
-    private static void ValidateFiniteValues(IReadOnlyList<double> values)
+    private static void ValidateTDigestProbes(IReadOnlyList<double> values)
     {
         ArgumentNullException.ThrowIfNull(values);
 
@@ -993,9 +1011,9 @@ public sealed class RespireProbabilisticClient
             throw new ArgumentException("At least one value is required.", nameof(values));
         }
 
-        foreach (var value in values)
+        foreach (double value in values)
         {
-            if (!double.IsFinite(value))
+            if (double.IsNaN(value))
             {
                 throw new ArgumentOutOfRangeException(nameof(values));
             }

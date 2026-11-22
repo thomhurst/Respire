@@ -147,6 +147,31 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task DigestQueriesAcceptInfiniteProbes(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        string key = $"probabilistic:{Guid.NewGuid():N}:digest";
+        var probabilistic = new RespireProbabilisticClient(client);
+
+        await probabilistic.TDigestCreateAsync(key);
+        await probabilistic.TDigestAddAsync(key, [1, 2, 3]);
+
+        double[] probes = [double.NegativeInfinity, 2, double.PositiveInfinity];
+        (await probabilistic.TDigestCdfAsync(key, probes)).Should().Equal(0, 0.5, 1);
+        (await probabilistic.TDigestRankAsync(key, probes)).Should().Equal(-1, 1, 3);
+        (await probabilistic.TDigestReverseRankAsync(key, probes)).Should().Equal(3, 1, -1);
+
+        await probabilistic.Awaiting(p => p.TDigestCdfAsync(key, [double.NaN]).AsTask())
+            .Should().ThrowAsync<ArgumentOutOfRangeException>().WithParameterName("values");
+        await probabilistic.Awaiting(p => p.TDigestRankAsync(key, [double.NaN]).AsTask())
+            .Should().ThrowAsync<ArgumentOutOfRangeException>().WithParameterName("values");
+        await probabilistic.Awaiting(p => p.TDigestReverseRankAsync(key, [double.NaN]).AsTask())
+            .Should().ThrowAsync<ArgumentOutOfRangeException>().WithParameterName("values");
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task ServerErrorsAndCancellationSurfaceAsExceptions(int protocol)
     {
         await using var client = await ConnectAsync(protocol);
