@@ -10,14 +10,18 @@ public static class RespireJobSchedulerServiceCollectionExtensions
 {
     /// <summary>Adds a hosted scheduler and a keyed RespireJobScheduler for a previously registered queue.</summary>
     /// <remarks>Register AddRespireJobQueue first. Register TimeProvider to override the UTC clock and timers.
+    /// Positive polling intervals shorter than one millisecond round up to one millisecond.
     /// Multiple hosts can schedule the same queue. Polling failures are logged and retried on the next pass.</remarks>
     public static IServiceCollection AddRespireJobScheduler<T>(this IServiceCollection services, string queueName,
         TimeSpan? pollInterval = null, int maximumTicksPerPass = 64)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(queueName);
-        var interval = pollInterval ?? TimeSpan.FromSeconds(1);
+        TimeSpan interval = pollInterval ?? TimeSpan.FromSeconds(1);
         JobQueueScheduling.ValidateDuration(interval, nameof(pollInterval));
+
+        // Task.Delay completes immediately for positive intervals below one millisecond.
+        interval = TimeSpan.FromTicks(Math.Max(interval.Ticks, TimeSpan.TicksPerMillisecond));
 
         if (maximumTicksPerPass is < 1 or > 256)
         {
