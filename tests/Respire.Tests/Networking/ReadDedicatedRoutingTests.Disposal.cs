@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -29,13 +30,23 @@ public partial class ReadDedicatedRoutingTests
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(true, true)]
-    public async Task RemovedReplicaCleanupRemainsOwnedUntilCompletion(bool cleanupFails, bool finishBeforeRouterDispose)
+    [NotInParallel]
+    public Task RemovedReplicaCleanupRemainsOwnedUntilCompletion(bool cleanupFails, bool finishBeforeRouterDispose)
+    {
+        return BackgroundCleanupFailureTests.AssertCleanupObservedAsync(
+            failure => DisposeRemovedReplicaAsync(cleanupFails, finishBeforeRouterDispose, failure),
+            "Injected replica cleanup failure.");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference[]> DisposeRemovedReplicaAsync(
+        bool cleanupFails, bool finishBeforeRouterDispose, InvalidOperationException failure)
     {
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
         FakeRespServer[] replicas = [replica];
         await using var sentinel = Sentinel(primary, () => Volatile.Read(ref replicas));
-        using var logger = new PausedReplicaCleanupLogger(replica.Port, cleanupFails);
+        using var logger = new PausedReplicaCleanupLogger(replica.Port, cleanupFails, failure);
 #pragma warning disable RESP010 // This cleanup scenario owns and disposes its client to isolate pool retirement and disposal failures.
         await using var client = await RespireClient.ConnectAsync(Options(sentinel, [], RespireReadFrom.ReplicaPreferred)
             with
@@ -127,14 +138,24 @@ public partial class ReadDedicatedRoutingTests
             }
             catch (Exception error) when (error is RespireConnectionException || ReferenceEquals(error, logger.Failure)) { }
         }
+
+        return [new(client), new(router), new(lease.Pool), new(pending)];
     }
 
     [Test]
-    public async Task ConcurrentReplicaDisposalSharesCleanupFailure()
+    [NotInParallel]
+    public Task ConcurrentReplicaDisposalSharesCleanupFailure()
+    {
+        return BackgroundCleanupFailureTests.AssertCleanupObservedAsync(DisposeReplicaConcurrentlyAsync,
+            "Injected replica cleanup failure.");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<WeakReference[]> DisposeReplicaConcurrentlyAsync(InvalidOperationException failure)
     {
         await using var primary = Node("primary", false);
         await using var replica = Node("replica", true);
-        using var logger = new PausedReplicaCleanupLogger(replica.Port, true);
+        using var logger = new PausedReplicaCleanupLogger(replica.Port, true, failure);
         var client = await RespireClient.ConnectAsync(Options(primary, [replica], RespireReadFrom.Replica)
             with
         { LoggerFactory = logger });
@@ -170,14 +191,16 @@ public partial class ReadDedicatedRoutingTests
             }
             catch (Exception error) when (ReferenceEquals(error, logger.Failure)) { }
         }
+
+        return [new(client), new(client.Core.ReadRouter)];
     }
 
-    private sealed class PausedReplicaCleanupLogger(int port, bool fail) : ILogger, ILoggerFactory
+    private sealed class PausedReplicaCleanupLogger(int port, bool fail, InvalidOperationException failure) : ILogger, ILoggerFactory
     {
         internal readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource FailureLogged = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly ManualResetEventSlim Release = new();
-        internal readonly InvalidOperationException Failure = new("Injected replica cleanup failure.");
+        internal readonly InvalidOperationException Failure = failure;
         private int _armed;
 
         internal void Arm() => Volatile.Write(ref _armed, 1);

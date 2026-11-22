@@ -1407,8 +1407,22 @@ internal sealed partial class ReadEndpointRouter(ClientCore core) : IAsyncDispos
                 owner.NotifyReadReplicaRetired(multiplexer);
             }
 
-            await CleanupTasks.WhenAllAsync([multiplexer?.RetireAsync() ?? Task.CompletedTask,
-                pool?.RetireAsync().AsTask() ?? Task.CompletedTask]).WaitAsync(cancellationToken).ConfigureAwait(false);
+            Task retirement = CleanupTasks.WhenAllAsync([
+                multiplexer?.RetireAsync() ?? Task.CompletedTask,
+                pool?.RetireAsync().AsTask() ?? Task.CompletedTask
+            ]);
+
+            try
+            {
+                await retirement.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // The router joins the entry's cleanup during disposal. If this separate
+                // retirement task faults after the wait is canceled, observe its failure here.
+                CleanupTasks.ObserveFault(retirement);
+                throw;
+            }
         }
 
         private void DetachHandlers(RespireConnectionMultiplexer multiplexer)

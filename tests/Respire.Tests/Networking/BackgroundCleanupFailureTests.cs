@@ -16,10 +16,14 @@ namespace Respire.Tests.Networking;
 public class BackgroundCleanupFailureTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public Task PoolDisposalObservesEntryFailuresAfterFinalization(bool retireFirst)
-        => AssertCleanupObservedAsync(failure => DisposePoolAsync(failure, retireFirst));
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public Task PoolDisposalObservesEntryFailuresAfterFinalization(bool retireFirst, bool failCloseWarning)
+    {
+        return AssertCleanupObservedAsync(failure => DisposePoolAsync(failure, retireFirst, failCloseWarning));
+    }
 
     [Test]
     [Arguments(false)]
@@ -27,9 +31,10 @@ public class BackgroundCleanupFailureTests
     public Task ServerTeardownObservesHandlersAfterFinalization(bool failAcceptance)
         => AssertCleanupObservedAsync(failure => DisposeServerAsync(failure, failAcceptance));
 
-    private static async Task AssertCleanupObservedAsync(Func<Exception, Task<WeakReference[]>> cleanup)
+    internal static async Task AssertCleanupObservedAsync(
+        Func<InvalidOperationException, Task<WeakReference[]>> cleanup, string message = "Controlled cleanup failure.")
     {
-        var failure = new InvalidOperationException("Controlled cleanup failure.");
+        var failure = new InvalidOperationException(message);
         var control = new InvalidOperationException("Unobserved positive control.");
         var unobserved = new ConcurrentQueue<Exception>();
 
@@ -87,11 +92,11 @@ public class BackgroundCleanupFailureTests
         => new(Task.FromException(failure));
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task<WeakReference[]> DisposePoolAsync(Exception failure, bool retireFirst)
+    private static async Task<WeakReference[]> DisposePoolAsync(Exception failure, bool retireFirst, bool failCloseWarning)
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
-            RespireConnectionOptions.Default, new FailingDisconnectLogger(failure));
+            RespireConnectionOptions.Default, new FailingDisconnectLogger(failure, failCloseWarning));
         var first = await pool.RentAsync(CancellationToken.None);
         var second = await pool.RentAsync(CancellationToken.None);
         pool.Return(first);
@@ -152,7 +157,7 @@ public class BackgroundCleanupFailureTests
         return [new(server), new(acceptTask)];
     }
 
-    private sealed class FailingDisconnectLogger(Exception failure) : ILogger
+    private sealed class FailingDisconnectLogger(Exception failure, bool failCloseWarning) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
@@ -163,6 +168,11 @@ public class BackgroundCleanupFailureTests
         {
             if (logLevel == LogLevel.Debug
                 && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+            {
+                throw failure;
+            }
+
+            if (failCloseWarning && eventId.Name == "DedicatedConnectionCloseFailed")
             {
                 throw failure;
             }

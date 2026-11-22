@@ -224,7 +224,7 @@ internal sealed partial class DedicatedConnectionPool(
 
             if (stale is not null)
             {
-                _ = CloseAsync(stale);
+                StartClose(stale);
             }
 
             if (available is not null)
@@ -452,7 +452,7 @@ internal sealed partial class DedicatedConnectionPool(
 
         if (closing is not null)
         {
-            _ = CloseAsync(closing);
+            StartClose(closing);
         }
     }
 
@@ -481,7 +481,7 @@ internal sealed partial class DedicatedConnectionPool(
             BeginCloseLocked(entry);
         }
 
-        _ = CloseAsync(entry);
+        StartClose(entry);
         return new ValueTask(entry.Closed!.Task);
     }
 
@@ -598,7 +598,7 @@ internal sealed partial class DedicatedConnectionPool(
         {
             foreach (var entry in closing)
             {
-                _ = CloseAsync(entry);
+                StartClose(entry);
             }
         }
         // Admission is closed and idle cleanup is running before any listener can block.
@@ -618,6 +618,13 @@ internal sealed partial class DedicatedConnectionPool(
     {
         entry.State = State.Closing;
         entry.Closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    // Closed and the retirement completion carry connection failures to their waiters.
+    // The pool also owns faults from the background close itself, such as a throwing logger.
+    private void StartClose(Entry entry)
+    {
+        CleanupTasks.ObserveFault(CloseAsync(entry));
     }
 
     private async Task CloseAsync(Entry entry)
