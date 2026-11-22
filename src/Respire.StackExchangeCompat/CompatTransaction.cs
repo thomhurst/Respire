@@ -20,7 +20,7 @@ internal sealed class CompatTransaction(CompatDatabase database) : CompatDatabas
     {
         ValidateFlags(flags);
 
-        if ((!CompatBatch.SupportsCommand(command) && command.Name is not ("DEL" or "PUBLISH")) || command.Name == "ZSCAN")
+        if ((!CompatBatch.SupportsCommand(command) && command.Name != "PUBLISH") || command.Name == "ZSCAN")
         {
             throw Compatibility.Unsupported($"ITransaction {command.Name}");
         }

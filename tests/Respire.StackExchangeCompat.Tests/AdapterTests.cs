@@ -97,6 +97,35 @@ public class AdapterTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task BatchDefersKeyDeletionAndReturnsDeleteResults(int protocol)
+    {
+        await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
+        var database = connection.GetDatabase();
+        RedisKey[] existing = ["single", "first", "second"];
+
+        foreach (var key in existing)
+        {
+            await database.HashSetAsync(key, "field", "value");
+        }
+
+        var batch = database.CreateBatch();
+        var single = batch.KeyDeleteAsync("single");
+        var multiple = batch.KeyDeleteAsync(["first", "missing", "second"], CommandFlags.DemandMaster);
+
+        Assert.False(single.IsCompleted);
+        Assert.False(multiple.IsCompleted);
+        Assert.Equal(3L, await database.KeyExistsAsync(existing));
+
+        batch.Execute();
+
+        Assert.True(await single);
+        Assert.Equal(2L, await multiple);
+        Assert.Equal(0L, await database.KeyExistsAsync(existing));
+    }
+
+    [Test]
     public async Task ExpirySentinelsAndEmptyListPushPreserveServerOutcomes()
     {
         await using var connection = RespireConnectionMultiplexer.Create(Options(3));
