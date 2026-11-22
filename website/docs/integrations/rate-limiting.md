@@ -111,5 +111,17 @@ unrelated policies and a separate global limiter keep their own rejection behavi
 
 Queued requests wait asynchronously and observe `HttpContext.RequestAborted`. Queue capacity is **local
 to each application instance**, while admission uses the shared Redis budget. A queue-full rejection may
-have no retry metadata. Use bounded queues and normal request timeouts. The existing Redis-backed limiter
-handles the middleware's synchronous probe without consuming permits, then checks Redis in `AcquireAsync`.
+have no retry metadata. Use bounded queues and normal request timeouts.
+
+## Combining global and endpoint limits
+
+When `RateLimiterOptions.GlobalLimiter` is configured, the middleware probes the Respire endpoint policy
+only after acquiring a global permit. The endpoint policy uses asynchronous acquisition to check Redis,
+so the synchronous probe returns an unsuccessful lease without contacting Redis. The middleware disposes
+the first global lease and tries to acquire from the global limiter again on the asynchronous path before
+calling the endpoint policy's `AcquireAsync`.
+
+Fixed-window limiters keep a permit charged until the window resets, even after the lease is disposed.
+A single request can therefore consume two global permits or be rejected by the global limiter before
+Respire checks Redis. If each request must consume a single global permit, avoid combining a Respire
+endpoint policy with a global limiter whose leases keep permits charged after disposal.
