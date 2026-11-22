@@ -3,6 +3,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Respire.DependencyInjection;
 using Respire.HealthChecks;
 using Respire.Testing;
@@ -73,7 +74,7 @@ public class RespireStartupConnectionTests
             services.AddRespire(_ => server.CreateOptions());
         }
 
-        services.Configure<RespireStartupOptions>(keyed ? "cache" : Microsoft.Extensions.Options.Options.DefaultName,
+        services.Configure<RespireStartupOptions>(keyed ? "cache" : Options.DefaultName,
             options => options.ConnectOnStart = false);
         await using var provider = services.BuildServiceProvider();
 
@@ -160,18 +161,89 @@ public class RespireStartupConnectionTests
     }
 
     [Test]
-    public async Task ClientCreationFailureDoesNotFailStartup()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FailedOptionsFactoryRetriesUntilReady(bool keyed)
     {
-        var services = CreateServices();
-        services.AddRespire(_ => throw new InvalidOperationException("No Redis configured"));
-        await using var provider = services.BuildServiceProvider();
+        const string ServiceKey = "cache";
+        await using var server = new RespireFakeServer();
+        IServiceCollection services = CreateServices();
+        int attempts = 0;
 
-        var connector = Connector(provider);
+        RespireOptions CreateOptions(IServiceProvider _)
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+            {
+                throw new InvalidOperationException("Configuration temporarily unavailable");
+            }
+
+            return server.CreateOptions() with
+            {
+                Connections = 1,
+            };
+        }
+
+        if (keyed)
+        {
+            services.AddKeyedRespire(ServiceKey, CreateOptions);
+            services.AddHealthChecks().AddRespire(
+                clientFactory: provider => provider.GetRequiredKeyedService<IRespireClient>(ServiceKey));
+        }
+        else
+        {
+            services.AddRespire(CreateOptions);
+            services.AddHealthChecks().AddRespire();
+        }
+
+        services.Configure<RespireStartupOptions>(keyed ? ServiceKey : Options.DefaultName,
+            startup => startup.InitialRetryDelay = TimeSpan.FromMilliseconds(10));
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        RespireStartupConnector connector = Connector(provider);
+
         await connector.StartAsync(CancellationToken.None);
-        await connector.Connecting.WaitAsync(Timeout);
+
+        try
+        {
+            await connector.Connecting.WaitAsync(Timeout);
+
+            // Check the attempt count before the readiness probe can resolve the client itself.
+            await Assert.That(Volatile.Read(ref attempts)).IsEqualTo(2);
+            HealthReport report = await provider.GetRequiredService<HealthCheckService>().CheckHealthAsync();
+            await Assert.That(report.Status).IsEqualTo(HealthStatus.Healthy);
+        }
+        finally
+        {
+            await connector.StopAsync(CancellationToken.None).WaitAsync(Timeout);
+        }
+    }
+
+    [Test]
+    public async Task StopEndsRetryBackoffAfterClientCreationFailure()
+    {
+        var attempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        IServiceCollection services = CreateServices();
+        services.AddRespire(_ =>
+        {
+            attempted.TrySetResult();
+            throw new InvalidOperationException("No Redis configured");
+        });
+        services.Configure<RespireStartupOptions>(startup => startup.InitialRetryDelay = TimeSpan.FromHours(1));
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        RespireStartupConnector connector = Connector(provider);
+
+        await connector.StartAsync(CancellationToken.None);
+
+        try
+        {
+            await attempted.Task.WaitAsync(Timeout);
+            await Assert.That(connector.Connecting.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            await connector.StopAsync(CancellationToken.None).WaitAsync(Timeout);
+        }
 
         await Assert.That(connector.Connecting.IsCompletedSuccessfully).IsTrue();
-        await connector.StopAsync(CancellationToken.None);
     }
 
     [Test]

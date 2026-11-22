@@ -58,34 +58,24 @@ internal sealed partial class RespireStartupConnector(
 
     private async Task ConnectAsync(RespireClientRegistration registration, RespireStartupOptions startup, CancellationToken stopping)
     {
-        var name = registration.ServiceKey ?? "default";
-        RespireClient client;
+        string name = registration.ServiceKey ?? "default";
+        RespireClient? client = null;
+        TimeSpan delay = startup.InitialRetryDelay;
 
-        try
+        for (int attempt = 1; !stopping.IsCancellationRequested; attempt++)
         {
-            client = registration.ServiceKey is null
-                ? services.GetRequiredService<RespireClient>()
-                : services.GetRequiredKeyedService<RespireClient>(registration.ServiceKey);
-        }
-        catch (Exception exception)
-        {
-            // Resolution fails the same way every time; the first command reports it again.
-            LogResolveFailed(_logger, name, exception);
-            return;
-        }
-
-        var delay = startup.InitialRetryDelay;
-
-        for (var attempt = 1; ; attempt++)
-        {
-            // Application traffic may have connected the client already.
-            if (client.IsConnected)
-            {
-                return;
-            }
-
             try
             {
+                client ??= registration.ServiceKey is null
+                    ? services.GetRequiredService<RespireClient>()
+                    : services.GetRequiredKeyedService<RespireClient>(registration.ServiceKey);
+
+                // Application traffic may have connected the client already.
+                if (client.IsConnected)
+                {
+                    return;
+                }
+
                 await client.PingAsync(stopping).ConfigureAwait(false);
                 LogConnected(_logger, name, attempt);
                 return;
@@ -94,9 +84,13 @@ internal sealed partial class RespireStartupConnector(
             {
                 return;
             }
-            catch (ObjectDisposedException)
+            catch (ObjectDisposedException) when (client is not null)
             {
                 return;
+            }
+            catch (Exception exception) when (client is null)
+            {
+                LogResolveFailed(_logger, name, attempt, delay, exception);
             }
             catch (Exception exception)
             {
@@ -122,6 +116,6 @@ internal sealed partial class RespireStartupConnector(
     [LoggerMessage(2, LogLevel.Warning, "Respire client '{Client}' failed to connect at startup (attempt {Attempt}); retrying in {Delay}", EventName = "StartupConnectFailed")]
     private static partial void LogConnectFailed(ILogger logger, string client, int attempt, TimeSpan delay, Exception exception);
 
-    [LoggerMessage(3, LogLevel.Error, "Respire client '{Client}' could not be created for startup connection", EventName = "StartupResolveFailed")]
-    private static partial void LogResolveFailed(ILogger logger, string client, Exception exception);
+    [LoggerMessage(3, LogLevel.Error, "Respire client '{Client}' could not be created for startup connection (attempt {Attempt}); retrying in {Delay}", EventName = "StartupResolveFailed")]
+    private static partial void LogResolveFailed(ILogger logger, string client, int attempt, TimeSpan delay, Exception exception);
 }

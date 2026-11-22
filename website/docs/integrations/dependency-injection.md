@@ -41,9 +41,10 @@ The container owns disposal.
 ## Connect at startup
 
 When the host starts, each registered client connects in the background. Host startup does not
-wait for Redis. A failed attempt is logged as a warning and retried with backoff, from one second
-up to 30 seconds, until the first connection succeeds or the host stops. A readiness check
-therefore turns healthy without waiting for application traffic.
+wait for Redis. If the startup connector fails to create the client or connect to Redis, it logs
+the failure and retries with backoff, from one second up to 30 seconds, until the first connection
+succeeds or the host stops. A readiness check therefore turns healthy without waiting for
+application traffic.
 
 To keep a client lazy until its first command, turn this off. Use the service key as the options
 name for a keyed client:
