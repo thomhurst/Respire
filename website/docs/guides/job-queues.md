@@ -943,10 +943,12 @@ Alternatively, call `services.AddRespireJobScheduler<string>("email")` after reg
 matching `AddRespireJobQueue<EmailHandler, string>("email", ...)`. This adds a hosted scheduler
 with a one-second polling interval and a 64-candidate pass limit, plus a keyed
 `RespireJobScheduler<string>` resolved with `GetRequiredKeyedService` using the queue name.
-The optional `pollInterval` and `maximumTicksPerPass` arguments configure those bounds; the
-maximum is 256. A failed pass is logged and retried after the interval. Register a `TimeProvider`
-to control the hosted scheduler's UTC clock and timers, or pass one to `CreateScheduler` for
-manual scheduling and deterministic tests. Queue consumers run independently of the scheduler.
+The optional `pollInterval` and `maximumTicksPerPass` arguments configure those bounds.
+Positive polling intervals shorter than one millisecond round up to one millisecond.
+The pass limit can be at most 256. A failed pass is logged and retried after the interval.
+Register a `TimeProvider` to control the hosted scheduler's UTC clock and timers, or pass one
+to `CreateScheduler` for manual scheduling and deterministic tests. Queue consumers run
+independently of the scheduler.
 
 Specify exactly one of `Interval` or `Cron`. Intervals are positive whole milliseconds and are
 anchored at upsert time. Cron uses [Cronos](https://github.com/HangfireIO/Cronos)'s five-field

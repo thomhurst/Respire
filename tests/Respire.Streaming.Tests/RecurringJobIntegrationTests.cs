@@ -179,6 +179,33 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
+    [Arguments(5_000L, TimeSpan.TicksPerMillisecond)]
+    [Arguments(TimeSpan.TicksPerMillisecond, TimeSpan.TicksPerMillisecond)]
+    [Arguments(1_000_000L, 1_000_000L)]
+    public async Task HostedSchedulerWaitsBetweenPollingPasses(long intervalTicks, long expectedTicks)
+    {
+        await using RespireClient client = await ConnectAsync();
+        var clock = new PollingClock();
+        IServiceCollection services = new ServiceCollection().AddSingleton<IRespireClient>(client).AddSingleton<TimeProvider>(clock);
+        services.AddRespireJobQueue<HostedJobHandler, string>("recurring", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString);
+        services.AddRespireJobScheduler<string>("recurring", TimeSpan.FromTicks(intervalTicks));
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        IHostedService hostedScheduler = provider.GetRequiredService<IHostedService>();
+        await hostedScheduler.StartAsync(CancellationToken.None);
+
+        try
+        {
+            TimeSpan delay = await clock.Delay.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(delay).IsEqualTo(TimeSpan.FromTicks(expectedTicks));
+        }
+        finally
+        {
+            using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await hostedScheduler.StopAsync(stopping.Token);
+        }
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task IndependentSchedulersEnqueueEachTickOnlyOnce(int protocol)
@@ -561,6 +588,22 @@ public class RecurringJobIntegrationTests(RedisTestContainer redis)
 
     private static long Tick(RespireStreamEntry entry)
         => long.Parse(entry.GetString("_respire.job.tick")!, CultureInfo.InvariantCulture);
+
+    private sealed class PollingClock : TimeProvider
+    {
+        public TaskCompletionSource<TimeSpan> Delay
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            // Leave the worker parked in its delay until StopAsync cancels it.
+            ITimer timer = base.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, period);
+            Delay.TrySetResult(dueTime);
+            return timer;
+        }
+    }
 
     private sealed class ManualClock(DateTimeOffset? initial = null) : TimeProvider
     {
