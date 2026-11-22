@@ -39,6 +39,7 @@ public sealed record RespireStreamWorkerOptions
     } = 1;
 
     /// <summary>Positive blocking wait for new entries. Defaults to five seconds.</summary>
+    /// <remarks>For job queues, positive idle delays shorter than one millisecond round up to one millisecond.</remarks>
     public TimeSpan ReadWait
     {
         get; init;

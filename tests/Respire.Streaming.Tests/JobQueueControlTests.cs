@@ -552,6 +552,6 @@ public class JobQueueControlTests(RedisTestContainer redis)
         return client.Scripts.ExecuteAsync(ControlScript(operation), [queue.StreamKey, queue.ControlKey], args);
     }
 
-    private static RespireScript ControlScript(string name) => (RespireScript)typeof(RespireJobQueue<string>).Assembly
+    internal static RespireScript ControlScript(string name) => (RespireScript)typeof(RespireJobQueue<string>).Assembly
         .GetType("Respire.Streaming.JobQueueControls")!.GetField(name, BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
 }
