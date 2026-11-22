@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Respire.Testing;
 using TUnit.Assertions;
@@ -255,6 +256,46 @@ public class DashboardGroupTests(RedisTestContainer redis)
         await Assert.That(nextHtml).DoesNotContain("Next groups");
         var expectedNext = StringComparer.Ordinal.Compare(Prefix(name), Prefix(nextName)) < 0 ? nextName : name;
         await Assert.That(nextHtml).Contains(Convert.ToBase64String(Encoding.UTF8.GetBytes(expectedNext)));
+    }
+
+    [Test]
+    [Arguments("a", 16_385)]
+    [Arguments("é", 8_193)]
+    public async Task NextGroupsFormReachesShortGroupAfterLongGroup(string character, int length)
+    {
+        await using RespireClient client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var queue = new RespireJobQueue<string>(client, "long-group-pagination", Encoding.UTF8.GetBytes);
+        string longName = "a" + new string(character[0], length - 1);
+
+        await queue.EnqueueScheduledAsync("long", "payload", new()
+        {
+            Group = longName
+        });
+        await queue.EnqueueScheduledAsync("normal", "payload", new()
+        {
+            Group = "normal-group"
+        });
+
+        await using WebApplication app = await DashboardSecurityTests.CreateApplication(client, jobs: true, entryLimit: 1,
+            kestrel: true, configure: options =>
+            {
+                options.Streams[0].Stream = queue.StreamKey;
+                options.Streams[0].DeadLetterStream = queue.DeadLetterStreamKey;
+                options.Streams[0].Group = RespireJobQueue<string>.ConsumerGroup;
+            });
+        using var http = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        http.DefaultRequestHeaders.Add("X-Test-Role", "operator");
+
+        using HttpResponseMessage home = await http.GetAsync("/workers/");
+        await Assert.That(home.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        string homeHtml = await home.Content.ReadAsStringAsync();
+        await Assert.That(homeHtml).DoesNotContain("<td>normal-group</td>");
+
+        using HttpResponseMessage next = await SubmitForm(http, homeHtml, "Next groups");
+        await Assert.That(next.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        string nextHtml = await next.Content.ReadAsStringAsync();
+        await Assert.That(nextHtml).Contains("<td>normal-group</td>");
+        await Assert.That(nextHtml).DoesNotContain("Next groups");
     }
 
     [Test]

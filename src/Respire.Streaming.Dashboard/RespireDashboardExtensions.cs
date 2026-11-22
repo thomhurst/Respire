@@ -134,7 +134,7 @@ public static class RespireDashboardExtensions
             }
 
             if (names.Count > 1 || cursors.Count > 1 || (names.Count != 0 && cursors.Count != 0)
-                || (names.Count == 1 && !IsGroupName(names[0])) || (cursors.Count == 1 && cursors[0]!.Length > 32769))
+                || (names.Count == 1 && !IsGroupName(names[0])))
             {
                 await WriteErrorAsync(context, returnPath, 400, "Supply one group name or one pagination cursor.").ConfigureAwait(false);
                 return;
