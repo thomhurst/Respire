@@ -5,6 +5,7 @@
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../Respire/Respire.csproj" />
     <ProjectReference Include="../Respire.DependencyInjection/Respire.DependencyInjection.csproj" />
     <ProjectReference Include="../Respire.HealthChecks/Respire.HealthChecks.csproj" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />

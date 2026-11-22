@@ -80,7 +80,7 @@ To start from a working project instead, use the
 
 ## Upgrade packages together
 
-Keep every Respire package on the same version. `Respire.Caching`, `Respire.Coordination`, `Respire.StackExchangeCompat`, `Respire.DataProtection`, `Respire.Json`, `Respire.Compression.Lz4`, `Respire.Compression.Zstd`, `Respire.Testing`, `Respire.Streaming`, and `Respire.Streaming.Dashboard` require the exact `Respire` version they were built against, including any prerelease suffix. Mixing versions can fail at runtime.
+Keep every Respire package on the same version. `Respire.Aspire`, `Respire.Caching`, `Respire.Compression.Lz4`, `Respire.Compression.Zstd`, `Respire.Coordination`, `Respire.DataProtection`, `Respire.DependencyInjection`, `Respire.Json`, `Respire.Probabilistic`, `Respire.Search`, `Respire.StackExchangeCompat`, `Respire.Streaming`, `Respire.Streaming.Dashboard`, `Respire.Testing`, and `Respire.TimeSeries` require the exact `Respire` version they were built against, including any prerelease suffix. Mixing versions can fail at runtime.
 
 The three `Respire.Serialization.*` adapters also pin their core dependency exactly so
 serializer and client packages are upgraded together, even though they use public APIs.
