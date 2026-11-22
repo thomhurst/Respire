@@ -51,12 +51,35 @@ public class AvailabilityTests
     }
 
     [Test]
+    public async Task ConnectAnyAsync_SkipsCandidateWithNullEndpoints()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+
+#pragma warning disable RESP010 // Test-owned client verifies fallback after candidate validation fails.
+        await using RespireClient client = await RespireClient.ConnectAnyAsync([
+            new RespireOptions { Endpoints = null! },
+            new RespireOptions
+            {
+                Protocol = RespireProtocol.Resp2,
+                Endpoints = { endpoint },
+                Connections = 1,
+            },
+        ]);
+#pragma warning restore RESP010
+
+        await Assert.That(client.Endpoint).IsEqualTo(endpoint);
+        await client.PingAsync();
+    }
+
+    [Test]
     public async Task ConnectAnyAsync_AllCandidatesFail_ReportsEveryAttempt()
     {
         await using var first = new FakeRespServer("-ERR primary unavailable\r\n"u8.ToArray());
         await using var second = new FakeRespServer("-ERR secondary unavailable\r\n"u8.ToArray());
 
-        var exception = await Assert.That(async () => await RespireClient.ConnectAnyAsync([
+        RespireConnectionException? exception = await Assert.That(async () => await RespireClient.ConnectAnyAsync([
+                new RespireOptions { Endpoints = null! },
                 new RespireOptions
                 {
                     Protocol = RespireProtocol.Resp2,
@@ -73,14 +96,17 @@ public class AvailabilityTests
             .ThrowsExactly<RespireConnectionException>();
 
         await Assert.That(exception!.Message).Contains("Unable to connect to any Redis endpoint candidate");
-        await Assert.That(exception.Message).Contains($"1. 127.0.0.1:{first.Port}");
+        await Assert.That(exception.Message).Contains("1. (no endpoints): RespireConfigurationException");
+        await Assert.That(exception.Message).Contains($"2. 127.0.0.1:{first.Port}");
         await Assert.That(exception.Message).Contains("primary unavailable");
-        await Assert.That(exception.Message).Contains($"2. 127.0.0.1:{second.Port}");
+        await Assert.That(exception.Message).Contains($"3. 127.0.0.1:{second.Port}");
         await Assert.That(exception.Message).Contains("secondary unavailable");
 
         var aggregate = exception.InnerException as AggregateException;
         await Assert.That(aggregate).IsNotNull();
-        await Assert.That(aggregate!.InnerExceptions.Count).IsEqualTo(2);
+        await Assert.That(aggregate!.InnerExceptions.Count).IsEqualTo(3);
+        await Assert.That(aggregate.InnerExceptions[0]).IsTypeOf<RespireConfigurationException>();
+        await Assert.That(aggregate.InnerExceptions[0].Message).IsEqualTo("At least one Redis endpoint is required.");
     }
 
     private sealed record Payload(int Value);
