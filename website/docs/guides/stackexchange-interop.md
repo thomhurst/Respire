@@ -235,7 +235,8 @@ Supported `CommandFlags`:
 | Flag | Behavior |
 | --- | --- |
 | `None`, `DemandMaster` | Normal. |
-| `PreferReplica`, `DemandReplica` | Read commands use native replica, Cluster, or Sentinel routing. |
+| `PreferReplica` | Read commands prefer a replica and fall back to the primary when no replica is available, including on standalone connections with no configured replicas. |
+| `DemandReplica` | Read commands require a replica. Configure replica endpoints, Cluster, or Sentinel. |
 | `NoRedirect` | Supported. Cannot combine with `FireAndForget`. |
 | `FireAndForget` | Returns the default result and discards server errors. Cluster redirect failures can still surface. |
 

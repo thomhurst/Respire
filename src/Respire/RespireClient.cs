@@ -416,9 +416,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             throw new InvalidOperationException("AZ-affinity reads require ClientAvailabilityZone before connecting.");
         }
 
-        if (readFrom != RespireReadFrom.Primary && !_core.Options.UseCluster
-            && _core.Options.ReplicaEndpoints.Count == 0
-            && string.IsNullOrWhiteSpace(_core.Options.SentinelPrimaryName))
+        if (readFrom != RespireReadFrom.Primary && !_core.SupportsReplicaReads)
         {
             throw new InvalidOperationException("Replica read routing requires Cluster, Sentinel discovery, or configured ReplicaEndpoints.");
         }

@@ -63,7 +63,7 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
         var client = (RespireClient)_client.WithReadFrom(role switch
         {
             4 => RespireReadFrom.Primary,
-            8 => RespireReadFrom.ReplicaPreferred,
+            8 when _client.Core.SupportsReplicaReads => RespireReadFrom.ReplicaPreferred,
             12 => RespireReadFrom.Replica,
             _ => RespireReadFrom.Primary,
         });
