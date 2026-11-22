@@ -23,7 +23,9 @@ from fnmatch import fnmatch
 PR_EVENTS = {"pull_request", "pull_request_target"}
 EXCLUDED_PATHS = (
     ".github/workflows/benchmark-*.yml",
+    ".github/workflows/benchmark-*.yaml",
     ".github/workflows/server-compatibility.yml",
+    ".github/workflows/server-compatibility.yaml",
 )
 PASSING = {"success", "neutral"}
 
