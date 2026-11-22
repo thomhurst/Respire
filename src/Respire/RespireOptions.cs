@@ -1613,9 +1613,9 @@ public sealed record RespireOptions
 
         foreach (var segment in segments)
         {
-            var equals = segment.IndexOf('=');
+            int equals = segment.IndexOf('=');
 
-            if (equals < 0)
+            if (equals < 0 || segment.StartsWith('!'))
             {
                 endpointTexts.Add(segment);
                 continue;
