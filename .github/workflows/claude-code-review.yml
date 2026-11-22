@@ -166,6 +166,12 @@ jobs:
           claude_args: |
             --permission-mode default --add-dir pr-head --allowedTools "Read,Glob,Grep,Bash(.github/scripts/pr-review-comment.sh:*),Bash(gh pr view:*)"
 
+      - name: Summarize Claude Code failure
+        if: failure() && steps.claude-review.outcome == 'failure'
+        env:
+          CLAUDE_EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
+        run: python3 scripts/workflows/ClaudeFailure.py
+
       # The action can finish successfully without the model ever posting a review.
       # Fail the check then, so a missing review shows red instead of green.
       # Only the bot's own comments count, as in the merge gate, so a quoted marker cannot pass it.
