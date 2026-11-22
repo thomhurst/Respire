@@ -25,10 +25,10 @@ and later. A probe inside the containment boundary resolves the executable's
 effective SDK; .NET 10 ignores the environment override.
 On Windows, keep AgentDotNetWindowsJob.cs beside this script; Add-Type loads
 the native launcher from that source file.
-Set RESPIRE_AGENT_CLEANUP_DIAGNOSTICS=1 for bounded cleanup decision evidence
-in the surviving host. Records contain numeric process IDs and fixed actions;
-they exclude paths, arguments and environment values. A Job Object member list
-is a pre-close snapshot; successful kill requests do not prove termination.
+Set RESPIRE_AGENT_CLEANUP_DIAGNOSTICS=1 for timeout timing and bounded cleanup
+decision evidence in the surviving host. Records contain numeric process IDs,
+timings and fixed actions. A Job Object member list is a pre-close snapshot.
+Signal and kill records describe requests to the operating system.
 
 .EXAMPLE
 & scripts/Invoke-AgentDotNet.ps1 -SingleNode -DotNetArguments @(
@@ -483,9 +483,12 @@ function Stop-ProcessTree(
         elseif ((-not $IsWindows) -and $UnixProcessGroupId -gt 0) {
             # Signal the process group from the guard so timeout and memory-limit paths
             # have the same containment as normal exit.
+            if ($traceCleanup) { Write-AgentCleanupEvidence $cleanupRecords "group=$UnixProcessGroupId action=signal" }
             $killResult = [AgentDotNetUnixNative]::kill(-$UnixProcessGroupId, 9)
+            # Read errno before emitting diagnostics or calling other native APIs.
+            $errorCode = if ($killResult -ne 0) { [Runtime.InteropServices.Marshal]::GetLastWin32Error() } else { 0 }
+            if ($traceCleanup) { Write-AgentCleanupEvidence $cleanupRecords "group=$UnixProcessGroupId action=signal-return errno=$errorCode" }
             if ($killResult -ne 0) {
-                $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
                 if ($errorCode -ne 3) {
                     Write-Verbose "Unix process group $UnixProcessGroupId could not be stopped (errno $errorCode)."
                 }
@@ -795,9 +798,13 @@ $process.StartInfo = $startInfo
 $processStarted = $false
 $wrapperProcessId = 0
 $trackedProcesses = [System.Collections.Generic.Dictionary[int, string]]::new()
-$deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+$timeout = [TimeSpan]::FromSeconds($TimeoutSeconds)
+$guardClock = [Diagnostics.Stopwatch]::StartNew()
+$timeoutPhase = $null
+$traceTimeout = $env:RESPIRE_AGENT_CLEANUP_DIAGNOSTICS -eq '1'
 $memoryLimitBytes = [long]$MemoryLimitMb * 1MB
 $guardExitCode = $null
+$limitMessage = $null
 $peakWorkingSetBytes = 0L
 $finalExitCode = 1
 $windowsJobHandle = [IntPtr]::Zero
@@ -872,6 +879,13 @@ try {
     }
 
     while ($true) {
+        # A timed wait can consume the remaining budget. Do not take another
+        # process-tree snapshot before starting cleanup in that case.
+        if ($guardClock.Elapsed -ge $timeout) {
+            $timeoutPhase = 'before-snapshot'
+            break
+        }
+
         $treeState = Get-ProcessTreeState $process.Id $wrapperStartIdentity $trackedProcesses
         Sync-TrackedProcesses $trackedProcesses @($treeState.Snapshot) @($treeState.Processes)
         $workingSetBytes = Get-TrackedWorkingSetBytes $trackedProcesses @($treeState.Snapshot)
@@ -879,17 +893,14 @@ try {
 
         if ($workingSetBytes -gt $memoryLimitBytes) {
             $workingSetMb = [math]::Round($workingSetBytes / 1MB)
-            [Console]::Error.WriteLine(
-                "Agent dotnet command exceeded ${MemoryLimitMb} MB process-tree limit (${workingSetMb} MB).")
+            $limitMessage = "Agent dotnet command exceeded ${MemoryLimitMb} MB process-tree limit (${workingSetMb} MB)."
             $guardExitCode = 137
             break
         }
 
-        $remaining = $deadline - [DateTimeOffset]::UtcNow
+        $remaining = $timeout - $guardClock.Elapsed
         if ($remaining -le [TimeSpan]::Zero) {
-            [Console]::Error.WriteLine(
-                "Agent dotnet command exceeded ${TimeoutSeconds}s timeout.")
-            $guardExitCode = 124
+            $timeoutPhase = 'after-snapshot'
             break
         }
 
@@ -897,17 +908,26 @@ try {
             $PollIntervalMilliseconds,
             [math]::Max(1, [math]::Ceiling($remaining.TotalMilliseconds)))
         if ($process.WaitForExit([int]$waitMilliseconds)) {
+            if ($guardClock.Elapsed -ge $timeout) {
+                $timeoutPhase = 'after-wait'
+                break
+            }
+
             $treeState = Get-ProcessTreeState $process.Id $wrapperStartIdentity $trackedProcesses
             Sync-TrackedProcesses $trackedProcesses @($treeState.Snapshot) @($treeState.Processes)
 
-            if ([DateTimeOffset]::UtcNow -gt $deadline) {
-                [Console]::Error.WriteLine(
-                    "Agent dotnet command exceeded ${TimeoutSeconds}s timeout.")
-                $guardExitCode = 124
+            if ($guardClock.Elapsed -ge $timeout) {
+                $timeoutPhase = 'after-exit-snapshot'
             }
 
             break
         }
+    }
+
+    if ($null -ne $timeoutPhase) {
+        $timeoutDetectedMs = $guardClock.ElapsedMilliseconds
+        $guardExitCode = 124
+        $limitMessage = "Agent dotnet command exceeded ${TimeoutSeconds}s timeout."
     }
 
     if ($null -ne $guardExitCode) {
@@ -919,14 +939,14 @@ try {
     }
 }
 finally {
-    Write-Verbose ("Agent dotnet peak sampled process-tree working set: {0} MB (limit {1} MB)." -f
-        [math]::Round($peakWorkingSetBytes / 1MB), $MemoryLimitMb)
     if ($processStarted) {
+        $cleanupStartedMs = $guardClock.ElapsedMilliseconds
         Stop-ProcessTree `
             -RootProcess $process `
             -TrackedProcesses $trackedProcesses `
             -WindowsJobHandle $windowsJobHandle `
             -UnixProcessGroupId $unixProcessGroupId
+        $cleanupReturnedMs = $guardClock.ElapsedMilliseconds
         $windowsJobHandle = [IntPtr]::Zero
     }
     elseif ($windowsJobHandle -ne [IntPtr]::Zero) {
@@ -945,6 +965,22 @@ finally {
     if (Test-Path -LiteralPath $invocationPath) {
         Remove-Item -LiteralPath $invocationPath -Force -ErrorAction SilentlyContinue
     }
+
+    Write-Verbose ("Agent dotnet peak sampled process-tree working set: {0} MB (limit {1} MB)." -f
+        [math]::Round($peakWorkingSetBytes / 1MB), $MemoryLimitMb)
+}
+
+# Stderr can block under a CI log collector. Report the resource limit after
+# containment and cleanup so the workload cannot run during the write.
+if ($traceTimeout -and $null -ne $timeoutPhase) {
+    try {
+        [Console]::Error.WriteLine(
+            "guard-timeout phase=$timeoutPhase deadlineMs=$($TimeoutSeconds * 1000) detectedMs=$timeoutDetectedMs cleanupStartedMs=$cleanupStartedMs cleanupReturnedMs=$cleanupReturnedMs")
+    }
+    catch { }
+}
+if ($null -ne $limitMessage) {
+    try { [Console]::Error.WriteLine($limitMessage) } catch { }
 }
 
 if ($IsWindows -and $finalExitCode -eq -1073741502) {
