@@ -38,8 +38,8 @@ public class ProxyIntegrationTests
         // Redis has no published host port: only the proxy can resolve and reach this endpoint.
         await using var redis = new ContainerBuilder("redis:8.4-alpine")
             .WithNetwork(network).WithNetworkAliases(redisHost)
-            .WithResourceMapping(Encoding.ASCII.GetBytes(certificate.ExportCertificatePem()), "/tls/server.crt")
-            .WithResourceMapping(Encoding.ASCII.GetBytes(key.ExportPkcs8PrivateKeyPem()), "/tls/server.key")
+            .WithResourceMapping(Encoding.ASCII.GetBytes(certificate.ExportCertificatePem()), FilePath.Of("/tls/server.crt"))
+            .WithResourceMapping(Encoding.ASCII.GetBytes(key.ExportPkcs8PrivateKeyPem()), FilePath.Of("/tls/server.key"))
             .WithCommand("redis-server", "--protected-mode", "no", "--save", "", "--port", "6379",
                 "--tls-port", "6380", "--tls-cert-file", "/tls/server.crt", "--tls-key-file", "/tls/server.key",
                 "--tls-ca-cert-file", "/tls/server.crt", "--tls-auth-clients", "no")

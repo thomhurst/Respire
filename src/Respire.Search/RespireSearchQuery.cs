@@ -622,7 +622,7 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
 /// Typed expression for the text leg. Use builder helpers for escaped values or
 /// <see cref="RespireSearchExpression.FromRaw(string)"/> for trusted native syntax.
 /// </param>
-/// <param name="VectorField">Vector field name; it is escaped.</param>
+/// <param name="VectorField">Indexed vector field name as defined in the schema.</param>
 /// <param name="Vector">Query vector bytes in the index's element type.</param>
 /// <param name="K">Number of nearest neighbours for the vector leg.</param>
 /// <param name="Limit">Maximum number of fused results.</param>
@@ -723,7 +723,7 @@ public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpres
             "SEARCH",
             TextExpression.Value,
             "VSIM",
-            "@" + RespireSearchQueryBuilder.EscapeField(VectorField),
+            "@" + VectorField,
             "$" + RespireVectorSearchRequest.VectorParameterName,
             "KNN",
             2,
