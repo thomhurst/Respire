@@ -365,6 +365,87 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ShutdownDeadlineSurvivesBlockedYieldCallback(bool deadlineAlreadyExpired)
+    {
+        await using RespireClient client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
+        RespireJobQueue<string> queue = Queue(client);
+        await queue.EnqueueAsync("ordinary", "payload");
+        await queue.EnqueueScheduledAsync("resumable", "payload", new()
+        {
+            MaximumRuntime = TimeSpan.FromMinutes(1)
+        });
+
+        var ordinaryEntered = new TaskCompletionSource<CancellationToken>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var resumableEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseCallback = new ManualResetEventSlim();
+        await using ServiceProvider provider = Worker(client, new(async (job, token) =>
+        {
+            if (job.Id == "ordinary")
+            {
+                ordinaryEntered.TrySetResult(token);
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return RespireStreamWorkerResult.Nack;
+            }
+
+            var resumableDelay = Task.Delay(Timeout.InfiniteTimeSpan, token);
+            using CancellationTokenRegistration resumableRegistration = token.Register(() =>
+            {
+                callbackEntered.TrySetResult();
+                releaseCallback.Wait();
+            });
+            resumableEntered.TrySetResult();
+            await resumableDelay;
+            return RespireStreamWorkerResult.Nack;
+        }), "shutdown", consumers: 2);
+        var worker = (BackgroundService)provider.GetRequiredService<IHostedService>();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var deadline = new CancellationTokenSource();
+        await worker.StartAsync(timeout.Token);
+        Task? stopping = null;
+
+        try
+        {
+            await Task.WhenAll(ordinaryEntered.Task, resumableEntered.Task).WaitAsync(timeout.Token);
+
+            if (deadlineAlreadyExpired)
+            {
+                deadline.Cancel();
+            }
+
+            stopping = Task.Run(() => worker.StopAsync(deadline.Token));
+            await callbackEntered.Task.WaitAsync(timeout.Token);
+
+            if (!deadlineAlreadyExpired)
+            {
+                await Assert.That(stopping.IsCompleted).IsFalse();
+                deadline.Cancel();
+            }
+
+            await stopping.WaitAsync(timeout.Token);
+            CancellationToken ordinaryToken = await ordinaryEntered.Task;
+            await Assert.That(ordinaryToken.IsCancellationRequested).IsTrue();
+            await Task.Run(worker.Dispose).WaitAsync(timeout.Token);
+            await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            releaseCallback.Set();
+
+            if (stopping is not null)
+            {
+                await stopping.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+
+            await worker.StopAsync(new CancellationToken(canceled: true));
+            await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    [Test]
     public async Task CheckpointsSurviveOrdinaryRetryAndValidateLimits()
     {
         await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
@@ -400,13 +481,15 @@ public class JobCheckpointIntegrationTests(RedisTestContainer redis)
 
     private static RespireJobQueue<string> Queue(IRespireClient client) => new(client, "checkpoints", Encoding.UTF8.GetBytes);
 
-    private static ServiceProvider Worker(IRespireClient client, Handler handler, string consumer, int deliveryLimit = 5, TimeSpan? idle = null)
+    private static ServiceProvider Worker(IRespireClient client, Handler handler, string consumer, int deliveryLimit = 5,
+        TimeSpan? idle = null, int consumers = 1)
     {
         var services = new ServiceCollection().AddSingleton(client).AddSingleton(handler);
         services.AddRespireJobQueue<Handler, string>("checkpoints", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
             new()
             {
                 ConsumerName = consumer,
+                ConsumerCount = consumers,
                 DeliveryLimit = deliveryLimit,
                 ReadWait = TimeSpan.FromMilliseconds(20),
                 MinimumIdleTime = idle ?? TimeSpan.FromSeconds(30),

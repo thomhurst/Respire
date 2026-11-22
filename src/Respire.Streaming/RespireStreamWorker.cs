@@ -16,6 +16,9 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 {
     private readonly CancellationTokenSource _handlers = new();
     private readonly CancellationTokenSource _yielding = new();
+    private readonly Lock _shutdownGate = new();
+    private Task? _yieldCallbacks;
+    private Task? _handlerCallbacks;
     private readonly string _identity = options.ConsumerName ?? Guid.NewGuid().ToString("N");
     private readonly TaskCompletionSource _firstFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Task? _consumerDrain;
@@ -869,28 +872,49 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     {
         _telemetry.StopPolling();
         // BackgroundService cancels readers immediately. Handlers keep a separate token while draining.
-        var stopping = base.StopAsync(cancellationToken);
+        Task stopping = base.StopAsync(cancellationToken);
+        Task yielding;
 
-        try
+        lock (_shutdownGate)
         {
-            await _yielding.CancelAsync().ConfigureAwait(false);
+            yielding = _yieldCallbacks ??= CancelAsync(_yielding);
         }
-        catch (ObjectDisposedException) { }
-
-        using var abort = cancellationToken.UnsafeRegister(static state =>
-            ((RespireStreamWorker<THandler, TMessage>)state!).CancelHandlers(), this);
 
         try
         {
+            await yielding.WaitAsync(cancellationToken).ConfigureAwait(false);
             await stopping.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            CleanupTasks.ObserveFault(yielding);
         }
         finally
         {
-            // WaitAsync's cancellation callback can finish the wait and remove our registration first.
             if (cancellationToken.IsCancellationRequested)
             {
-                CancelHandlers();
+                // Publish handler cancellation before returning. User callbacks run independently of StopAsync.
+                lock (_shutdownGate)
+                {
+                    if (_handlerCallbacks is null)
+                    {
+                        _handlerCallbacks = CancelAsync(_handlers);
+                        CleanupTasks.ObserveFault(_handlerCallbacks);
+                    }
+                }
             }
+        }
+    }
+
+    private static async Task CancelAsync(CancellationTokenSource source)
+    {
+        try
+        {
+            await source.CancelAsync().ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Stop can be called after disposal.
         }
     }
 
@@ -918,25 +942,41 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
         {
             try
             {
-                var running = Volatile.Read(ref _consumerDrain) ?? ExecuteTask;
+                Task running = Volatile.Read(ref _consumerDrain) ?? ExecuteTask ?? Task.CompletedTask;
+                Task cleanup;
 
-                if (running is not { IsCompleted: false })
+                lock (_shutdownGate)
                 {
-                    _handlers.Dispose();
-                    _yielding.Dispose();
+                    cleanup = Task.WhenAll(running, _yieldCallbacks ?? Task.CompletedTask,
+                        _handlerCallbacks ?? Task.CompletedTask);
+                }
+
+                if (cleanup.IsCompleted)
+                {
+                    DisposeCancellationSources(cleanup);
                 }
                 else
                 {
-                    _ = running.ContinueWith(_ =>
-                    {
-                        _handlers.Dispose();
-                        _yielding.Dispose();
-                    },
-                        CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                    _ = cleanup.ContinueWith(DisposeCancellationSources, CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
                 }
             }
-            // External teardown callbacks may block, so cancel and arrange handler cleanup first.
-            finally { _telemetry.Dispose(); }
+            finally
+            {
+                // External teardown callbacks may block, so cancel and arrange handler cleanup first.
+                _telemetry.Dispose();
+            }
+        }
+    }
+
+    private void DisposeCancellationSources(Task cleanup)
+    {
+        _ = cleanup.Exception;
+
+        lock (_shutdownGate)
+        {
+            _handlers.Dispose();
+            _yielding.Dispose();
         }
     }
 
