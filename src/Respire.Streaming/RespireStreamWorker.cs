@@ -143,8 +143,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
     private static bool IsRetryableStartupError(Exception error)
     {
-        if (error is not (RespireConnectionException or RespireTimeoutException or TimeoutException or SocketException or IOException
-            or RespireServerException { IsTransient: true }))
+        if (error is not (RespireConnectionException or RespireTimeoutException or RespireCircuitOpenException
+            or TimeoutException or SocketException or IOException or RespireServerException { IsTransient: true }))
         {
             return false;
         }

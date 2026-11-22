@@ -80,6 +80,41 @@ public class ErrorMetricsReviewBoundaryTests
     }
 
     [Test]
+    public async Task OperationScopeIsolatesDurationListenerFailure()
+    {
+        using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Command });
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+
+        var statuses = new List<object?>();
+        listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            foreach (KeyValuePair<string, object?> tag in tags)
+            {
+                if (tag.Key == "db.response.status_code")
+                {
+                    statuses.Add(tag.Value);
+                }
+            }
+
+            throw new InvalidOperationException("duration listener failure");
+        });
+        listener.Start();
+
+        var operation = RespireTelemetry.StartOperation("STRLEN", "metric.example", 6379, 0);
+        operation.Complete("STRLEN", "metric.example", 6379, 0,
+            error: new RespireServerException("WRONGTYPE rejected"));
+
+        await Assert.That(statuses.Single()).IsEqualTo("WRONGTYPE");
+    }
+
+    [Test]
     [Arguments(false, 0)]
     [Arguments(false, 3)]
     [Arguments(true, 0)]

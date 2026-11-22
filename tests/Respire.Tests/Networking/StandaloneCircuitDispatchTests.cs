@@ -653,8 +653,16 @@ public partial class StandaloneCircuitDispatchTests
         });
         listener.Start();
 
-        var error = await Failure(() => Send(client, "string", "recovery"));
-        await Assert.That(error).IsSameReferenceAs(listenerError);
+        if (callback == "duration")
+        {
+            await Assert.That(await client.GetStringAsync("recovery")).IsEqualTo("recovery");
+        }
+        else
+        {
+            Exception error = await Failure(() => Send(client, "string", "recovery"));
+            await Assert.That(error).IsSameReferenceAs(listenerError);
+        }
+
         await Assert.That(callbacks).IsEqualTo(1);
         await Assert.That(callbackState).IsEqualTo(EndpointCircuitState.Closed);
         await Assert.That(callbackProbes).IsEqualTo(0);

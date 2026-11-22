@@ -69,7 +69,8 @@ Unicode normalization is not applied, so composed and decomposed names remain di
 ### Startup availability
 
 Consumer-group creation and job-queue rate-limit initialization retry transient connection failures
-and timeouts until Redis answers or the host stops. Transient Redis replies (`LOADING`, `MASTERDOWN`,
+and timeouts until Redis answers or the host stops. Initialization also retries when the client's
+circuit breaker temporarily rejects a command. Transient Redis replies (`LOADING`, `MASTERDOWN`,
 `CLUSTERDOWN`, `TRYAGAIN` and `BUSY`) also retry, including when wrapped by connection setup.
 Delays start at one second and double up to 30 seconds. Each failure logs a warning with
 the exception type and the next delay. Shutdown
