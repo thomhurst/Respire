@@ -39,6 +39,58 @@ public class FilterValidationTests
     }
 
     [Test]
+    public void CapturedNumericListsMatchArrayMembership()
+    {
+        AssertNumericListMembership(1u, uint.MaxValue);
+        AssertNumericListMembership<uint?>(null, uint.MaxValue);
+        AssertNumericListMembership<byte>(1, 2);
+        AssertNumericListMembership<sbyte>(-1, 2);
+        AssertNumericListMembership<short>(-1, 2);
+        AssertNumericListMembership<ushort>(1, 2);
+    }
+
+    private static void AssertNumericListMembership<T>(params T[] values)
+    {
+        var list = new List<T>(values);
+        var translator = new RespireVectorDataFilter<ScalarRecord<T>>(
+            [new(nameof(ScalarRecord<T>.Value), "number", RespireVectorDataFilterKind.Numeric)]);
+        string expected = translator.Translate(r => Enumerable.Contains(values, r.Value)).Value;
+
+        translator.Translate(r => list.Contains(r.Value)).Value.Should().Be(expected, typeof(T).Name);
+        translator.Translate(r => Enumerable.Contains(list, r.Value)).Value.Should().Be(expected, typeof(T).Name);
+    }
+
+    [Test]
+    public void CapturedNullableBooleanListMatchesArrayMembership()
+    {
+        bool?[] values = [null, true];
+        var list = new List<bool?>(values);
+        var translator = new RespireVectorDataFilter<ScalarRecord<bool?>>(
+            [new(nameof(ScalarRecord<bool?>.Value), "boolean", RespireVectorDataFilterKind.Boolean)]);
+        string expected = translator.Translate(r => Enumerable.Contains(values, r.Value)).Value;
+
+        translator.Translate(r => list.Contains(r.Value)).Value.Should().Be(expected);
+        translator.Translate(r => Enumerable.Contains(list, r.Value)).Value.Should().Be(expected);
+    }
+
+    [Test]
+    public void CapturedDerivedListsAreRejected()
+    {
+        List<int> values = new DerivedIntList();
+        var translator = new RespireVectorDataFilter<ScalarRecord<int>>(
+            [new(nameof(ScalarRecord<int>.Value), "number", RespireVectorDataFilterKind.Numeric)]);
+
+        var instance = () => translator.Translate(r => values.Contains(r.Value));
+        var enumerable = () => translator.Translate(r => Enumerable.Contains(values, r.Value));
+        instance.Should().Throw<NotSupportedException>().WithMessage("*supported List<T>*");
+        enumerable.Should().Throw<NotSupportedException>().WithMessage("*supported List<T>*");
+    }
+
+    private sealed record ScalarRecord<T>(T Value);
+
+    private sealed class DerivedIntList : List<int>;
+
+    [Test]
     public void NullableNumericNarrowingAndUnwrappingRemainUnsupported()
     {
         Expression<Func<FilterRecord, bool>>[] filters =

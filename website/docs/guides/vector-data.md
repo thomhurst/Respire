@@ -191,7 +191,8 @@ await foreach (var movie in movies.GetAsync(movie => movie.Title == title, top: 
 | `bool` and `bool?` | `==`, `!=`, direct predicates, `!` |
 | Any predicate | `&&`, `\|\|`, parentheses, `!`, constant `true`/`false` |
 | Mapped `string[]` and `List<string>` | `Contains(value)`, `Any(element => values.Contains(element))` |
-| Inline/captured arrays and `List<T>` | `Contains(mappedScalar)`, including `Enumerable.Contains`, `MemoryExtensions.Contains` and an explicit null comparer |
+| Inline or captured arrays | `Contains(mappedScalar)`, including `Enumerable.Contains` and `MemoryExtensions.Contains` with an optional null comparer |
+| Captured `List<T>` of supported scalar values | `list.Contains(mappedScalar)` and `Enumerable.Contains(list, mappedScalar)`, with an optional null comparer for the latter |
 
 - Missing nullable fields fail relational comparisons and match `!=` against nonnull values.
 - Values can be literals, initialized arrays, `Array.Empty<T>()`, captured locals and field chains (including static fields). Captured nullable `.Value` throws when null.
