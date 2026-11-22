@@ -103,8 +103,8 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     public long AsInteger() => Value.AsInteger();
 
     /// <summary>
-    /// The reply as a double. RESP doubles are returned as-is; other replies are parsed from their
-    /// text using the invariant culture.
+    /// The reply as a double. RESP doubles are returned as-is. Other replies are parsed from their
+    /// text using the invariant culture, with support for Redis's inf, +inf, and -inf spellings.
     /// </summary>
     /// <exception cref="FormatException">The reply is not a RESP double and its text does not parse as one.</exception>
     public double AsDouble()
@@ -117,9 +117,18 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
         }
 
         var text = value.AsString();
-        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : throw new FormatException($"The {value.Type} reply '{text}' is not a valid double.");
+
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+        {
+            return parsed;
+        }
+
+        return text switch
+        {
+            "inf" or "+inf" => double.PositiveInfinity,
+            "-inf" => double.NegativeInfinity,
+            _ => throw new FormatException($"The {value.Type} reply '{text}' is not a valid double."),
+        };
     }
 
     /// <summary>Reads a RESP boolean or integer flag.</summary>
