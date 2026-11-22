@@ -2,8 +2,8 @@ using Respire.Networking;
 
 namespace Respire.Internal;
 
-/// <summary>Arms an upload deadline only while discovering or acquiring its connection.</summary>
-internal sealed class DedicatedAcquisitionCancellation : IDisposable
+/// <summary>Links cancellation to an armable deadline that can exceed the timer limit.</summary>
+internal sealed class DeadlineCancellation : IDisposable
 {
     private readonly Lock _gate = new();
     private readonly CancellationTokenSource _source;
@@ -11,16 +11,21 @@ internal sealed class DedicatedAcquisitionCancellation : IDisposable
     private CommandDeadline _deadline;
     private bool _disposed;
 
-    internal DedicatedAcquisitionCancellation(CancellationToken callerToken)
+    internal DeadlineCancellation(CancellationToken callerToken)
     {
         _source = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
-        _timer = new Timer(static state => ((DedicatedAcquisitionCancellation)state!).Schedule(),
+        _timer = new Timer(static state => ((DeadlineCancellation)state!).Schedule(),
             this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
     internal CancellationToken Token => _source.Token;
 
     internal bool IsCancellationRequested => _source.IsCancellationRequested;
+
+    internal Task CancelAsync()
+    {
+        return _source.CancelAsync();
+    }
 
     internal void Arm(CommandDeadline deadline)
     {
