@@ -60,6 +60,7 @@ public static class AspireRespireExtensions
             if (configureOptions is null)
             {
                 ValidateEndpoints(options, connectionName);
+                options = options.ValidateAndSnapshot();
             }
         }
 
@@ -124,8 +125,10 @@ public static class AspireRespireExtensions
     /// <summary>Parses the connection string, then applies global and named option sections.</summary>
     private static RespireOptions BuildOptions(IConfiguration configuration, string connectionName, string? connectionString)
     {
-        var root = configuration.GetSection("Aspire:Respire");
-        var options = string.IsNullOrWhiteSpace(connectionString) ? new RespireOptions() : RespireOptions.Parse(connectionString);
+        IConfigurationSection root = configuration.GetSection("Aspire:Respire");
+        RespireOptions options = string.IsNullOrWhiteSpace(connectionString)
+            ? new RespireOptions()
+            : RespireOptions.ParseUnvalidated(connectionString);
         options = RespireConfiguration.Apply(root.GetSection("Options"), options);
         return RespireConfiguration.Apply(root.GetSection(connectionName).GetSection("Options"), options);
     }

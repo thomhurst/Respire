@@ -1259,9 +1259,21 @@ public sealed record RespireOptions
     /// <exception cref="RespireConfigurationException">A connection string setting or endpoint is invalid.</exception>
     public static RespireOptions Parse(string connectionString)
     {
+        return ParseConnectionString(connectionString, validateOptions: true);
+    }
+
+    // Configuration layers can supply topology and other settings after parsing.
+    internal static RespireOptions ParseUnvalidated(string connectionString)
+    {
+        return ParseConnectionString(connectionString, validateOptions: false);
+    }
+
+    private static RespireOptions ParseConnectionString(string connectionString, bool validateOptions)
+    {
         try
         {
-            return ParseCore(connectionString);
+            RespireOptions options = ParseCore(connectionString, validateOptions);
+            return validateOptions ? options.ValidateAndSnapshot() : options;
         }
         catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException)
         {
@@ -1269,13 +1281,13 @@ public sealed record RespireOptions
         }
     }
 
-    private static RespireOptions ParseCore(string connectionString)
+    private static RespireOptions ParseCore(string connectionString, bool validateOptions)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         if (connectionString.TrimStart().StartsWith('!'))
         {
-            return ParseStackExchangeConnectionString(connectionString);
+            return ParseStackExchangeConnectionString(connectionString, validateOptions);
         }
 
         var uriMarker = connectionString.IndexOf("://", StringComparison.Ordinal);
@@ -1289,13 +1301,12 @@ public sealed record RespireOptions
 
         if (optionMarker >= 0 && (uriMarker < 0 || optionMarker < uriMarker))
         {
-            return ParseStackExchangeConnectionString(connectionString);
+            return ParseStackExchangeConnectionString(connectionString, validateOptions);
         }
 
         if (uriMarker < 0)
         {
-            return new RespireOptions { Endpoints = { RespireEndpoint.Parse(connectionString) } }
-                .ValidateAndSnapshot();
+            return new RespireOptions { Endpoints = { RespireEndpoint.Parse(connectionString) } };
         }
 
         var uri = new Uri(connectionString, UriKind.Absolute);
@@ -1404,7 +1415,11 @@ public sealed record RespireOptions
             }
         }
 
-        mode.Validate();
+        if (validateOptions)
+        {
+            mode.Validate();
+        }
+
         var defaultPort = mode.ServiceName is null ? 6379 : 26379;
 
         // IdnHost preserves the IPv6 scope ID and removes the authority brackets.
@@ -1435,7 +1450,7 @@ public sealed record RespireOptions
             UseCluster = mode.UseCluster,
             SentinelPrimaryName = mode.ServiceName,
             AllowAdmin = allowAdmin,
-        }.ValidateAndSnapshot();
+        };
     }
 
     private sealed class ConnectionStringMode
@@ -1591,7 +1606,7 @@ public sealed record RespireOptions
         return protocols;
     }
 
-    private static RespireOptions ParseStackExchangeConnectionString(string connectionString)
+    private static RespireOptions ParseStackExchangeConnectionString(string connectionString, bool validateOptions)
     {
         List<string> endpointTexts = [];
         string? username = null;
@@ -1779,9 +1794,12 @@ public sealed record RespireOptions
                 nameof(connectionString));
         }
 
-        mode.Validate();
+        if (validateOptions)
+        {
+            mode.Validate();
+        }
 
-        if (endpointTexts.Count > 1 && !mode.UseCluster && mode.ServiceName is null)
+        if (validateOptions && endpointTexts.Count > 1 && !mode.UseCluster && mode.ServiceName is null)
         {
             throw new ArgumentException(
                 "Connection strings with multiple endpoints require cluster=true for Cluster seeds " +
@@ -1794,7 +1812,7 @@ public sealed record RespireOptions
         var defaultPort = mode.ServiceName is not null ? 26379 : effectiveUseTls ? 6380 : 6379;
         var endpoints = endpointTexts.Select(endpoint => RespireEndpoint.Parse(endpoint, defaultPort)).ToList();
 
-        if (maintenance == RespireMaintenanceNotificationMode.Enabled && protocol == RespireProtocol.Resp2)
+        if (validateOptions && maintenance == RespireMaintenanceNotificationMode.Enabled && protocol == RespireProtocol.Resp2)
         {
             throw new RespireConfigurationException("Option 'maintNotifications=Enabled' requires RESP3; protocol=2 is incompatible.");
         }
@@ -1831,7 +1849,7 @@ public sealed record RespireOptions
             MaintenanceRelaxedTimeout = maintenanceTimeout,
             MaintenanceWindowTimeout = maintenanceWindow,
             IgnoredConnectionStringOptions = ignored.ToArray(),
-        }.ValidateAndSnapshot();
+        };
     }
 
     private static int ParsePositiveIntegerOption(string name, string value)

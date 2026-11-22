@@ -351,6 +351,77 @@ public class RegistrationTests
         await Assert.That(client).IsSameReferenceAs(host.Services.GetRequiredService<RespireClient>());
     }
 
+    [Test]
+    public async Task NamedOptionsCanEnableClusterForConnectionStringSeeds()
+    {
+        HostApplicationBuilder builder = Builder(new()
+        {
+            ["ConnectionStrings:cache"] = "seed-a:6379,seed-b:6380",
+            ["Aspire:Respire:Options:UseCluster"] = "false",
+            ["Aspire:Respire:cache:Options:UseCluster"] = "true",
+        });
+
+        builder.AddRespireClient("cache");
+        using IHost host = builder.Build();
+        RespireClient client = host.Services.GetRequiredService<RespireClient>();
+
+        await Assert.That(client.Core.Options.UseCluster).IsTrue();
+        await Assert.That(client.Core.Options.Endpoints.Count).IsEqualTo(2);
+        await Assert.That(client.Core.Options.Endpoints[0]).IsEqualTo(new RespireEndpoint("seed-a", 6379));
+        await Assert.That(client.Core.Options.Endpoints[1]).IsEqualTo(new RespireEndpoint("seed-b", 6380));
+        await Assert.That(client.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task DeferredKeyedClientUsesGlobalClusterOptionsAtResolution()
+    {
+        HostApplicationBuilder builder = Builder(new()
+        {
+            ["ConnectionStrings:cache"] = "seed-a:6379,seed-b:6380",
+        });
+        builder.AddKeyedRespireClient("cache", settings => settings.DeferConfiguration = true);
+        builder.Configuration["Aspire:Respire:Options:UseCluster"] = "true";
+
+        using IHost host = builder.Build();
+        RespireClient client = host.Services.GetRequiredKeyedService<RespireClient>("cache");
+
+        await Assert.That(client.Core.Options.UseCluster).IsTrue();
+        await Assert.That(client.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task OptionsCallbackCanEnableClusterForConnectionStringSeeds()
+    {
+        HostApplicationBuilder builder = Builder(new()
+        {
+            ["ConnectionStrings:cache"] = "seed-a:6379,seed-b:6380",
+        });
+        builder.AddRespireClient("cache", configureOptions: (_, options) => options with { UseCluster = true });
+
+        using IHost host = builder.Build();
+        RespireClient client = host.Services.GetRequiredService<RespireClient>();
+
+        await Assert.That(client.Core.Options.UseCluster).IsTrue();
+        await Assert.That(client.IsConnected).IsFalse();
+    }
+
+    [Test]
+    [Arguments("seed-a:6379,seed-b:6380")]
+    [Arguments("seed-a:6379,seed-b:6380,cluster=true")]
+    public async Task RegistrationRejectsMultipleStandaloneEndpointsAfterBinding(string connectionString)
+    {
+        HostApplicationBuilder builder = Builder(new()
+        {
+            ["ConnectionStrings:cache"] = connectionString,
+            ["Aspire:Respire:cache:Options:UseCluster"] = "false",
+        });
+
+        RespireConfigurationException? exception = await Assert.That(() => builder.AddRespireClient("cache"))
+            .Throws<RespireConfigurationException>();
+
+        await Assert.That(exception!.Message).Contains("UseCluster or SentinelPrimaryName");
+    }
+
     /// <summary>Ensures the settings callback can replace an Aspire-injected connection string.</summary>
     [Test]
     public async Task SettingsCallbackOverridesInjectedConnectionString()
