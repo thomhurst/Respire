@@ -39,8 +39,10 @@ public sealed partial class RespireClient : IRespireHealthProbe
     }
 
     private static async Task<RespireHealthProbeResult> ProbeHealthConnectionAsync(
-        RespireEndpoint endpoint, RespireConnection? connection, SemaphoreSlim capacity, CancellationToken cancellationToken)
+        RespireEndpoint fallbackEndpoint, RespireConnection? connection, SemaphoreSlim capacity,
+        CancellationToken cancellationToken)
     {
+        RespireEndpoint endpoint = connection is null ? fallbackEndpoint : new(connection.Host, connection.Port);
         var connected = connection?.IsAcceptingCommands == true;
         var entered = false;
 
