@@ -5,6 +5,7 @@
     <Description>Hosted Redis stream consumers with bounded concurrency and scoped handlers.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Respire.Streaming.Dashboard" />
     <PackageReference Include="Cronos" />
     <ProjectReference Include="../Respire/Respire.csproj" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
