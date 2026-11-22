@@ -455,14 +455,49 @@ internal sealed class DashboardState
             return -2;
         }
 
-        var stream = _streams[index];
+        RespireDashboardStream stream = _streams[index];
+        RespireValue[] arguments = [stream.Group, id, retry ? "retry" : "delete", stream.IsJobQueue ? "1" : "0"];
 
         try
         {
-            return await _client.Scripts.ExecuteIntegerAsync(DashboardScripts.Mutate,
-                [stream.Stream, dead], [stream.Group, id, retry ? "retry" : "delete", stream.IsJobQueue ? "1" : "0"],
+            // Redis checks declared keys against ACLs. Ask for staging keys only for a grouped
+            // dead letter. The second execution revalidates the entry before changing it.
+            long result = await _client.Scripts.ExecuteIntegerAsync(DashboardScripts.Mutate, [stream.Stream, dead],
+                arguments, cancellationToken).ConfigureAwait(false);
+
+            if (result != DashboardScripts.GroupStagingRequired)
+            {
+                return result;
+            }
+
+            string[]? keys = GroupedRetryKeys(stream.Stream, dead);
+
+            if (keys is null)
+            {
+                return -1;
+            }
+
+            return await _client.Scripts.ExecuteIntegerAsync(DashboardScripts.Mutate, [.. keys], arguments,
                 cancellationToken).ConfigureAwait(false);
         }
-        finally { Interlocked.Increment(ref _version); }
+        finally
+        {
+            Interlocked.Increment(ref _version);
+        }
+    }
+
+    private string[]? GroupedRetryKeys(string stream, string dead)
+    {
+        string[] keys = [stream, dead, .. JobGroupScheduling.StagingKeys(stream)];
+        byte[][] resolved = keys.Select(key => _client.ResolveKey(key).ToBytes()).ToArray();
+        int slot = ClusterHash.GetSlot(resolved[0]);
+
+        if (resolved.Any(key => ClusterHash.GetSlot(key) != slot)
+            || resolved.Select(Convert.ToBase64String).Distinct(StringComparer.Ordinal).Count() != keys.Length)
+        {
+            return null;
+        }
+
+        return keys;
     }
 }

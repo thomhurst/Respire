@@ -4,7 +4,12 @@ namespace Respire.Streaming;
 
 internal static class JobQueueScheduling
 {
-    internal static string[] Keys(string stream) => [stream, stream + ":scheduled", stream + ":due"];
+    internal static string[] Keys(string stream) => [stream, ScheduledKey(stream), stream + ":due"];
+
+    internal static string ScheduledKey(string stream)
+    {
+        return stream + ":scheduled";
+    }
 
     internal static void ValidateKeys(IRespireClient client, string[] keys)
     {
@@ -29,11 +34,7 @@ internal static class JobQueueScheduling
         }
     }
 
-    // Staging paths check types and all cleanup permissions before their first write.
-    // Duplicate Extend hits only renew their record and return before staging permissions.
-    // Redis scripts are atomic, but errors do not undo writes: append/index failures
-    // roll back only the new staged entry, leaving the original pending job intact.
-    internal const string Helpers = JobDeduplication.Lifecycle + """
+    internal const string CommandHelpers = """
         local function now()
             local time = redis.call('TIME')
             return tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
@@ -52,30 +53,30 @@ internal static class JobQueueScheduling
             return fallback
         end
 
-        """ + JobGroupScheduling.StageHelpers + """
+        """;
+
+    // Staging paths check types and all cleanup permissions before their first write.
+    // Duplicate Extend hits only renew their record and return before staging permissions.
+    // Redis scripts are atomic, but errors do not undo writes: append/index failures
+    // roll back only the new staged entry, leaving the original pending job intact.
+    internal const string Helpers = JobDeduplication.Lifecycle + CommandHelpers + JobGroupScheduling.StageHelpers + """
         local function unstage(fields, due, id)
             local prefix = groupPrefix(fields)
             if prefix then
-                removeGrouped(prefix, prefix .. string.format('%016.0f', due) .. '|' .. id)
-            else redis.call('ZREM', KEYS[3], id) end
-            redis.call('XDEL', KEYS[2], id)
+                unstageGrouped(KEYS[2], prefix, due, id)
+            else
+                redis.call('ZREM', KEYS[3], id)
+                redis.call('XDEL', KEYS[2], id)
+            end
         end
         local function stage(fields, due)
             local prefix = groupPrefix(fields)
-            if prefix then groupPermissions() end
-            local id = redis.call('XADD', KEYS[2], '*', unpack(fields))
             if prefix then
-                local member = prefix .. string.format('%016.0f', due) .. '|' .. id
-                local indexed = redis.pcall('ZADD', grouped, 0, member)
-                if not (type(indexed) == 'table' and indexed.err) then
-                    if not redis.call('ZSCORE', parked, prefix) then indexed = redis.pcall('ZADD', order, 0, prefix) end
-                end
-                if type(indexed) == 'table' and indexed.err then
-                    unstage(fields, due, id)
-                    return indexed
-                end
-                return id
+                controlPermissions()
+                groupStagingPermissions()
+                return stageGrouped(KEYS[2], fields, prefix, due)
             end
+            local id = redis.call('XADD', KEYS[2], '*', unpack(fields))
             local indexed = redis.pcall('ZADD', KEYS[3], due, id)
             if type(indexed) == 'table' and indexed.err then
                 redis.call('XDEL', KEYS[2], id)

@@ -4,25 +4,38 @@ namespace Respire.Streaming;
 // lexicographic member prefixes, never as Redis keys (including in Cluster).
 internal static class JobGroupScheduling
 {
+    private const string OrderSuffix = ":group-order";
+    private const string JobsSuffix = ":group-jobs";
+    private const string ParkedSuffix = ":group-parked";
+
     internal static string[] Keys(string stream) =>
-        [.. JobQueueScheduling.Keys(stream), stream + ":group-order", stream + ":group-jobs", stream + ":group-cursor",
-            stream + ":group-policy", stream + ":group-leases", stream + ":group-owners", stream + ":group-parked"];
+        [.. JobQueueScheduling.Keys(stream), stream + OrderSuffix, stream + JobsSuffix, stream + ":group-cursor",
+            stream + ":group-policy", stream + ":group-leases", stream + ":group-owners", stream + ParkedSuffix];
+
+    internal static string[] StagingKeys(string stream)
+    {
+        return [JobQueueScheduling.ScheduledKey(stream), stream + OrderSuffix, stream + JobsSuffix, stream + ParkedSuffix];
+    }
 
     internal const string StageHelpers = """
         local order, grouped, cursor = KEYS[groupOffset], KEYS[groupOffset+1], KEYS[groupOffset+2]
+
+        """ + JobGroupControls.Helpers + GroupedStaging;
+
+    // The caller binds order, grouped and parked to its declared keys. This is also used by
+    // dashboard retries, which stage jobs without changing group policy or acquiring leases.
+    internal const string GroupedStaging = """
         local function groupPrefix(fields)
             local name = field(fields, '_respire.job.group', '')
             if name == '' then return nil end
             return (string.gsub(name, '.', function(c) return string.format('%02x', string.byte(c)) end)) .. '|'
         end
-
-        """ + JobGroupControls.Helpers + """
-        local function groupPermissions()
-            controlPermissions()
+        local function groupStagingPermissions()
             checktype(order, 'zset')
             checktype(grouped, 'zset')
+            checktype(parked, 'zset')
             permit('ZRANGEBYLEX', grouped, '-', '+', 'LIMIT', 0, 1)
-            permit('ZSCORE', order, 'group')
+            permit('ZSCORE', parked, 'group')
             permit('ZADD', order, 0, 'group')
             permit('ZADD', grouped, 0, 'job')
             permit('ZREM', order, 'group')
@@ -33,6 +46,25 @@ internal static class JobGroupScheduling
             if #redis.call('ZRANGEBYLEX', grouped, '[' .. prefix, '[' .. prefix .. string.char(255), 'LIMIT', 0, 1) == 0 then
                 redis.call('ZREM', order, prefix)
             end
+        end
+        local function groupedMember(prefix, due, id)
+            return prefix .. string.format('%016.0f', due) .. '|' .. id
+        end
+        local function unstageGrouped(scheduled, prefix, due, id)
+            removeGrouped(prefix, groupedMember(prefix, due, id))
+            redis.call('XDEL', scheduled, id)
+        end
+        local function stageGrouped(scheduled, fields, prefix, due)
+            local id = redis.call('XADD', scheduled, '*', unpack(fields))
+            local indexed = redis.pcall('ZADD', grouped, 0, groupedMember(prefix, due, id))
+            if not (type(indexed) == 'table' and indexed.err) and not redis.call('ZSCORE', parked, prefix) then
+                indexed = redis.pcall('ZADD', order, 0, prefix)
+            end
+            if type(indexed) == 'table' and indexed.err then
+                unstageGrouped(scheduled, prefix, due, id)
+                return indexed
+            end
+            return id
         end
 
         """;

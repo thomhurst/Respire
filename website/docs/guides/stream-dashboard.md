@@ -252,11 +252,10 @@ generic HTTP 503 message without exposing server details.
 
 ## Retry and delete
 
-**Retry entry** atomically appends the original fields to the source stream with a new entry
-ID and removes that dead letter. It validates the worker envelope and configured group,
-checks the target group exists, and checks write permissions before appending. Concurrent
-retries of the same dead letter append at most once. Repeating a request after the original
-action committed finds no entry; refresh the page to see the current state.
+**Retry entry** atomically requeues the entry and removes the dead letter. It validates the
+worker envelope and configured group, checks that the target consumer group exists, and
+checks write permissions before requeuing. Concurrent retries of the same dead letter
+requeue it at most once. Refresh the page after a retry to see the current state.
 
 For plain streams, retry removes only the five leading dead-letter metadata fields and
 preserves all original field names and values, including binary data and duplicate names.
@@ -264,9 +263,12 @@ For job queues, retry detaches batch members from their original batch. The retr
 independently, even after that batch's state has been removed; it does not reopen the batch,
 change its counts, or publish its callbacks again. It also resets `_respire.job.attempts` to zero and clears
 `_respire.job.expires`. This explicitly gives the job fresh delivery attempts without its old
-expiry. The job ID, payload, priority, and trace fields are preserved. Retry enters the ready
-stream immediately, bypassing enqueue deduplication and delayed scheduling. Handlers must
-remain idempotent. Every consumer group on the source can receive the new entry.
+expiry. The job ID, payload, priority, application group, and trace fields are preserved.
+Plain stream entries and ungrouped jobs enter the source stream immediately. A grouped job
+is due immediately in the scheduling-enabled worker's group queue. It enters the source
+stream when the group's pause, concurrency, and rate policies allow admission. Retries
+bypass enqueue deduplication. Handlers must remain idempotent. Every consumer group on the
+source can receive the new entry once it reaches the source stream.
 
 Retrying a failed flow member creates an independent job with the same job ID and payload.
 The dashboard removes `_respire.job.flow` and `_respire.job.node`, so the retry can complete
@@ -305,7 +307,12 @@ stream key plus `:control` (with the same client key prefix).
 Job queue history additionally needs script execution, `TIME`, and `HGET` on the configured
 stream key plus `:metrics`.
 Actions additionally need script execution (`EVAL`/`EVALSHA` and script loading), `XDEL` on
-the dead-letter stream, and, for retry, `XADD` and `XDEL` on the source stream. Source `XDEL`
-allows rollback if removal fails. A denied write leaves the dead letter available for a
-later attempt. A Redis failure returns HTTP 503; invalid/stale entries return 409/404.
+the dead-letter stream. Retrying a plain stream entry or an ungrouped job needs `XADD` and
+`XDEL` on the source stream. Retrying a grouped job needs `TIME`, `TYPE` on the queue's
+staging keys, `XADD` and `XDEL` on `:scheduled`, `ZADD` and `ZREM` on `:group-order` and
+`:group-jobs`, `ZRANGEBYLEX` on `:group-jobs`, and `ZSCORE` on `:group-parked`. These
+suffixes are appended to the configured stream key, and all keys used for a retry must
+resolve to distinct keys in the same Cluster slot. A denied write leaves the dead letter
+available for a later attempt. A Redis failure returns HTTP 503 and invalid or stale entries
+return 409 or 404.
 The dashboard never exposes raw Redis error messages in the page.

@@ -234,10 +234,10 @@ public static class RespireDashboardExtensions
                 context.Response.StatusCode = StatusCodes.Status303SeeOther;
                 context.Response.Headers.Location = returnPath.TrimEnd('/') + "/";
             }
-            // Group-control preflight uses Lua error(), whose outer code is ERR.
+            // Scheduling preflight uses Lua error(), whose outer code is ERR.
             catch (RespireServerException exception) when (exception.Code == "NOPERM"
-                || (groupAction && exception.Message.Contains(
-                    "NOPERM job scheduling requires Redis 7.0 and queue command permissions", StringComparison.Ordinal)))
+                || exception.Message.Contains(
+                    "NOPERM job scheduling requires Redis 7.0 and queue command permissions", StringComparison.Ordinal))
             {
                 await WriteErrorAsync(context, returnPath, 403,
                     "Redis permissions do not allow this action. Ask an administrator to update the dashboard Redis user's permissions.").ConfigureAwait(false);

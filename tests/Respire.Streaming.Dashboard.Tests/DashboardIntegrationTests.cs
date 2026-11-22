@@ -94,6 +94,111 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
+    [Arguments(null, false)]
+    [Arguments("group", false)]
+    [Arguments("tenant:{foreign}:é/東京", true)]
+    public async Task JobRetryGetsFreshDeliveryThroughGroupAdmission(string? applicationGroup, bool paused)
+    {
+        await using RespireClient root = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
+        IRespireClient client = root.WithKeyPrefix("tenant:");
+        const string QueueName = "dashboard-group-retry";
+        var queue = new RespireJobQueue<string>(client, QueueName, System.Text.Encoding.UTF8.GetBytes);
+        var handler = new RejectFirstJob();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(client);
+        services.AddSingleton(handler);
+        services.AddRespireJobQueue<RejectFirstJob, string>(QueueName, System.Text.Encoding.UTF8.GetBytes,
+            System.Text.Encoding.UTF8.GetString, new()
+            {
+                DeliveryLimit = 1,
+                ReadWait = TimeSpan.FromMilliseconds(50),
+                MinimumIdleTime = TimeSpan.FromMilliseconds(250),
+                RecoveryPollInterval = TimeSpan.FromMilliseconds(100),
+            },
+            new() { SchedulingPollInterval = TimeSpan.FromMilliseconds(20) });
+        await queue.EnqueueScheduledAsync("job", "original", new() { Group = applicationGroup });
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        IHostedService worker = provider.GetRequiredService<IHostedService>();
+        await worker.StartAsync(deadline.Token);
+
+        try
+        {
+            await using IAsyncEnumerator<RespireJobEvent> events = queue.ReadEventsAsync(cancellationToken: deadline.Token).GetAsyncEnumerator();
+            await Assert.That(await events.MoveNextAsync()).IsTrue();
+            RespireJobEvent original = events.Current;
+            await Assert.That(original.Kind).IsEqualTo("dead-letter");
+            await Assert.That(original.Attempt).IsEqualTo(1);
+            await Assert.That(handler.Calls).IsEqualTo(1);
+            RespireStreamEntry dead = (await client.Streams.RangeAsync(queue.DeadLetterStreamKey)).Single();
+
+            if (paused)
+            {
+                await queue.PauseGroupAsync(applicationGroup!);
+            }
+
+            var options = new RespireDashboardOptions();
+            options.Streams.Add(new()
+            {
+                Name = "jobs",
+                Stream = queue.StreamKey,
+                Group = RespireJobQueue<string>.ConsumerGroup,
+                DeadLetterStream = queue.DeadLetterStreamKey,
+                IsJobQueue = true,
+            });
+            var state = new DashboardState(client, options);
+            await Assert.That(await state.MutateAsync(0, dead.Id.ToString(), true, deadline.Token)).IsEqualTo(1);
+            await Assert.That(await state.MutateAsync(0, dead.Id.ToString(), true, deadline.Token)).IsEqualTo(0);
+
+            if (paused)
+            {
+                RespireJobGroupInfo group = await RespireJobGroups.GetAsync(client, queue.StreamKey, applicationGroup!);
+                await Assert.That(group.QueuedCount).IsEqualTo(1);
+                await Assert.That(group.ReadyCount).IsEqualTo(1);
+                await Assert.That(handler.Calls).IsEqualTo(1);
+                await queue.ResumeGroupAsync(applicationGroup!);
+            }
+
+            await Assert.That(await events.MoveNextAsync()).IsTrue();
+            RespireJobEvent retried = events.Current;
+            await Assert.That(retried.Kind).IsEqualTo("completed");
+            await Assert.That(retried.Attempt).IsEqualTo(1);
+            await Assert.That(retried.EntryId).IsNotEqualTo(original.EntryId);
+            await Assert.That(handler.Calls).IsEqualTo(2);
+            RespireJob<string> job = handler.LastJob!;
+            await Assert.That(job.Id).IsEqualTo("job");
+            await Assert.That(job.Payload).IsEqualTo("original");
+            await Assert.That(job.Group).IsEqualTo(applicationGroup);
+            await Assert.That(await client.Streams.CountAsync(queue.DeadLetterStreamKey)).IsEqualTo(0);
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
+        }
+    }
+
+    public sealed class RejectFirstJob : IRespireStreamHandler<RespireJob<string>>
+    {
+        private int _calls;
+
+        internal int Calls => Volatile.Read(ref _calls);
+
+        internal RespireJob<string>? LastJob
+        {
+            get; private set;
+        }
+
+        public ValueTask<RespireStreamWorkerResult> HandleAsync(RespireJob<string> job, CancellationToken cancellationToken)
+        {
+            LastJob = job;
+            return ValueTask.FromResult(Interlocked.Increment(ref _calls) == 1
+                ? RespireStreamWorkerResult.DeadLetter : RespireStreamWorkerResult.Ack);
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]
@@ -220,24 +325,33 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
-    [Arguments("xadd")]
-    [Arguments("xdel")]
-    public async Task RetryPermissionFailureLeavesBothStreamsUntouched(string denied)
+    [Arguments("xadd", false)]
+    [Arguments("xdel", false)]
+    [Arguments("zadd", true)]
+    [Arguments("zrem", true)]
+    public async Task RetryPermissionFailureKeepsDeadLetterWithoutRepublishing(string denied, bool grouped)
     {
-        await using var admin = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString) with { AllowAdmin = true });
+        RespireOptions connection = RespireOptions.Parse(redis.IsolatedConnectionString);
+        await using RespireClient admin = await RespireClient.ConnectAsync(connection with { AllowAdmin = true });
         await admin.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
-        var id = await AddDead(admin);
-        var username = "dashboard-" + Guid.NewGuid().ToString("N");
+        RespireStreamId id = grouped
+            ? await admin.Streams.AddAsync("{dash}:dead", ("_respire.source_id", "1-0"), ("_respire.group", "g"),
+                ("_respire.attempt", "1"), ("_respire.reason", "explicit"), ("_respire.exception_type", ""),
+                ("_respire.job.group", "tenant"), ("_respire.job.payload", "test"))
+            : await AddDead(admin);
+        string username = "dashboard-" + Guid.NewGuid().ToString("N");
         await admin.Server.AclSetUserAsync(username, ["on", ">dashboard-test-password", "~*", "+@all", "-" + denied]);
 
         try
         {
-            await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(redis.IsolatedConnectionString)
-                with
-            { Username = username, Password = "dashboard-test-password" });
-            var state = new DashboardState(client, DashboardSecurityTests.Options());
+            await using RespireClient client = await RespireClient.ConnectAsync(connection with
+            {
+                Username = username,
+                Password = "dashboard-test-password",
+            });
+            var state = new DashboardState(client, DashboardSecurityTests.Options(grouped));
             await Assert.That(async () => await state.MutateAsync(0, id.ToString(), true, default)).Throws<RespireServerException>();
-            await using var app = await DashboardSecurityTests.CreateApplication(client);
+            await using var app = await DashboardSecurityTests.CreateApplication(client, jobs: grouped);
             using var http = app.GetTestClient();
             http.DefaultRequestHeaders.Add("X-Test-Role", "operator");
             using var page = await http.GetAsync("/workers/");
@@ -253,9 +367,49 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
             await Assert.That(response.StatusCode).IsEqualTo(System.Net.HttpStatusCode.Forbidden);
             await Assert.That(await response.Content.ReadAsStringAsync()).Contains("Ask an administrator");
             await Assert.That(await admin.Streams.CountAsync("{dash}:source")).IsEqualTo(0);
+            await Assert.That(await admin.Streams.CountAsync("{dash}:source:scheduled")).IsEqualTo(0);
+
+            if (grouped)
+            {
+                RespireJobGroupInfo group = await RespireJobGroups.GetAsync(admin, "{dash}:source", "tenant");
+                await Assert.That(group.QueuedCount).IsEqualTo(0);
+            }
+
             await Assert.That(await admin.Streams.CountAsync("{dash}:dead")).IsEqualTo(1);
         }
-        finally { using var removed = await admin.ExecuteAsync("ACL DELUSER", [username]); }
+        finally
+        {
+            using RespireResult removed = await admin.ExecuteAsync("ACL DELUSER", [username]);
+        }
+    }
+
+    [Test]
+    public async Task UngroupedJobRetryNeedsAccessOnlyToSourceAndDeadLetter()
+    {
+        RespireOptions connection = RespireOptions.Parse(redis.IsolatedConnectionString);
+        await using RespireClient admin = await RespireClient.ConnectAsync(connection with { AllowAdmin = true });
+        await admin.Streams.CreateGroupAsync("{dash}:source", "g", RespireStreamId.Beginning);
+        RespireStreamId id = await AddDead(admin);
+        string username = "dashboard-" + Guid.NewGuid().ToString("N");
+        await admin.Server.AclSetUserAsync(username,
+            ["on", ">dashboard-test-password", "~{dash}:source", "~{dash}:dead", "+@all"]);
+
+        try
+        {
+            await using RespireClient client = await RespireClient.ConnectAsync(connection with
+            {
+                Username = username,
+                Password = "dashboard-test-password",
+            });
+            var state = new DashboardState(client, DashboardSecurityTests.Options(jobs: true));
+            await Assert.That(await state.MutateAsync(0, id.ToString(), true, default)).IsEqualTo(1);
+            await Assert.That(await admin.Streams.CountAsync("{dash}:source")).IsEqualTo(1);
+            await Assert.That(await admin.Streams.CountAsync("{dash}:dead")).IsEqualTo(0);
+        }
+        finally
+        {
+            using RespireResult removed = await admin.ExecuteAsync("ACL DELUSER", [username]);
+        }
     }
 
     [Test]

@@ -2,6 +2,8 @@ namespace Respire.Streaming.Dashboard;
 
 internal static class DashboardScripts
 {
+    internal const int GroupStagingRequired = -3;
+
     // Only project identity and policy: payloads never leave Redis for this inspection.
     internal static readonly RespireScript Deduplication = RespireScript.Create("""
         local result = {}
@@ -27,7 +29,10 @@ internal static class DashboardScripts
 
     // Keep the five positional metadata pairs aligned with the worker. Never decode/re-encode
     // original names or values in .NET: Redis Lua strings preserve arbitrary binary fields.
-    internal static readonly RespireScript Mutate = RespireScript.Create("""
+    internal static readonly RespireScript Mutate = RespireScript.Create(JobQueueScheduling.CommandHelpers + """
+        local scheduled, order, grouped, parked = KEYS[3], KEYS[4], KEYS[5], KEYS[6]
+
+        """ + JobGroupScheduling.GroupedStaging + $$"""
         if KEYS[1] == KEYS[2] then return -1 end
         local entries = redis.call('XRANGE', KEYS[2], ARGV[2], ARGV[2], 'COUNT', 1)
         if #entries == 0 then return 0 end
@@ -60,15 +65,31 @@ internal static class DashboardScripts
                 table.insert(fields, value)
             end
         end
-        if not redis.acl_check_cmd('XADD', KEYS[1], '*', unpack(fields))
-            or not redis.acl_check_cmd('XDEL', KEYS[1], '0-0')
-            or not redis.acl_check_cmd('XDEL', KEYS[2], ARGV[2]) then
+        local prefix = ARGV[4] == '1' and groupPrefix(fields)
+        if prefix and not scheduled then return {{GroupStagingRequired}} end
+        if not redis.acl_check_cmd('XDEL', KEYS[2], ARGV[2]) then
             return redis.error_reply('NOPERM dashboard retry is not permitted')
         end
-        local added = redis.call('XADD', KEYS[1], '*', unpack(fields))
+        local added, due
+        if prefix then
+            checktype(scheduled, 'stream')
+            permit('XADD', scheduled, '*', 'field', 'value')
+            permit('XDEL', scheduled, '0-0')
+            groupStagingPermissions()
+            due = now()
+            added = stageGrouped(scheduled, fields, prefix, due)
+            if type(added) == 'table' then return added end
+        else
+            if not redis.acl_check_cmd('XADD', KEYS[1], '*', unpack(fields))
+                or not redis.acl_check_cmd('XDEL', KEYS[1], '0-0') then
+                return redis.error_reply('NOPERM dashboard retry is not permitted')
+            end
+            added = redis.call('XADD', KEYS[1], '*', unpack(fields))
+        end
         local removed = redis.pcall('XDEL', KEYS[2], ARGV[2])
         if type(removed) == 'table' and removed.err then
-            redis.call('XDEL', KEYS[1], added)
+            if prefix then unstageGrouped(scheduled, prefix, due, added)
+            else redis.call('XDEL', KEYS[1], added) end
             return removed
         end
         return 1
