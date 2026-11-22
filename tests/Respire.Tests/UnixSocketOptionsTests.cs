@@ -54,6 +54,18 @@ public class UnixSocketOptionsTests
     }
 
     [Test]
+    [Arguments("!/tmp/redis=blue.sock", 0)]
+    [Arguments("!/tmp/redis=blue.sock,defaultDatabase=2", 2)]
+    [Arguments("defaultDatabase=2, !/tmp/redis=blue.sock", 2)]
+    public async Task StackExchangeSyntaxPreservesEqualsInSocketPathAsync(string value, int database)
+    {
+        var options = RespireOptions.Parse(value);
+
+        await Assert.That(options.Endpoints.Single()).IsEqualTo(RespireEndpoint.UnixSocket("/tmp/redis=blue.sock"));
+        await Assert.That(options.Database).IsEqualTo(database);
+    }
+
+    [Test]
     public async Task SocketIdentityIsCaseSensitiveWhileDnsIdentityIsNot()
     {
         var comparer = RespireEndpointComparer.Instance;
