@@ -7402,13 +7402,15 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     /// fenced by Redis client ID before a retry can complete. Plain EVAL (no EVALSHA
     /// probing: the callers are rare correction paths) and no caller token or command timeout —
     /// a correction, once owed, must not be abandonable.
+    /// The optional observer receives the integer reply when a temporary redirect uses a single connection.
     /// </summary>
     internal async ValueTask ExecuteOnAllConnectionsAsync(
         RespireScript script,
         RespireKey[] keys,
         RespireValue[] args,
         TrackedConnectionIdentity connectionIdentity = default,
-        RespireTelemetry.ErrorObservation observation = default)
+        RespireTelemetry.ErrorObservation observation = default,
+        Action<long>? onRedirectedIntegerReply = null)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
@@ -7448,6 +7450,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                         throw ResponseReader.ServerError(in reply, "EVAL");
                     }
 
+                    onRedirectedIntegerReply?.Invoke(reply.AsInteger());
                     return;
                 }
                 // A convergence retry can also carry an identity whose fence was already
@@ -7465,6 +7468,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     {
                         throw ResponseReader.ServerError(in reply, "EVAL");
                     }
+
+                    onRedirectedIntegerReply?.Invoke(reply.AsInteger());
                 }
                 finally { lease.Pool.Return(control); }
 

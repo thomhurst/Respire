@@ -383,5 +383,6 @@ EVALSHA EVAL SET UNLINK HSET HMGET PTTL PEXPIRE PERSIST EXISTS
 | Feature | Additional commands |
 | --- | --- |
 | Timeout- or cancellation-safe operations | `CLIENT ID`, `CLIENT KILL` |
+| Correct an extended sliding TTL after a delayed read crosses the absolute deadline | `PEXPIRETIME` (Redis 7+) |
 | HybridCache coherence | `HEXISTS`, `CLIENT TRACKING`, `CLIENT CACHING` (OPTIN), plus RESP3 handshake commands |
 | Cross-instance tag invalidation | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH` |

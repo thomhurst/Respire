@@ -548,6 +548,83 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             RespireDistributedCache.GetAndRefreshScript, [key], ["0", staleNowTicks])).Dispose();
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DelayedGet_CrossingAbsoluteDeadline_ExpiresOnlyItsOwnReArm(bool replace, bool retryCorrection)
+    {
+        const string Key = "delayed-get";
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(retryCorrection ? 5 : 3);
+        var sliding = TimeSpan.FromSeconds(30);
+        await Cache.SetAsync(Key, [1], new DistributedCacheEntryOptions
+        {
+            AbsoluteExpiration = deadline,
+            SlidingExpiration = sliding,
+        });
+
+        var delayedClient = new ScriptInterceptingClient(Client, async (call, send) =>
+        {
+            if (call > (retryCorrection ? 2 : 1))
+            {
+                return await send();
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(retryCorrection && call == 1 ? 2 : 1));
+            long previousTtl = call == 2 ? await PttlAsync(Key) : 0;
+            var reply = await send();
+
+            try
+            {
+                var untilDeadline = deadline - DateTimeOffset.UtcNow;
+                long ttl = await PttlAsync(Key);
+                await Assert.That(ttl).IsGreaterThan((long)untilDeadline.TotalMilliseconds + 500);
+
+                if (retryCorrection && call == 1)
+                {
+                    return reply;
+                }
+
+                if (call == 2)
+                {
+                    // This pass shortened the original TTL and changed the timestamp the retry must match.
+                    await Assert.That(ttl).IsLessThan(previousTtl - 500);
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(0, untilDeadline.TotalMilliseconds) + 100));
+
+                if (replace)
+                {
+                    // An offset-written replacement can share the raw metadata while having
+                    // a different live Redis expiration.
+                    await RunDelayedSetAsync(Key, deadline.UtcTicks, staleTtlMs: 30_000, sldexp: sliding.Ticks);
+                }
+
+                return reply;
+            }
+            catch
+            {
+                reply.Dispose();
+                throw;
+            }
+        });
+        await using var delayedCache = new RespireDistributedCache(delayedClient);
+
+        await Assert.That(await delayedCache.GetAsync(Key)).IsEquivalentTo(new byte[] { 1 });
+        var freshRead = await Cache.GetAsync(Key);
+
+        if (replace)
+        {
+            await Assert.That(freshRead).IsEquivalentTo(new byte[] { 1 });
+        }
+        else
+        {
+            await Assert.That(freshRead).IsNull();
+            await Assert.That(await PttlAsync(Key)).IsEqualTo(-2L);
+        }
+    }
+
+    [Test]
     public async Task GetScript_FlagsOnlyAbsoluteCappedSlidingReArms()
     {
         // Only a sliding re-arm with an absolute deadline in play can be over-extended by a

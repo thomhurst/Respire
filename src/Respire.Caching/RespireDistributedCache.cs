@@ -65,12 +65,15 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // re-arm ran with an absolute deadline in play — the one shape a delayed send can
     // over-extend — so the caller knows whether a correction round trip can matter at all
     // (sliding-only re-arms to the same window regardless of staleness; absolute-only never
-    // re-arms).
+    // re-arms). When an absolute-capped re-arm extends a live TTL, the reply can also carry
+    // the raw metadata, Redis expiration timestamp and original absolute remainder. This
+    // lets the correction identify the re-arm and detect a crossed deadline within the
+    // normal delay tolerance. PEXPIRETIME is optional for servers and ACLs that lack it.
     // For sliding entries the TTL is re-armed to min(sliding, time left until absolute
     // expiration), atomically with the read. Ticks (100ns) to Redis milliseconds is a divide
     // by 10000.
-    // The TTL Redis already holds is the authority on expiry — absexp caps re-arming and never
-    // deletes. The metadata can carry a writer's clock-offset quirk (the Microsoft
+    // The TTL Redis already holds is the authority on expiry — the read uses absexp to cap
+    // re-arming. The metadata can carry a writer's clock-offset quirk (the Microsoft
     // implementation stores DateTimeOffset.Ticks with the caller's offset baked in, then reads
     // them back as UTC), skewing the remainder by the writer's offset in either direction:
     // - Negative offset: a live key's absexp reads as already past. That contradiction is
@@ -89,22 +92,34 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           return nil
         end
         local capped = 0
+        local extension = false
         local sldexp = tonumber(entry[2]) or -1
         if sldexp ~= -1 then
           local ttl = math.floor(sldexp / 10000)
           local absexp = tonumber(entry[1]) or -1
+          local remaining = -1
           if absexp ~= -1 then
-            local remaining = math.floor((absexp - tonumber(ARGV[2])) / 10000)
+            remaining = math.floor((absexp - tonumber(ARGV[2])) / 10000)
             if remaining < ttl then
               ttl = remaining
             end
           end
           if ttl > 0 then
+            local previous = absexp ~= -1 and redis.call('PTTL', KEYS[1]) or -1
             redis.call('PEXPIRE', KEYS[1], ttl)
             if absexp ~= -1 then
               capped = 1
+              if previous >= 0 and previous < ttl then
+                local expiresAt = redis.pcall('PEXPIRETIME', KEYS[1])
+                if type(expiresAt) == 'number' and expiresAt > 0 then
+                  extension = {entry[1], entry[2], expiresAt, remaining}
+                end
+              end
             end
           end
+        end
+        if extension then
+          return {capped, ARGV[1] == '1' and entry[3], extension}
         end
         if ARGV[1] == '1' then
           return {capped, entry[3]}
@@ -137,14 +152,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         return 1
         """, readOnly: false, cacheReadOnly: false, accessesOnlyDeclaredKeys: true);
 
-    // Shrink-only TTL correction for a sliding read whose send was delayed (see
-    // RunGetScriptAsync). ARGV: [1] a fresh app-clock "now" (UTC ticks). Unlike CapTtlScript
-    // this needs no ownership check: it re-derives min(sliding, remaining) from whatever
-    // metadata the key currently holds — the same formula any honest read applies — and the
-    // PTTL guard keeps it strictly shrink-only, so a concurrently overwritten entry is at
-    // worst a no-op. A non-positive remainder skips rather than unlinks: absexp here is wire
-    // metadata that can carry a writer's clock offset (see GetAndRefreshScript), so deletion
-    // cannot be proven safe; the stale re-arm it leaves behind is bounded by the send delay.
+    // Shrink-only TTL correction for a sliding read whose send was delayed. ARGV: [1] a
+    // fresh app-clock "now" (UTC ticks), optionally followed by the absolute and sliding
+    // metadata and the Redis expiration timestamp from the observed extension. A positive
+    // remainder uses the same cap as a fresh read, with a PTTL guard to avoid extending it.
+    // With proof, match both the metadata and the expiration before changing the key.
+    // Return the new timestamp after a shrink so retries can recognize that expiration.
+    // Without proof, metadata alone can appear expired on a live Microsoft-written key.
     internal static readonly RespireScript CapRefreshedTtlScript = RespireScript.Create("""
         local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp')
         local absexp = tonumber(entry[1]) or -1
@@ -152,8 +166,19 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         if absexp == -1 or sldexp == -1 then
           return 0
         end
+        local hasProof = ARGV[4] ~= nil
+        if hasProof and (entry[1] ~= ARGV[2] or entry[2] ~= ARGV[3]
+          or redis.pcall('PEXPIRETIME', KEYS[1]) ~= tonumber(ARGV[4])) then
+          return 0
+        end
         local ttl = math.floor(sldexp / 10000)
         local remaining = math.floor((absexp - tonumber(ARGV[1])) / 10000)
+        if remaining <= 0 then
+          if hasProof then
+            redis.call('UNLINK', KEYS[1])
+          end
+          return 0
+        end
         if remaining < ttl then
           ttl = remaining
         end
@@ -161,9 +186,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           local pttl = redis.call('PTTL', KEYS[1])
           if pttl == -1 or pttl > ttl then
             redis.call('PEXPIRE', KEYS[1], ttl)
+            if hasProof then
+              return redis.call('PEXPIRETIME', KEYS[1])
+            end
           end
         end
-        return 1
+        return 0
         """, readOnly: false, cacheReadOnly: false, accessesOnlyDeclaredKeys: true);
 
     private readonly IRespireClient _client;
@@ -568,7 +596,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         Func<RespireValue[]> args,
         RespireClient.TrackedConnectionIdentity originalConnection = default,
         RespireTelemetry.ErrorObservation observation = default,
-        RespireClient.TrackedScriptExecution? execution = null)
+        RespireClient.TrackedScriptExecution? execution = null,
+        Action<RespireValue[], long>? acknowledgeExpiration = null)
     {
         // Convergence can leave an idempotent pass running after its bounded foreground
         // wait. Such passes must never retain the caller's pooled observation.
@@ -578,13 +607,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         try
         {
             await CorrectionCoordinator.ConvergeAsync(originalConnection,
-                (Cache: this, Script: script, Key: key, Args: args, Errors: errors, Execution: execution),
+                (Cache: this, Script: script, Key: key, Args: args, Errors: errors, Execution: execution,
+                    AcknowledgeExpiration: acknowledgeExpiration),
                 static (state, identity) => state.Cache._wireClient is { } wire
                     ? wire.Core.Corrections.CreateFence(wire, identity) : null,
                 static (state, ordered, identity) =>
                 {
                     var pass = state.Cache.RunCorrectionPassAsync(
-                        state.Script, state.Key, state.Args(), ordered, identity, state.Errors);
+                        state.Script, state.Key, state.Args(), ordered, identity, state.Errors, state.AcknowledgeExpiration);
                     state.Execution?.RetainRedirectTargetUntil(pass);
                     return pass;
                 },
@@ -604,7 +634,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         RespireValue[] args,
         bool requiresOrdering,
         RespireClient.TrackedConnectionIdentity originalConnection,
-        CorrectionErrors? errors)
+        CorrectionErrors? errors,
+        Action<RespireValue[], long>? acknowledgeExpiration)
     {
         errors?.StartPass();
         Exception? failure = null;
@@ -614,7 +645,9 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             if (requiresOrdering && _wireClient is { } wire)
             {
                 await wire.ExecuteOnAllConnectionsAsync(script, [key], args, originalConnection,
-                    errors?.Observation ?? default).ConfigureAwait(false);
+                    errors?.Observation ?? default,
+                    acknowledgeExpiration is null ? null : expiresAt => acknowledgeExpiration(args, expiresAt))
+                    .ConfigureAwait(false);
             }
             else
             {
@@ -622,6 +655,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                     ? client.ExecuteScriptBorrowedAsync(script, [key], args, CancellationToken.None, errors.Observation)
                     : ExecuteWrappedScriptAsync(script, [key], args, CancellationToken.None,
                         errors?.Observation ?? default)).ConfigureAwait(false);
+                acknowledgeExpiration?.Invoke(args, result.AsInteger());
             }
         }
         catch (Exception error)
@@ -1063,28 +1097,43 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 throw;
             }
 
-            // The re-arm the script just performed used a "now" stale by however long the send
-            // stalled; past the tolerance, shrink the TTL back to a fresh-clock remainder — but
-            // only when the script says the re-arm had an absolute deadline in play, the one
-            // shape staleness can over-extend. Runs without the caller's token — the entry was
-            // already extended, so undoing the over-extension must not be skippable by
-            // cancellation.
+            // Take a fresh clock sample when the delay exceeds the tolerance or a known
+            // extension has crossed its absolute deadline. Correct independently of the
+            // caller's token because the re-arm has already happened.
             try
             {
-                if (DateTimeOffset.UtcNow - now >= SendDelayTolerance && !result.IsNull && result[0].AsInteger() == 1)
+                if (result.IsNull || result[0].AsInteger() != 1)
                 {
-                    // An observed reply needs no FIFO barrier on the normal route. A temporary
-                    // redirect target still needs its physical identity so correction stays there.
-                    var correctionTarget = trackedExecution?.ConnectionIdentity ?? default;
-
-                    if (correctionTarget.Connection is not { Multiplexer: null })
-                    {
-                        correctionTarget = default;
-                    }
-
-                    await CapRefreshedTtlAsync(key, correctionTarget, observation, trackedExecution).ConfigureAwait(false);
+                    return result;
                 }
 
+                var elapsed = DateTimeOffset.UtcNow - now;
+                var hasExtension = result.Count == 3;
+
+                if (elapsed < SendDelayTolerance
+                    && (!hasExtension || elapsed.Ticks / TimeSpan.TicksPerMillisecond < result[2][3].AsInteger()))
+                {
+                    return result;
+                }
+
+                // A temporary redirect target still needs its physical identity.
+                var correctionTarget = trackedExecution?.ConnectionIdentity ?? default;
+
+                if (correctionTarget.Connection is not { Multiplexer: null })
+                {
+                    correctionTarget = default;
+                }
+
+                (string Absolute, string Sliding, long ExpiresAt)? extension = null;
+
+                if (hasExtension)
+                {
+                    var proof = result[2];
+                    extension = (proof[0].AsString(), proof[1].AsString(), proof[2].AsInteger());
+                }
+
+                await CapRefreshedTtlAsync(key, correctionTarget, observation, trackedExecution, extension)
+                    .ConfigureAwait(false);
                 return result;
             }
             catch
@@ -1111,12 +1160,28 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         string key,
         RespireClient.TrackedConnectionIdentity originalConnection = default,
         RespireTelemetry.ErrorObservation observation = default,
-        RespireClient.TrackedScriptExecution? execution = null)
-        => RunCorrectionAsync(
-            CapRefreshedTtlScript,
-            key,
-            () => [DateTimeOffset.UtcNow.UtcTicks],
-            originalConnection, observation, execution);
+        RespireClient.TrackedScriptExecution? execution = null,
+        (string Absolute, string Sliding, long ExpiresAt)? extension = null)
+    {
+        if (extension is not { } observed)
+        {
+            return RunCorrectionAsync(CapRefreshedTtlScript, key, static () => [DateTimeOffset.UtcNow.UtcTicks],
+                originalConnection, observation, execution);
+        }
+
+        long expiresAt = observed.ExpiresAt;
+        return RunCorrectionAsync(CapRefreshedTtlScript, key,
+            () => [DateTimeOffset.UtcNow.UtcTicks, observed.Absolute, observed.Sliding, Volatile.Read(ref expiresAt)],
+            originalConnection, observation, execution,
+            (args, updated) =>
+            {
+                // A pass can finish after its bounded wait. Only advance the proof that it used.
+                if (updated > 0 && args[3].TryGetInt64(out long previous))
+                {
+                    Interlocked.CompareExchange(ref expiresAt, updated, previous);
+                }
+            });
+    }
 
     private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset now, DistributedCacheEntryOptions options)
     {
