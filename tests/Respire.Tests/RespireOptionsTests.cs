@@ -573,6 +573,10 @@ public class RespireOptionsTests
     }
 
     [Test]
+    public async Task Endpoint_TrimsWhitespaceForTcp()
+        => await Assert.That(RespireEndpoint.Parse(" localhost:6380 ")).IsEqualTo(new RespireEndpoint("localhost", 6380));
+
+    [Test]
     public async Task Endpoint_ParsesBareAndBracketedIpv6()
     {
         await Assert.That(RespireEndpoint.Parse("::1")).IsEqualTo(new RespireEndpoint("::1"));

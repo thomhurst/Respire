@@ -25,7 +25,7 @@ var options = new RespireOptions
 `unix:///path` and `redis+unix:///path` are both accepted.
 
 - The URI path is the socket path. Select a database with the `db` query parameter. Other [URI query options](../fundamentals/connections.md#uri-query-options) work as for `redis://`.
-- Paths are percent-decoded. Escape `#`, `?` and spaces in file names.
+- Paths are percent-decoded. Escape `#`, `?` and spaces in file names. For a socket filename ending in a space, use `unix:///run/redis/redis.sock%20`.
 - The URI must have no host, port, user information or fragment. Supply credentials through `RespireOptions.Username` and `RespireOptions.Password`, a credential provider, or the StackExchange.Redis form below.
 
 ### StackExchange.Redis form
@@ -36,6 +36,8 @@ Prefix the path with `!`, then add comma-separated options:
 !/run/redis/redis.sock,user=app,password=secret,defaultDatabase=2
 ```
 
+Comma-separated connection strings trim whitespace around each entry. Use the URI form to preserve a trailing space in the socket filename.
+
 ### Endpoint factory
 
 `RespireEndpoint.UnixSocket(path)` accepts absolute paths, and relative paths resolved against the current directory at call time. It rejects the root path and paths containing a NUL byte, so Linux abstract socket names are not supported.
@@ -44,7 +46,7 @@ Prefix the path with `!`, then add comma-separated options:
 
 - `RespireEndpoint.Host` holds the socket path and `Port` is `0`.
 - `IsUnixSocket` identifies a socket endpoint, including in connection events.
-- `ToString()` returns the `!path` form.
+- `ToString()` returns the `!path` form. Passing that string to `RespireEndpoint.Parse` preserves the full socket path, including trailing spaces.
 - Socket paths compare case-sensitively; DNS host names compare case-insensitively.
 - Credential providers receive only a cancellation token, not the endpoint.
 
