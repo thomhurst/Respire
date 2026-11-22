@@ -1,3 +1,4 @@
+using Respire.Protocol;
 using Respire.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -57,6 +58,50 @@ public class FakeStreamReadTests
         await Assert.That(afterAck.SelectMany(x => x.Entries).Count()).IsEqualTo(2);
         var newEntries = await client.Streams.ReadGroupAsync([("one", ">"), ("two", ">")], "g", "c");
         await Assert.That(newEntries.SelectMany(x => x.Entries).Count()).IsEqualTo(3);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task DeletedPendingEntryConsumesHistoryCountWithoutRedelivery(int protocol)
+    {
+        var clock = new RespireFakeClock();
+        await using var server = new RespireFakeServer(clock);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using RespireClient client = await RespireClient.ConnectAsync(server.CreateOptions() with
+        {
+            Protocol = (RespireProtocol)protocol
+        });
+#pragma warning restore RESP010
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1000-0" }, ("f", "deleted"));
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1000-1" }, ("f", "live"));
+        await client.Streams.CreateGroupAsync("events", "g", "0-0");
+        await client.Streams.ReadGroupOnceAsync("events", "g", "worker");
+        await client.Streams.RemoveAsync("events", "1000-0");
+        var elapsed = TimeSpan.FromSeconds(1);
+        clock.Advance(elapsed);
+
+        using RespireResult reply = await client.ExecuteAsync("XREADGROUP", "GROUP", "g", "worker",
+            "COUNT", 1, "STREAMS", "events", "0-0");
+        RespireResult page = protocol == 2 ? reply[0][1] : reply[1];
+        await Assert.That(page.Count).IsEqualTo(1);
+        await Assert.That(page[0][0].AsString()).IsEqualTo("1000-0");
+        await Assert.That(page[0][1].NullWireType)
+            .IsEqualTo(protocol == 2 ? RespireDataType.Array : RespireDataType.Null);
+
+        RespireStreamPendingEntry[] pending = await client.Streams.PendingAsync("events", "g");
+        await Assert.That(pending.Length).IsEqualTo(2);
+        await Assert.That(pending[0].DeliveryCount).IsEqualTo(1);
+        await Assert.That(pending[0].IdleTime).IsEqualTo(elapsed);
+        await Assert.That(pending[1].DeliveryCount).IsEqualTo(1);
+        await Assert.That(pending[1].IdleTime).IsEqualTo(elapsed);
+
+        RespireStreamEntry[] next = await client.Streams.ReadGroupOnceAsync("events", "g", "worker",
+            new RespireStreamReadOptions { Count = 1 }, startAt: "1000-0");
+        await Assert.That(next.Length).IsEqualTo(1);
+        await Assert.That(next[0].Id).IsEqualTo((RespireStreamId)"1000-1");
+        await Assert.That(next[0].GetString("f")).IsEqualTo("live");
+        await Assert.That(await client.Streams.AcknowledgeAsync("events", "g", "1000-0")).IsEqualTo(1);
     }
 
     [Test]

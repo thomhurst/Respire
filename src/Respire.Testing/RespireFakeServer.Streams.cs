@@ -443,9 +443,13 @@ public sealed partial class RespireFakeServer
             var history = group is not null && request.Ids[i].ToString() != ">";
             var cursor = group is not null && !history ? group.Last
                 : request.Ids[i] == RespireStreamId.New ? stream.Last : request.Ids[i];
-            using var candidates = stream.Entries.Where(entry => entry.Key > cursor
-                && (!history || group!.Pending.TryGetValue(entry.Key, out var pending)
-                    && !pending.IsReleased && pending.Consumer.AsSpan().SequenceEqual(request.Consumer))).GetEnumerator();
+            using IEnumerator<(RespireStreamId Id, byte[][]? Fields)> candidates = (history
+                ? group!.Pending.Where(entry => entry.Key > cursor && !entry.Value.IsReleased
+                        && entry.Value.Consumer.AsSpan().SequenceEqual(request.Consumer))
+                    .OrderBy(entry => entry.Key)
+                    .Select(entry => (Id: entry.Key, Fields: stream.Entries.GetValueOrDefault(entry.Key)))
+                : stream.Entries.Where(entry => entry.Key > cursor)
+                    .Select(entry => (Id: entry.Key, Fields: (byte[][]?)entry.Value))).GetEnumerator();
             var hasEntry = candidates.MoveNext();
 
             if (group is not null && (history || hasEntry))
@@ -471,15 +475,15 @@ public sealed partial class RespireFakeServer
                     break;
                 }
 
-                var entry = candidates.Current;
-                var reply = FakeReply.Array([FakeReply.Text(entry.Key.ToString()), FakeReply.Array(entry.Value.Select(FakeReply.Bulk).ToArray())]);
+                (RespireStreamId id, byte[][]? fields) = candidates.Current;
+                FakeReply reply = StreamFields(id, fields);
                 entries.Add(reply);
                 bytes += reply.Encode(connection.Resp3).Length;
                 total++;
 
                 if (group is not null && !history)
                 {
-                    group.Last = entry.Key;
+                    group.Last = id;
 
                     if (group.EntriesRead.HasValue)
                     {
@@ -487,16 +491,18 @@ public sealed partial class RespireFakeServer
                     }
                     else
                     {
-                        group.EntriesRead = EstimateStreamEntriesRead(stream, entry.Key);
+                        group.EntriesRead = EstimateStreamEntriesRead(stream, id);
                     }
 
-                    group.Pending[entry.Key] = new(request.Consumer!, Now);
+                    group.Pending[id] = new(request.Consumer!, Now);
                 }
-                else if (group is not null)
+                else if (group is not null && fields is not null)
                 {
-                    group.Pending[entry.Key].DeliveredAt = Now;
-                    group.Pending[entry.Key].DeliveryCount++;
+                    FakeStreamPending pending = group.Pending[id];
+                    pending.DeliveredAt = Now;
+                    pending.DeliveryCount++;
                 }
+
                 // Do not advance through any remaining history once the page's budget is exhausted.
                 hasEntry = entries.Count < request.Count && total < request.MaxCount && bytes < request.MaxSize
                     && candidates.MoveNext();

@@ -107,8 +107,11 @@ public sealed partial class RespireFakeServer
             : [cursor, FakeReply.Array(entries.ToArray())]);
     }
 
-    private static FakeReply StreamFields(RespireStreamId id, byte[][] fields)
-        => FakeReply.Array([FakeReply.Text(id.Value), FakeReply.Array(fields.Select(FakeReply.Bulk).ToArray())]);
+    private static FakeReply StreamFields(RespireStreamId id, byte[][]? fields)
+    {
+        FakeReply data = fields is null ? FakeReply.NullArray : FakeReply.Array(fields.Select(FakeReply.Bulk).ToArray());
+        return FakeReply.Array([FakeReply.Text(id.Value), data]);
+    }
 
     private FakeReply StreamWorkerScript(byte[][] args, bool sha)
     {
