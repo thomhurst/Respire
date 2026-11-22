@@ -751,7 +751,7 @@ function Set-DeferralNote([string]$LockName, [string]$Reason, [long]$Seconds) {
 # Builds a triage unit: open issues and parked PRs that no unit audited in -AuditDays,
 # parked and blocked items first because nothing else looks at them.
 function Get-TriageItem {
-    if (-not $script:lastIssues) { return $null }
+    if ($null -eq $script:lastIssues) { return $null }
     $prs = @(gh pr list --repo $repoSlug --author '@me' --state open --limit 500 --json number,labels | ConvertFrom-Json |
             Where-Object { @($_.labels | Where-Object { $_.name -in $parkedLabels }).Count -gt 0 })
     $pool = @(
@@ -790,7 +790,7 @@ function Get-TriageItem {
 # Builds a discovery unit, which files new claimable issues, when the last one ran more
 # than -DiscoveryHours ago. The `discovery-ran` record spaces them out across workers.
 function Get-DiscoveryItem {
-    if ($DiscoveryHours -eq 0 -or -not $script:lastIssues) { return $null }
+    if ($DiscoveryHours -eq 0 -or $null -eq $script:lastIssues) { return $null }
     $r = Invoke-Locks @('deferred', '-LockName', 'discovery-ran')
     if ($r.ExitCode -ne 0 -or ([string]$r.Output).Trim()) { return $null }
     $r = Invoke-Locks @('acquire', '-LockName', 'discovery')
