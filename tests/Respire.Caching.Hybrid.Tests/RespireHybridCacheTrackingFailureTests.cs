@@ -18,12 +18,17 @@ public class RespireHybridCacheTrackingFailureTests
     public async Task CancelledCallerDoesNotLeaveTrackingDisconnectUnobserved()
     {
         var unobserved = new ConcurrentBag<int>();
+
         void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs _)
         {
-            if (sender is Task task) unobserved.Add(task.Id);
+            if (sender is Task task)
+            {
+                unobserved.Add(task.Id);
+            }
         }
 
         TaskScheduler.UnobservedTaskException += OnUnobserved;
+
         try
         {
             var (trackingId, tracking) = await CancelReadAndDisconnectAsync();
@@ -39,7 +44,10 @@ public class RespireHybridCacheTrackingFailureTests
             await Assert.That(tracking.IsAlive).IsFalse();
             await Assert.That(unobserved.Contains(trackingId)).IsFalse();
         }
-        finally { TaskScheduler.UnobservedTaskException -= OnUnobserved; }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -60,7 +68,10 @@ public class RespireHybridCacheTrackingFailureTests
         var cache = (RespireCoherentHybridCache)provider.GetRequiredService<HybridCache>();
         using var setupDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await cache.TrackingClient.PingAsync(setupDeadline.Token);
-        using (await source.ExecuteAsync("CLIENT", setupDeadline.Token, "PAUSE", "60000", "ALL")) { }
+
+        using (await source.ExecuteAsync("CLIENT", setupDeadline.Token, "PAUSE", "60000", "ALL"))
+        {
+        }
 
         using var cancellation = new CancellationTokenSource();
         var key = Guid.NewGuid().ToString("N");
