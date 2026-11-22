@@ -34,7 +34,15 @@ public sealed partial class RespireFakeServer
         }
 
         var minIdle = Integer(args[4]);
-        var start = StreamId(args[5]);
+        string startText = Encoding.UTF8.GetString(args[5]);
+        bool exclusiveStart = startText.StartsWith('(');
+        var start = StreamId(exclusiveStart ? startText[1..] : startText, defaultSequence: 0);
+
+        if (exclusiveStart && start.Value == "18446744073709551615-18446744073709551615")
+        {
+            return FakeReply.Error("ERR invalid start ID for the interval");
+        }
+
         long count = 100;
         var justIds = false;
 
@@ -59,7 +67,10 @@ public sealed partial class RespireFakeServer
             return Syntax("XAUTOCLAIM");
         }
 
-        var pending = group.Pending.Where(pair => pair.Key >= start).OrderBy(pair => pair.Key).ToArray();
+        var pending = group.Pending
+            .Where(pair => exclusiveStart ? pair.Key > start : pair.Key >= start)
+            .OrderBy(pair => pair.Key)
+            .ToArray();
         var entries = new List<FakeReply>();
         var deleted = new List<FakeReply>();
         var scanned = 0;

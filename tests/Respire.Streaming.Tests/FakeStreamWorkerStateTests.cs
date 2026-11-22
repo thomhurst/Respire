@@ -57,6 +57,49 @@ public class FakeStreamWorkerStateTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task AutoClaimScansAfterAnExclusiveStartAndReturnsAnInclusiveCursor(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1234-0" }, ("f", "first"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1234-1" }, ("f", "second"));
+        await client.Streams.AddAsync("s", new RespireStreamAddOptions { Id = "1235-0" }, ("f", "third"));
+        await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning);
+        await client.Streams.ReadGroupOnceAsync("s", "g", "original", new() { Count = 3 });
+
+        var page = await client.Streams.ClaimPendingAsync("s", "g", "next", TimeSpan.Zero, start: "(1234-0", count: 1);
+        await Assert.That(page.Entries.Single().Id).IsEqualTo((RespireStreamId)"1234-1");
+        await Assert.That(page.NextStart).IsEqualTo((RespireStreamId)"1235-0");
+
+        var ids = await client.Streams.ClaimPendingIdsAsync("s", "g", "next", TimeSpan.Zero, start: "(1234", count: 1);
+        await Assert.That(ids.Ids.Single()).IsEqualTo((RespireStreamId)"1234-1");
+        await Assert.That(ids.NextStart).IsEqualTo(page.NextStart);
+
+        var resumed = await client.Streams.ClaimPendingIdsAsync("s", "g", "next", TimeSpan.Zero, start: ids.NextStart, count: 1);
+        await Assert.That(resumed.Ids.Single()).IsEqualTo((RespireStreamId)"1235-0");
+        await Assert.That(resumed.NextStart).IsEqualTo((RespireStreamId)"0-0");
+
+        var exhausted = await client.Streams.ClaimPendingAsync("s", "g", "next", TimeSpan.Zero, start: "(1235-0", count: 1);
+        await Assert.That(exhausted.Entries).IsEmpty();
+        await Assert.That(exhausted.NextStart).IsEqualTo((RespireStreamId)"0-0");
+    }
+
+    [Test]
+    public async Task AutoClaimRejectsAnExclusiveStartAtTheLargestNumericId()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        await client.Streams.CreateGroupAsync("s", "g", RespireStreamId.Beginning, createStream: true);
+
+        await Assert.That(async () => await client.Streams.ClaimPendingAsync("s", "g", "next", TimeSpan.Zero,
+                start: "(18446744073709551615-18446744073709551615"))
+            .Throws<RespireServerException>()
+            .WithMessage("ERR invalid start ID for the interval");
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task GroupInfoRetainsConsumerCountAfterAcknowledgement(int protocol)
     {
         await using var server = new RespireFakeServer();
