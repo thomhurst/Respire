@@ -1020,14 +1020,14 @@ public class SearchClientTests
             new()
             {
                 Limit = (10, 5),
-                SortBy = ("year", RespireSearchSortDirection.Descending),
+                SortBy = ("published-year", RespireSearchSortDirection.Descending),
                 Parameters = new Dictionary<string, RespireValue> { ["category"] = "books" },
                 Dialect = 3,
             });
 
         var arguments = LastArguments(server);
         await Assert.That(arguments[2]).IsEqualTo("(@category:{$category})=>[KNN 50 @embedding $vector AS vector_score]");
-        await Assert.That(arguments[3..9]).IsEquivalentTo(["SORTBY", "year", "DESC", "LIMIT", "10", "5"], CollectionOrdering.Matching);
+        await Assert.That(arguments[3..9]).IsEquivalentTo(["SORTBY", "published-year", "DESC", "LIMIT", "10", "5"], CollectionOrdering.Matching);
         await Assert.That(arguments[9..11]).IsEquivalentTo(["PARAMS", "4"], CollectionOrdering.Matching);
         await Assert.That(arguments[^4..]).IsEquivalentTo(["category", "books", "DIALECT", "3"], CollectionOrdering.Matching);
     }
@@ -1044,7 +1044,10 @@ public class SearchClientTests
     }
 
     [Test]
-    public async Task VectorSearchEscapesFieldIdentifier()
+    [Arguments("distance", "distance")]
+    [Arguments("distance-score", @"distance\-score")]
+    [Arguments("distance score", @"distance\ score")]
+    public async Task VectorSearchUsesTheKnnAliasForDefaultSorting(string scoreField, string knnAlias)
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
         {
@@ -1055,10 +1058,11 @@ public class SearchClientTests
 #pragma warning restore RESP010
         var search = new RespireSearchClient(client);
 
-        await search.VectorSearchAsync("idx", new("embedding-v2", new byte[] { 1, 2 }, 3) { ScoreField = "distance-score" });
+        await search.VectorSearchAsync("idx", new("embedding-v2", new byte[] { 1, 2 }, 3) { ScoreField = scoreField });
 
-        await Assert.That(server.ReceivedCommands.Any(command => command.Contains("@embedding\\-v2", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(server.ReceivedCommands.Any(command => command.Contains("AS distance\\-score]", StringComparison.Ordinal))).IsTrue();
+        string[] arguments = LastArguments(server);
+        await Assert.That(arguments[2]).IsEqualTo($@"*=>[KNN 3 @embedding\-v2 $vector AS {knnAlias}]");
+        await Assert.That(arguments[3..6]).IsEquivalentTo(["SORTBY", knnAlias, "ASC"], CollectionOrdering.Matching);
     }
 
     [Test]

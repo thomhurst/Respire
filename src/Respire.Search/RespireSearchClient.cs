@@ -388,16 +388,18 @@ public sealed partial class RespireSearchClient
     public async ValueTask<RespireSearchResult> VectorSearchAsync(string index, RespireVectorSearchRequest vector, RespireSearchQueryOptions? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(vector);
+
+        RespireSearchExpression expression = vector.BuildExpression(out string scoreAlias);
         var selected = options ?? RespireSearchQueryOptions.Default;
         selected = selected with
         {
             Dialect = selected.Dialect ?? RespireSearchDialect.ParameterDialect,
-            SortBy = selected.SortBy ?? (vector.ScoreField, RespireSearchSortDirection.Ascending),
+            SortBy = selected.SortBy ?? (scoreAlias, RespireSearchSortDirection.Ascending),
             Limit = selected.Limit ?? (0, vector.K),
         };
         var arguments = selected.ToArguments(
             new KeyValuePair<string, RespireValue>(RespireVectorSearchRequest.VectorParameterName, vector.Vector));
-        return await ExecuteAsync<RespireSearchResult>(RespireSearchCommands.Search, [RequireName(index), vector.Expression.Value, .. arguments], cancellationToken, result =>
+        return await ExecuteAsync<RespireSearchResult>(RespireSearchCommands.Search, [RequireName(index), expression.Value, .. arguments], cancellationToken, result =>
         {
             return RespireSearchResult.Parse(result, selected);
         }).ConfigureAwait(false);
