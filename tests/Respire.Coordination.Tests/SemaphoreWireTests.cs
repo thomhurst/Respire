@@ -684,24 +684,33 @@ public class SemaphoreWireTests
     public async Task UnansweredFenceDoesNotDelayCanceledAcquisition()
     {
         static bool IsFence(string command)
-            => command.StartsWith("CLIENT KILL ", StringComparison.OrdinalIgnoreCase)
+        {
+            return command.StartsWith("CLIENT KILL ", StringComparison.OrdinalIgnoreCase)
                 && !command.Contains("SKIPME", StringComparison.OrdinalIgnoreCase);
+        }
 
-        var evalCount = 0;
-        var fenceCount = 0;
+        string acquirePrefix = $"EVALSHA {RespireSemaphore.AcquireScript.Sha1} ";
+        string releasePrefix = $"EVALSHA {RespireSemaphore.ReleaseScript.Sha1} ";
+        var acquireReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int fenceCount = 0;
         await using var server = new FakeRespServer(5, ":1\r\n"u8.ToArray())
         {
             SuppressReply = command =>
             {
-                if (command.StartsWith("EVALSHA ", StringComparison.Ordinal)
-                    && Interlocked.Increment(ref evalCount) == 1)
+                if (command.StartsWith(acquirePrefix, StringComparison.Ordinal))
                 {
+                    acquireReceived.TrySetResult();
                     return true;
+                }
+
+                if (command.StartsWith(releasePrefix, StringComparison.Ordinal))
+                {
+                    releaseReceived.TrySetResult();
                 }
 
                 return IsFence(command) && Interlocked.Increment(ref fenceCount) == 1;
             },
-            ReplyOverride = (_, command) => IsFence(command) ? ":1\r\n"u8.ToArray() : null,
         };
         await using var client = RespireClient.Create(new RespireOptions
         {
@@ -710,28 +719,27 @@ public class SemaphoreWireTests
             Connections = 1,
             CommandTimeout = null,
         });
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        using var cancellation = new CancellationTokenSource();
         var semaphore = new RespireSemaphore(client, "{retry}:fence", capacity: 1);
+        Task<RespireSemaphorePermitAttempt> acquire = semaphore
+            .TryAcquireAsync(cancellationToken: cancellation.Token).AsTask();
 
-        var started = Stopwatch.GetTimestamp();
-        await Assert.That(async () => await semaphore.TryAcquireAsync(cancellationToken: cancellation.Token)
-                .AsTask().WaitAsync(TimeSpan.FromSeconds(3)))
+        // Let the server observe the acquire before canceling so cleanup has a sent command to fence.
+        await acquireReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        long started = Stopwatch.GetTimestamp();
+        cancellation.Cancel();
+        await Assert.That(async () => await acquire.WaitAsync(TimeSpan.FromSeconds(3)))
             .Throws<OperationCanceledException>();
         await Assert.That(Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(3)).IsTrue();
 
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await releaseReceived.Task.WaitAsync(RespireSemaphore.CleanupRetryLimit);
 
-        while (Volatile.Read(ref evalCount) < 2 || Volatile.Read(ref fenceCount) < 2)
-        {
-            await Task.Delay(10, deadline.Token);
-        }
-
-        var commands = server.ReceivedCommands;
-        var fences = commands.Select((command, index) => (command, index))
+        IReadOnlyList<string> commands = server.ReceivedCommands;
+        int[] fences = commands.Select((command, index) => (command, index))
             .Where(entry => IsFence(entry.command)).Select(entry => entry.index).ToArray();
-        var release = commands.Select((command, index) => (command, index))
-            .Where(entry => entry.command.StartsWith("EVALSHA ", StringComparison.Ordinal))
-            .Select(entry => entry.index).Last();
+        int release = commands.Select((command, index) => (command, index))
+            .First(entry => entry.command.StartsWith(releasePrefix, StringComparison.Ordinal)).index;
         await Assert.That(fences.Length).IsEqualTo(2);
         await Assert.That(release).IsGreaterThan(fences[^1]);
     }
