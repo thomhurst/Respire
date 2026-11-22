@@ -8,6 +8,13 @@ public sealed partial class RespireFakeServer
 {
     private readonly Dictionary<byte[], ListMoveWaiters> _listMoveWaiters = new(BinaryKeyComparer.Instance);
 
+    private enum ListMoveWaitMode
+    {
+        None,
+        Initial,
+        Resuming,
+    }
+
     private sealed class ListMoveWaiters
     {
         internal TaskCompletionSource Changed
@@ -108,16 +115,20 @@ public sealed partial class RespireFakeServer
     private async Task<Outbound?> ExecuteBlockingListMoveAsync(Connection connection, byte[][] arguments, RespireFakeFaultScope? scope)
     {
         var started = Stopwatch.GetTimestamp();
+        var waitMode = ListMoveWaitMode.Initial;
 
         while (true)
         {
-            var reply = ExecuteLocked(connection, arguments, scope, out var changed, allowListMoveWait: true);
-            scope = null; // A blocked command is one fault execution, however often it wakes.
+            var reply = ExecuteLocked(connection, arguments, scope, out var changed, waitMode);
 
             if (changed is null)
             {
                 return reply;
             }
+
+            waitMode = ListMoveWaitMode.Resuming;
+            scope = null; // A blocked command is one fault execution, even if it wakes several times.
+
             // A null move reply proves the handler accepted every argument, including timeout.
             _ = TryListMoveTimeout(arguments[5], out var seconds);
 
