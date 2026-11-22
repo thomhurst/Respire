@@ -13,7 +13,8 @@
         Networking/ClusterRecoveryTestClock.cs;Networking/DispatchedWakeDiagnostics.cs;
         Networking/FakeRespServer.cs;Networking/ReservedUnavailablePort.cs;
         Networking/SentinelHintBuilder.cs;Networking/SentinelMonitorProbe.cs;
-        Networking/SentinelTestSetup.cs;Networking/TestTlsCertificate.cs" />
+        Networking/SentinelTestSetup.cs;Networking/TestSocketBackpressure.cs;
+        Networking/TestTlsCertificate.cs" />
       <!-- Program invokes these probes before starting TUnit. Keep their original
            implementations and tests, even when the requested filter selects other tests. -->
       <_FocusedInfrastructure Include="

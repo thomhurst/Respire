@@ -610,11 +610,7 @@ public class CommandWriteOutcomeTests
         {
             await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", port,
                 new() { SocketSendBufferSize = 16 * 1024 });
-            // Zero disables the Windows socket provider's additional send buffering. The options
-            // value zero deliberately means "keep the OS default", so set this owned socket directly.
-            var sendingSocket = (Socket)typeof(RespireConnection)
-                .GetField("_socket", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(connection)!;
-            sendingSocket.SendBufferSize = 0;
+            TestSocketBackpressure.LimitSendBuffer(connection);
             var pending = connection.SendAttemptAsync(new LargeSetCommand(new byte[5 * 1024 * 1024], knownBound)).AsTask();
             var prefix = await received.Task.WaitAsync(deadline.Token);
             await Assert.That(prefix.AsSpan().StartsWith("*3\r\n$3\r\nSET\r\n"u8)).IsTrue();
