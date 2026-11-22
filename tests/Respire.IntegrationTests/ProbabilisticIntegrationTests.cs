@@ -85,7 +85,8 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
         await probabilistic.CountMinInitializeByDimensionsAsync("cms:b", 100, 5);
         await probabilistic.CountMinInitializeByDimensionsAsync("cms:merged", 100, 5);
         await probabilistic.CountMinInitializeByProbabilityAsync("cms:probability", 0.01, 0.01);
-        (await probabilistic.CountMinIncrementAsync("cms:a", new Dictionary<RespireValue, long> { ["x"] = 2, ["y"] = 1 }))
+        await probabilistic.CountMinIncrementAsync("cms:a", new Dictionary<RespireValue, long> { ["x"] = 2 });
+        (await probabilistic.CountMinIncrementAsync("cms:a", new Dictionary<RespireValue, long> { ["x"] = 0, ["y"] = 1 }))
             .Should().Equal(2, 1);
         await probabilistic.CountMinIncrementAsync("cms:b", new Dictionary<RespireValue, long> { ["x"] = 1 });
         await probabilistic.CountMinMergeAsync("cms:merged", ["cms:a", "cms:b"], new() { Weights = [1, 3] });
@@ -98,9 +99,10 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
 
         await probabilistic.TopKReserveAsync("topk", 2, new() { Width = 50, Depth = 4, Decay = 0.9 });
         (await probabilistic.TopKAddAsync("topk", ["a", "b"])).Should().HaveCount(2).And.OnlyContain(evicted => evicted == null);
-        await probabilistic.TopKIncrementAsync("topk", new Dictionary<RespireValue, long> { ["a"] = 10 });
+        (await probabilistic.TopKIncrementAsync("topk", new Dictionary<RespireValue, long> { ["b"] = 0, ["a"] = 10 }))
+            .Should().HaveCount(2).And.OnlyContain(evicted => evicted == null);
         (await probabilistic.TopKQueryAsync("topk", ["a", "missing"])).Should().Equal(true, false);
-        (await probabilistic.TopKCountAsync("topk", ["a"])).Should().Equal(11);
+        (await probabilistic.TopKCountAsync("topk", ["b", "a"])).Should().Equal(1, 11);
 
         using (var list = await probabilistic.TopKListAsync("topk", withCount: true))
         {
