@@ -1,4 +1,3 @@
-using System.Text;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -132,8 +131,7 @@ internal sealed partial class KeyCommands
             var keys = new List<string>(raw.Length);
             var prefix = client.EncodedKeyPrefix;
             var effectiveMatch = prefix is { HasSurrogateBoundary: true } ? null : ScanMatch(prefix, match);
-            var pattern = prefix is { HasSurrogateBoundary: true } && match is not null
-                ? Encoding.UTF8.GetBytes(match) : null;
+            byte[]? localPattern = ScanLocalPattern(prefix, match, effectiveMatch);
 
             foreach (ref readonly var key in raw)
             {
@@ -151,8 +149,7 @@ internal sealed partial class KeyCommands
                 {
                     keys.Add(key.AsString());
                 }
-                else if (ScanKey(in key, prefix) is { } stripped
-                    && (pattern is null || ByteGlob.IsMatch(Encoding.UTF8.GetBytes(stripped), pattern)))
+                else if (ScanKey(in key, prefix, localPattern) is { } stripped)
                 {
                     keys.Add(stripped);
                 }

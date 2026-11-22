@@ -145,7 +145,7 @@ internal sealed partial class KeyCommands
 
         var topology = await ReadScanTopologyAsync(cancellationToken, recovery.Discovery, recovery.Observation).ConfigureAwait(false);
         ReconcileScan(state, topology);
-        RestrictScanToMatchingSlot(state, client.EncodedKeyPrefix is { HasSurrogateBoundary: true } ? null : effectiveMatch);
+        RestrictScanToMatchingSlot(state, prefix is { HasSurrogateBoundary: true } ? null : effectiveMatch);
         var node = SelectScanNode(state, topology);
 
         if (node is null)
@@ -218,6 +218,7 @@ internal sealed partial class KeyCommands
             throw new RespireProtocolException("SCAN returned an invalid cursor or key array.");
         }
 
+        byte[]? localPattern = ScanLocalPattern(prefix, match, effectiveMatch);
         List<string> keys = [];
 
         foreach (ref readonly var value in values[1].AsArray())
@@ -237,7 +238,7 @@ internal sealed partial class KeyCommands
             {
                 keys.Add(value.AsString());
             }
-            else if (ScanKey(in value, prefix) is { } key)
+            else if (ScanKey(in value, prefix, localPattern) is { } key)
             {
                 keys.Add(key);
             }
