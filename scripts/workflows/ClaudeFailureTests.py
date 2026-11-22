@@ -19,8 +19,10 @@ class ClaudeFailureTests(unittest.TestCase):
                 execution.write_text(raw, encoding="utf-8")
             with contextlib.redirect_stdout(io.StringIO()) as stdout:
                 report_failure(execution, summary)
-            self.assertEqual(stdout.getvalue(), "")
-            return summary.read_text(encoding="utf-8")
+            heading, message = summary.read_text(encoding="utf-8").split("\n\n", maxsplit=1)
+            self.assertEqual(heading, "### Claude Code failure")
+            self.assertEqual(stdout.getvalue(), message)
+            return message
 
     def test_api_status_identifies_authentication_failure(self):
         summary = self.report([

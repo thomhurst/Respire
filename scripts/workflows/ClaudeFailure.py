@@ -88,8 +88,10 @@ def report_failure(execution, summary):
         messages = None
 
     # Publish only fixed messages. The transcript can contain credentials and untrusted text.
+    message = failure_message(messages)
     with summary.open("a", encoding="utf-8") as output:
-        output.write(f"### Claude Code failure\n\n{failure_message(messages)}\n")
+        output.write(f"### Claude Code failure\n\n{message}\n")
+    print(message)
 
 
 if __name__ == "__main__":
