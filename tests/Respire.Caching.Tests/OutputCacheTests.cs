@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Respire.OutputCaching;
+using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -25,27 +26,42 @@ public class OutputCacheTests(RedisTestContainer fixture)
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
         string[] tags = withTags ? ["one", "two"] : [];
+        TimeSpan lifetime = TimeSpan.FromMinutes(5);
+        long earliestDeadline = (DateTimeOffset.UtcNow + lifetime).ToUnixTimeMilliseconds();
 
         if (segmented)
         {
-            await store.SetAsync("key", Sequence(), tags, TimeSpan.FromMinutes(5));
+            await store.SetAsync("key", Sequence(), tags, lifetime);
         }
         else
         {
-            await store.SetAsync("key", new byte[] { 1, 2, 3, 4 }, tags, TimeSpan.FromMinutes(5));
+            await store.SetAsync("key", new byte[] { 1, 2, 3, 4 }, tags, lifetime);
         }
 
+        long latestDeadline = (DateTimeOffset.UtcNow + lifetime).ToUnixTimeMilliseconds();
         await Assert.That((await client.GetBytesAsync(prefix + "__MSOCV_key"))!.SequenceEqual(new byte[] { 1, 2, 3, 4 })).IsTrue();
-        using var ttl = await client.ExecuteAsync("PTTL", [prefix + "__MSOCV_key"]);
-        await Assert.That(ttl.AsInteger() > 0 && ttl.AsInteger() <= 300_000).IsTrue();
+        using RespireResult ttl = await client.ExecuteAsync("PTTL", [prefix + "__MSOCV_key"]);
+        long remaining = ttl.AsInteger();
+        await Assert.That(remaining).IsGreaterThan(0L);
 
-        foreach (var tag in tags)
+        if (!withTags)
+        {
+            await Assert.That(remaining).IsLessThanOrEqualTo((long)lifetime.TotalMilliseconds);
+            return;
+        }
+
+        // The client calculates tagged deadlines. Redis measures PTTL against its own clock.
+        using RespireResult expiry = await client.ExecuteAsync("PEXPIRETIME", [prefix + "__MSOCV_key"]);
+        long deadline = expiry.AsInteger();
+        await Assert.That(deadline).IsGreaterThanOrEqualTo(earliestDeadline);
+        await Assert.That(deadline).IsLessThanOrEqualTo(latestDeadline);
+
+        foreach (string tag in tags)
         {
             using var members = await client.ExecuteAsync("ZRANGE", [prefix + "__MSOCT_" + tag, 0, -1]);
             await Assert.That(members[0].AsString()).IsEqualTo("key");
-            using var deadline = await client.ExecuteAsync("PEXPIRETIME", [prefix + "__MSOCV_key"]);
             using var score = await client.ExecuteAsync("ZSCORE", [prefix + "__MSOCT_" + tag, "key"]);
-            await Assert.That(score.AsDouble()).IsEqualTo((double)deadline.AsInteger());
+            await Assert.That(score.AsDouble()).IsEqualTo((double)deadline);
         }
     }
 
@@ -180,12 +196,44 @@ public class OutputCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
-    public async Task CleanupHonorsMicrosoftLockAndRemovesOnlyExpiredReferences()
+    [Arguments(RespireOutputCacheTaggingMode.MicrosoftCompatible)]
+    [Arguments(RespireOutputCacheTaggingMode.GenerationAware)]
+    public async Task EvictionFindsTagMembersMissingOnReplica(RespireOutputCacheTaggingMode taggingMode)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);
+        await using FakeRespServer replica = StaleTagReplica();
+        await using RespireClient client = await ConnectWithReplicaAsync(replica);
+        var options = new RespireOutputCacheOptions { InstanceName = $"{{{NewPrefix()}}}:", TaggingMode = taggingMode };
+        var store = new RespireOutputCacheStore(client, options);
+        var primaryStore = new RespireOutputCacheStore(client.WithReadFrom(RespireReadFrom.Primary), options);
+
+        await WarmReplicaScanAsync(client, replica);
+        await store.SetAsync("entry", [1], ["tag"], TimeSpan.FromMinutes(1));
+        await Assert.That(await primaryStore.GetAsync("entry")).IsNotNull();
+
+        await store.EvictByTagAsync("tag");
+
+        await Assert.That(await primaryStore.GetAsync("entry")).IsNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CleanupHonorsMicrosoftLockAndRemovesOnlyExpiredReferences(bool readFromReplica)
+    {
+        await using FakeRespServer? replica = readFromReplica ? StaleTagReplica() : null;
+        await using RespireClient client = replica is null
+            ? await RespireClient.ConnectAsync(fixture.IsolatedConnectionString)
+            : await ConnectWithReplicaAsync(replica);
+        IRespireClient primary = client.WithReadFrom(RespireReadFrom.Primary);
         var prefix = NewPrefix();
         var store = new RespireOutputCacheStore(client, new() { InstanceName = prefix });
+        var primaryStore = new RespireOutputCacheStore(primary, new() { InstanceName = prefix });
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        if (replica is not null)
+        {
+            await WarmReplicaScanAsync(client, replica);
+        }
 
         using (var batch = client.CreateBatch())
         {
@@ -205,13 +253,13 @@ public class OutputCacheTests(RedisTestContainer fixture)
         await client.SetAsync(prefix + "__MSOCTGC", (RespireValue)"Microsoft GC", TimeSpan.FromMinutes(5));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await store.CollectExpiredTagsAsync(cancellation.Token);
-        await Assert.That(await client.ExistsAsync(prefix + "__MSOCT_expired")).IsTrue();
+        await Assert.That(await primary.ExistsAsync(prefix + "__MSOCT_expired")).IsTrue();
         await client.DeleteAsync([prefix + "__MSOCTGC"]);
         await store.CollectExpiredTagsAsync(cancellation.Token);
-        await Assert.That(await client.ExistsAsync(prefix + "__MSOCT_expired")).IsFalse();
-        await Assert.That(await client.SortedSets.CountAsync(prefix + "__MSOCT")).IsEqualTo(1L);
-        await Assert.That(await store.GetAsync("live")).IsNotNull();
-        await Assert.That(await client.ExistsAsync(prefix + "__MSOCTGC")).IsFalse();
+        await Assert.That(await primary.ExistsAsync(prefix + "__MSOCT_expired")).IsFalse();
+        await Assert.That(await primary.SortedSets.CountAsync(prefix + "__MSOCT")).IsEqualTo(1L);
+        await Assert.That(await primaryStore.GetAsync("live")).IsNotNull();
+        await Assert.That(await primary.ExistsAsync(prefix + "__MSOCTGC")).IsFalse();
     }
 
     [Test]
@@ -243,6 +291,39 @@ public class OutputCacheTests(RedisTestContainer fixture)
         await Assert.That(async () => await store.SetAsync("key", new byte[] { 1 }, null, TimeSpan.Zero))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(await store.GetAsync("key")).IsNull();
+    }
+
+    private ValueTask<RespireClient> ConnectWithReplicaAsync(FakeRespServer replica)
+    {
+        RespireOptions options = RespireOptions.Parse(fixture.IsolatedConnectionString) with
+        {
+            Connections = 1,
+            Protocol = RespireProtocol.Resp2,
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            ReadFrom = RespireReadFrom.ReplicaPreferred,
+        };
+        return RespireClient.ConnectAsync(options);
+    }
+
+    private static FakeRespServer StaleTagReplica()
+    {
+        return new(8)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "ROLE" => "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray(),
+                _ when command.StartsWith("ZSCAN ", StringComparison.Ordinal) => "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray(),
+                _ => FakeRespServer.OkReply,
+            },
+        };
+    }
+
+    private static async Task WarmReplicaScanAsync(RespireClient client, FakeRespServer replica)
+    {
+        await using IAsyncEnumerator<RespireSortedSetEntry> scan = client.SortedSets.ScanAsync("warm").GetAsyncEnumerator();
+        await Assert.That(await scan.MoveNextAsync()).IsFalse();
+        await Assert.That(replica.ReceivedCommands.Any(command => command.StartsWith("ZSCAN warm ", StringComparison.Ordinal)))
+            .IsTrue();
     }
 
     private static string NewPrefix() => $"output:{Guid.NewGuid():N}:";
