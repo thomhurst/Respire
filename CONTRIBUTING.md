@@ -14,6 +14,16 @@ the same commit in local `git blame` output.
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
+## Build diagnostics
+
+Builds enforce missing braces, performance rules, and public API baselines. Advisory C#
+style diagnostics from the shared EditorConfig profile appear in editors. To report them
+as warnings during a clean style audit, run the following from the repository root.
+
+```sh
+dotnet build src/Respire/Respire.csproj -c Release -f net11.0 -t:Rebuild -p:RespireReportStyleWarnings=true
+```
+
 ## Public API review and deprecation
 
 Every shipping library package has a checked-in public API baseline in
