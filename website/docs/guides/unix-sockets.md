@@ -38,6 +38,12 @@ Prefix the path with `!`, then add comma-separated options:
 
 Comma-separated connection strings trim whitespace around each entry. Use the URI form to preserve a trailing space in the socket filename.
 
+This form treats every comma as a separator, so socket filenames containing commas require a Unix socket URI or structured options. For the socket `/tmp/redis,blue.sock`, use `%2C` for the comma and `db=2` to select database 2.
+
+```text
+unix:///tmp/redis%2Cblue.sock?db=2
+```
+
 ### Endpoint factory
 
 `RespireEndpoint.UnixSocket(path)` accepts absolute paths, and relative paths resolved against the current directory at call time. It rejects the root path and paths containing a NUL byte, so Linux abstract socket names are not supported.
