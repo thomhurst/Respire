@@ -2,6 +2,7 @@ using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -11,6 +12,53 @@ namespace Respire.Caching.Hybrid.Tests;
 
 public partial class RespireHybridCacheCoherenceTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ObservationTimerReportsCleanupFailureAndContinuesSweeping(bool loggerThrows)
+    {
+        var cleanupFailure = new InvalidOperationException("background removal failed");
+        using var memory = new ProbingMemoryCache();
+        var logger = new SweepFailureLogger(loggerThrows);
+        var services = new ServiceCollection();
+        services.AddSingleton<IMemoryCache>(memory);
+        services.AddSingleton<ILogger<RespireCoherentHybridCache>>(logger);
+        services.AddRespireHybridCache(fixture.IsolatedConnectionString, InstanceName)
+            .WithRespireClientSideCoherence(options => options.ObservationSweepInterval = TimeSpan.FromMilliseconds(10));
+
+        await using ServiceProvider writer = BuildProvider(false);
+        await using ServiceProvider reader = services.BuildServiceProvider();
+        HybridCache writeCache = writer.GetRequiredService<HybridCache>();
+        RespireCoherentHybridCache readCache = Coherent(reader);
+        string firstKey = NewKey();
+        string secondKey = NewKey();
+        await writeCache.SetAsync(firstKey, "first", LongLived);
+        await writeCache.SetAsync(secondKey, "second", LongLived);
+        await PrimeAsync(readCache, firstKey);
+
+        int attempts = 0;
+        memory.OnRemove = () =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+            {
+                throw cleanupFailure;
+            }
+        };
+
+        // Simulate expiration after the request completes without starting an eviction callback.
+        memory.SimulateCacheMiss = true;
+        (LogLevel level, Exception? error) = await logger.Failure.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(level).IsEqualTo(LogLevel.Warning);
+        await Assert.That(ReferenceEquals(error, cleanupFailure)).IsTrue();
+        await Assert.That(readCache.ObservationCount).IsEqualTo(0);
+
+        memory.SimulateCacheMiss = false;
+        await PrimeAsync(readCache, secondKey);
+        memory.SimulateCacheMiss = true;
+        await UntilAsync(() => readCache.ObservationCount == 0 && !readCache.HasPendingRetirementCleanup);
+        await Assert.That(Volatile.Read(ref attempts)).IsEqualTo(2);
+    }
+
     [Test]
     public async Task ThrowingInvalidationCleanupDoesNotStopTrackingPump()
     {
@@ -749,12 +797,52 @@ public partial class RespireHybridCacheCoherenceTests
         }
     }
 
+    private sealed class SweepFailureLogger(bool throws) : ILogger<RespireCoherentHybridCache>
+    {
+        internal TaskCompletionSource<(LogLevel Level, Exception? Error)> Failure
+        {
+            get;
+        } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull
+        {
+            return null;
+        }
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Failure.TrySetResult((logLevel, exception));
+
+            if (throws)
+            {
+                throw new InvalidOperationException("logging failed");
+            }
+        }
+    }
+
     private sealed class ProbingMemoryCache : IMemoryCache
     {
         private readonly MemoryCache _inner = new(Options.Create(new MemoryCacheOptions()));
         internal Action? OnRemove;
+        internal volatile bool SimulateCacheMiss;
 
-        public bool TryGetValue(object key, out object? value) => _inner.TryGetValue(key, out value);
+        public bool TryGetValue(object key, out object? value)
+        {
+            if (SimulateCacheMiss)
+            {
+                value = null;
+                return false;
+            }
+
+            return _inner.TryGetValue(key, out value);
+        }
 
         public ICacheEntry CreateEntry(object key) => _inner.CreateEntry(key);
 

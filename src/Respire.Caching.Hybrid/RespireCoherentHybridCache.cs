@@ -4,6 +4,8 @@ using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Respire.Caching.Hybrid;
@@ -17,6 +19,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     private readonly IServiceProvider _services;
     private readonly Func<IServiceProvider, HybridCache> _factory;
     private readonly IMemoryCache _memory;
+    private readonly ILogger<RespireCoherentHybridCache> _logger;
     private readonly RespireDistributedCache _distributed;
     private readonly HybridCacheOptions _hybridOptions;
     private readonly IOptionsMonitor<HybridCacheOptions> _fixedOptions;
@@ -36,6 +39,8 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         _services = services;
         _factory = factory;
         _memory = services.GetRequiredService<IMemoryCache>();
+        _logger = services.GetService<ILogger<RespireCoherentHybridCache>>()
+            ?? NullLogger<RespireCoherentHybridCache>.Instance;
         _hybridOptions = services.GetRequiredService<IOptions<HybridCacheOptions>>().Value;
         _fixedOptions = new FixedHybridOptions(_hybridOptions);
         var distributed = _hybridOptions.DistributedCacheServiceKey is { } key
@@ -48,7 +53,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         _clock = new TagReplayClock(services.GetService<TimeProvider>() ?? TimeProvider.System);
         _unobserved = CreateContext(null, _distributed);
         TrackingClient = _distributed.CreateCoherenceTrackingClient(options.TrackingOptions);
-        _sweep = new Timer(static state => ((RespireCoherentHybridCache)state!).SweepObservations(),
+        _sweep = new Timer(static state => ((RespireCoherentHybridCache)state!).SweepObservationsOnTimer(),
             this, options.ObservationSweepInterval, options.ObservationSweepInterval);
         StartTagPropagation(options);
     }
@@ -410,6 +415,28 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             Retire(observation);
         }
     }
+
+    private void SweepObservationsOnTimer()
+    {
+        try
+        {
+            SweepObservations();
+        }
+        catch (Exception error)
+        {
+            try
+            {
+                LogObservationSweepFailure(_logger, error);
+            }
+            catch
+            {
+                // A throwing logging provider must not let an exception escape the timer callback.
+            }
+        }
+    }
+
+    [LoggerMessage(1, LogLevel.Warning, "HybridCache observation sweep failed.")]
+    private static partial void LogObservationSweepFailure(ILogger logger, Exception error);
 
     internal void SweepObservations()
     {

@@ -168,6 +168,7 @@ See [observability](observability.md#logging) for logger configuration.
 | `Respire` | 143 | `MultipathTcpFallback` | Information |
 | `Respire` | 4001 | `CredentialRefreshFailed` | Warning |
 | `Respire` | 4101 | `CoordinationCleanupAbandoned` | Warning |
+| `Respire.Caching.Hybrid` | 1 | `LogObservationSweepFailure` | Warning |
 | `Respire.DependencyInjection` | 1 | `StartupConnected` | Debug |
 | `Respire.DependencyInjection` | 2 | `StartupConnectFailed` | Warning |
 | `Respire.DependencyInjection` | 3 | `StartupResolveFailed` | Error |
