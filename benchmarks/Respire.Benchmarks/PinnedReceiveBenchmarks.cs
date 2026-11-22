@@ -120,6 +120,7 @@ public class PinnedReceiveBenchmarks
         private readonly byte[] _small = Bulk(64);
         private readonly byte[] _large = Bulk(LargeLength);
         private static readonly byte[] Pong = "+PONG\r\n"u8.ToArray();
+        private static readonly byte[] Ok = "+OK\r\n"u8.ToArray();
 
         public int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
 
@@ -188,6 +189,8 @@ public class PinnedReceiveBenchmarks
         {
             var parts = command.AsArray();
             if (parts.Length == 1 && parts[0].AsSpan().SequenceEqual("PING"u8)) return Pong;
+            // Connection handshake (CLIENT SETINFO LIB-NAME/LIB-VER by default).
+            if (parts.Length > 0 && parts[0].AsSpan().SequenceEqual("CLIENT"u8)) return Ok;
             if (parts.Length == 2 && parts[0].AsSpan().SequenceEqual("GET"u8))
             {
                 if (parts[1].AsSpan().SequenceEqual("small"u8)) return _small;

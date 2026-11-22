@@ -25,7 +25,6 @@ jobs:
       expected-case-count: 6
       expected-methods: CallerReleasesFirst,ReceiverReleasesFirst,MultiReply3CallerFirst,MultiReply3ReceiverFirst,MultiReply64CallerFirst,MultiReply64ReceiverFirst
       zero-allocation-methods: CallerReleasesFirst,ReceiverReleasesFirst,MultiReply3CallerFirst,MultiReply3ReceiverFirst,MultiReply64CallerFirst,MultiReply64ReceiverFirst
-      improvement-methods: CallerReleasesFirst,ReceiverReleasesFirst
       artifact-prefix: single-reply-completion
   socket:
     if: github.event.label.name == 'run-single-reply-completion-benchmarks'
