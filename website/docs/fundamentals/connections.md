@@ -233,9 +233,11 @@ accepted by the old socket finish there without replay, so very slow replies can
 socket open past its configured age. Client-side caches are flushed when the replacement takes
 over.
 
-When maintenance or a Sentinel failover retires the connection group, old sockets drain within
-`CommandTimeout` (30 seconds when command timeouts are disabled), extended by any maintenance
-relaxation, and are then closed.
+Lifetime recycling replaces individual sockets. If the entire connection group retires
+while a recycled socket is still draining, that socket gets a grace period based on
+`CommandTimeout` (30 seconds when command timeouts are disabled), extended by maintenance
+relaxation when enabled. A streamed reply can continue while its reader makes progress.
+See [Redis Sentinel](#redis-sentinel) for how failover drains the group's current connections.
 
 **Dedicated leases** (blocking, transaction, and upload) recycle only when idle or returned;
 expiration never interrupts a blocking command or upload. Idle expiration applies even without
@@ -741,11 +743,12 @@ await using var redis = await RespireClient.ConnectAsync(
 **Failover:**
 
 - A disconnect, `READONLY` (also inside EXEC, script, and fire-and-forget replies), or replica `ROLE` retires the primary; the next operation rediscovers and revalidates.
-- Accepted commands drain on old sockets. Ambiguous writes and WATCH state are never replayed; start a new watched transaction.
-- With maintenance notifications, retiring connections get `CommandTimeout` (at least 30 s if disabled), extended by any relaxation.
+- With maintenance notifications disabled, the old group's current connections stop accepting new work and drain accepted commands without a fixed deadline. `CommandTimeout` can end the caller's wait while its reply is still pending. A transport failure or a configured [response watchdog](#independent-liveness-bounds) can still close the socket.
+- On connections that negotiated maintenance notifications, a retirement `PING` barrier gives pending notifications a chance to reach the client. The barrier has a `ConnectTimeout` budget. If it fails, Respire gives accepted commands a drain grace period of `CommandTimeout` (30 seconds when command timeouts are disabled), extended to at least `MaintenanceRelaxedTimeout`. A streamed reply can continue past this grace period while its reader makes progress.
+- Ambiguous writes and WATCH state are never replayed. Start a new watched transaction.
 - Interrupted cached MGET/HMGET reads refetch from the new primary. Subscriptions reconnect and report a delivery gap; missed messages are lost. Explicit server connections stay pinned.
 - `Endpoint` throws `InvalidOperationException` until the first primary is validated (or after failed discovery); it never returns a Sentinel address.
-- `ConnectionStateChanged` reports changes; disposal does not wait for a running observer. `respire.sentinel.failover` counts primary changes (`server.address`, `server.port`). `respire.sentinel.generations.retired` counts primaries still draining; steady growth means stuck work. There is no forced drain deadline.
+- `ConnectionStateChanged` reports changes; disposal does not wait for a running observer. `respire.sentinel.failover` counts primary changes (`server.address`, `server.port`). `respire.sentinel.generations.retired` counts primaries still draining. Steady growth can indicate stuck work.
 
 **Event monitors:** after the first validated primary, Respire subscribes to `+switch-master`, `+sdown`, and `+odown` on each Sentinel, costing one extra TCP connection each. Events trigger rediscovery confirmed by `ROLE`, at most once per 100 ms. Monitors reconnect under `ReconnectPolicy` (`respire.reconnect.scope = sentinel-monitor`), and a monitor reconnect or delivery gap triggers one rediscovery. Failed event-driven rediscovery retries with backoff (up to 30 s apart without a policy, or `MaxAttempts`). Disposal waits up to 10 s for monitor work.
 
