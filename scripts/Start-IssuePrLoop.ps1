@@ -787,6 +787,19 @@ function Get-TriageItem {
     }
 }
 
+function Write-TriageAudits([object[]]$Items, [string]$Result) {
+    # The summary can mention related items. Only its explicit audit list counts.
+    if ($Result -notmatch '^triaged: .+; audited: (?<items>#[1-9][0-9]*(?:, *#[1-9][0-9]*)*)$') { return }
+    $auditedNumbers = $Matches['items'] -split ', *'
+    foreach ($audited in $Items) {
+        if ("#$($audited.Number)" -notin $auditedNumbers) { continue }
+        # Parked items come back sooner: their condition often clears without a GitHub change.
+        $auditSeconds = if ($audited.Order -eq 0) { $ParkedAuditHours * 3600 } else { $AuditDays * 86400 }
+        $null = Invoke-Locks @('defer', '-LockName', "audit-$($audited.Number)", '-Fingerprint', [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds(),
+            '-DeferSeconds', $auditSeconds)
+    }
+}
+
 # Builds a discovery unit, which files new claimable issues, when the last one ran more
 # than -DiscoveryHours ago. The `discovery-ran` record spaces them out across workers.
 function Get-DiscoveryItem {
@@ -849,7 +862,7 @@ function Get-Prompt($Item) {
         }
         'triage' {
             $list = ($Item.Items | ForEach-Object { if ($_.Kind -eq 'pr') { "PR #$($_.Number)" } else { "#$($_.Number)" } }) -join ', '
-            return "$head This is a triage unit. The loop driver holds lock triage for you through `$env:$ownerVariable. Skip the sweep and the survey. Follow the triage procedure in the skill for these items: $list. The queue has $($Item.Queueable) issue(s) that a unit can claim now. Release every lock and print the RESULT line."
+            return "$head This is a triage unit. The loop driver holds lock triage for you through `$env:$ownerVariable. Skip the sweep and the survey. Follow the triage procedure in the skill for these items: $list. The queue has $($Item.Queueable) issue(s) that a unit can claim now. Release every lock and print the RESULT line with the audited-item suffix specified in the triage procedure."
         }
         'issue' {
             $hint = if ($Item.Hint) { " $($Item.Hint)" } else { '' }
@@ -1022,15 +1035,8 @@ while (-not (Test-Path -LiteralPath $stopFile)) {
         if ($status.Output -eq 'HELD-BY-ME') { $null = Invoke-Locks @('release', '-LockName', $item.LockName) }
     }
 
-    # A triage unit audits its batch whatever it changed, so the next triage takes new items.
-    if ($item.Kind -eq 'triage' -and $result) {
-        foreach ($audited in $item.Items) {
-            # Parked items come back sooner: their condition often clears without a GitHub change.
-            $auditSeconds = if ($audited.Order -eq 0) { $ParkedAuditHours * 3600 } else { $AuditDays * 86400 }
-            $null = Invoke-Locks @('defer', '-LockName', "audit-$($audited.Number)", '-Fingerprint', [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds(),
-                '-DeferSeconds', $auditSeconds)
-        }
-    }
+    if ($item.Kind -eq 'triage') { Write-TriageAudits $item.Items $result }
+
     # A discovery unit ran, whatever it found; the next one waits -DiscoveryHours. A crash
     # still waits an hour, so a broken unit cannot spin.
     if ($item.Kind -eq 'discovery') {

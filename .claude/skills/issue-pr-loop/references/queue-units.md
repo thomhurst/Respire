@@ -22,7 +22,9 @@ Make only changes the evidence supports, and keep comments short. Do not impleme
 
 When the prompt says fewer than five issues can be claimed now, also file up to three new issues using the discovery sources below.
 
-Report `RESULT: triaged: <summary>`, for example `triaged: closed #12 #15, updated #18, filed #40`, or `triaged: no changes` when every item was current.
+For a driver-assigned batch, report `RESULT: triaged: <summary>; audited: <items>`. List the numbers of the assigned items whose audit you completed under their locks, including items that needed no changes. Omit skipped items, incomplete audits, and related items outside the batch. Use comma-separated numbers with a `#` prefix for both issues and PRs, for example `RESULT: triaged: no changes; audited: #12, #18`. If you completed no audits, use `audited: none`.
+
+For standalone triage, report `RESULT: triaged: <summary>`.
 
 ## Discovery
 
