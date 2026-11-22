@@ -6888,7 +6888,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             core.Options.Database,
             storedProcedureName: script.Sha1, started: started);
         // Only a redirect can move the reply to another endpoint; allocate its tracker only then.
-        var redirect = execution.FollowsReplicaRedirects ? new ScriptRedirectTelemetry(telemetry, connection) : null;
+        ScriptRedirectTelemetry? redirect = execution.FollowsReplicaRedirects ? new ScriptRedirectTelemetry(telemetry, connection) : null;
 
         try
         {
@@ -6913,8 +6913,15 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     private sealed class ScriptRedirectTelemetry(RespireTelemetry.OperationScope telemetry, RespireConnection connection)
     {
-        internal RespireEndpoint Endpoint { get; private set; } = new(connection.Host, connection.Port);
-        internal RespireConnection? Connection { get; private set; } = connection;
+        internal RespireEndpoint Endpoint
+        {
+            get; private set;
+        } = new(connection.Host, connection.Port);
+
+        internal RespireConnection? Connection
+        {
+            get; private set;
+        } = connection;
 
         internal void OnEndpointSelected(RespireEndpoint endpoint, RespireConnection? selected)
         {
@@ -7116,9 +7123,18 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     internal ClientSideCacheCoordinator.MutationFence BeginScriptMutation(
         ClientSideCacheCoordinator cache, RespireScript script, RespireKey[] keys)
     {
-        if (!script.AccessesOnlyDeclaredKeys || keys.Length == 0) return cache.BeginUnknownMutation();
+        if (!script.AccessesOnlyDeclaredKeys || keys.Length == 0)
+        {
+            return cache.BeginUnknownMutation();
+        }
+
         var physical = new RespireKey[keys.Length];
-        for (var index = 0; index < keys.Length; index++) physical[index] = Key(in keys[index]).AsKey().Snapshot();
+
+        for (int index = 0; index < keys.Length; index++)
+        {
+            physical[index] = Key(in keys[index]).AsKey().Snapshot();
+        }
+
         return cache.BeginKeysMutation(physical);
     }
 

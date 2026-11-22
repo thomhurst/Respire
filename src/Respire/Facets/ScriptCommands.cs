@@ -60,7 +60,10 @@ public sealed class RespireScript
 
     // Audited to touch only KEYS, so the client-side cache fences those keys instead of
     // flushing every entry. User scripts can reach any key and never set this.
-    internal bool AccessesOnlyDeclaredKeys { get; }
+    internal bool AccessesOnlyDeclaredKeys
+    {
+        get;
+    }
 
     /// <summary>
     /// The caller-declared retry risk of one complete execution. Defaults to

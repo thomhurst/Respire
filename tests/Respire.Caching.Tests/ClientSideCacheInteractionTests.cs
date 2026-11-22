@@ -12,13 +12,13 @@ public class ClientSideCacheInteractionTests(RedisTestContainer fixture)
     [Test]
     public async Task CacheOperationsKeepUnrelatedClientSideCacheEntries()
     {
-        await using var client = await ConnectWithClientCacheAsync();
+        await using RespireClient client = await ConnectWithClientCacheAsync();
         var cache = new RespireDistributedCache(client);
-        var unrelated = $"unrelated:{Guid.NewGuid():N}";
-        var entry = $"entry:{Guid.NewGuid():N}";
+        string unrelated = $"unrelated:{Guid.NewGuid():N}";
+        string entry = $"entry:{Guid.NewGuid():N}";
         await client.SetAsync(unrelated, (RespireValue)"value");
         await client.GetStringAsync(unrelated);
-        var resident = client.ClientSideCache!.Count;
+        int resident = client.ClientSideCache!.Count;
         await Assert.That(resident).IsGreaterThanOrEqualTo(1);
 
         // The cache scripts touch only their own key, so they must not flush other local entries.
@@ -27,7 +27,7 @@ public class ClientSideCacheInteractionTests(RedisTestContainer fixture)
         await cache.TryGetAsync(entry, new ArrayBufferWriter<byte>());
         await cache.RefreshAsync(entry);
 
-        var hits = client.ClientSideCache.GetStatistics().Hits;
+        long hits = client.ClientSideCache.GetStatistics().Hits;
         await Assert.That(await client.GetStringAsync(unrelated)).IsEqualTo("value");
         await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(hits + 1);
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(resident);
@@ -41,31 +41,36 @@ public class ClientSideCacheInteractionTests(RedisTestContainer fixture)
     {
         const int Iterations = 2_000;
         const long BudgetPerCall = 2_048;
-        await using var client = await ConnectWithClientCacheAsync();
+        await using RespireClient client = await ConnectWithClientCacheAsync();
         var cache = new RespireDistributedCache(client);
-        var key = $"budget:{Guid.NewGuid():N}";
+        string key = $"budget:{Guid.NewGuid():N}";
         await cache.SetAsync(key, new byte[64], new DistributedCacheEntryOptions());
         var writer = new ArrayBufferWriter<byte>(256);
-        for (var i = 0; i < Iterations; i++)
+
+        for (int i = 0; i < Iterations; i++)
         {
             writer.ResetWrittenCount();
             await cache.TryGetAsync(key, writer);
         }
 
-        var before = GC.GetTotalAllocatedBytes(precise: true);
-        for (var i = 0; i < Iterations; i++)
+        long before = GC.GetTotalAllocatedBytes(precise: true);
+
+        for (int i = 0; i < Iterations; i++)
         {
             writer.ResetWrittenCount();
             await cache.TryGetAsync(key, writer);
         }
-        var perCall = (GC.GetTotalAllocatedBytes(precise: true) - before) / Iterations;
+
+        long perCall = (GC.GetTotalAllocatedBytes(precise: true) - before) / Iterations;
 
         await Assert.That(perCall).IsLessThanOrEqualTo(BudgetPerCall);
     }
 
     private async Task<RespireClient> ConnectWithClientCacheAsync()
-        => await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
+    {
+        return await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.IsolatedConnectionString) with
         {
             ClientSideCache = new RespireClientSideCacheOptions(),
         });
+    }
 }
