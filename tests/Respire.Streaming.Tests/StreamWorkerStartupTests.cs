@@ -61,9 +61,11 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
     [Arguments(false, "connection")]
     [Arguments(false, "timeout")]
     [Arguments(false, "system-timeout")]
+    [Arguments(false, "circuit-open")]
     [Arguments(true, "connection")]
     [Arguments(true, "timeout")]
     [Arguments(true, "system-timeout")]
+    [Arguments(true, "circuit-open")]
     public async Task StartupRetriesUntilRedisAnswersThenProcessesWork(bool jobQueue, string failure)
     {
         await using var fixture = await Fixture.CreateAsync(jobQueue, redis.ConnectionString);
@@ -71,6 +73,7 @@ public class StreamWorkerStartupTests(RedisTestContainer redis)
         {
             "connection" => new RespireConnectionException("private endpoint"),
             "timeout" => new RespireTimeoutException("startup", TimeSpan.FromSeconds(1)),
+            "circuit-open" => new RespireCircuitOpenException(new("redis.test"), TimeSpan.FromSeconds(2)),
             _ => new TimeoutException("private endpoint"),
         };
         fixture.Fault.FailuresRemaining = 2;
