@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Text;
 using Respire.Internal;
 using Respire.Networking;
@@ -275,8 +274,7 @@ public sealed class StreamingCommandHookTests
 #pragma warning restore RESP010
         await server.ConnectionAccepted;
         var connection = client.Core.Multiplexer.GetConnection();
-        var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection)!;
-        socket.SendBufferSize = 0;
+        var socket = TestSocketBackpressure.LimitSendBuffer(connection);
         var payload = new byte[5 * 1024 * 1024];
         payload.AsSpan().Fill((byte)'a');
         hook.After = () => payload.AsSpan().Fill((byte)'b');

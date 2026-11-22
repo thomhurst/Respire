@@ -409,13 +409,9 @@ public sealed class GatheredSetTests
         await server.ConnectionAccepted;
         var connection = client.Core.Multiplexer.GetConnection();
         var initialCapacity = connection.WriteBufferCapacity;
-        // Configure only this fixture's real socket, without adding a production testing hook.
-        var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(connection)!;
-        // Disable this socket's send buffering and require an outstanding kernel send.
         // Keep the peer's normal receive window: shrinking it after connect clamps Linux TCP
         // and can make draining a resumed 5 MiB frame exceed the guard without any ownership bug.
-        socket.SendBufferSize = 0;
+        var socket = TestSocketBackpressure.LimitSendBuffer(connection);
         var payload = new byte[5 * 1024 * 1024];
         payload.AsSpan().Fill((byte)'a');
         using var cancellation = new CancellationTokenSource();
@@ -534,9 +530,7 @@ public sealed class GatheredSetTests
         });
 #pragma warning restore RESP010
         var connection = client.Core.Multiplexer.GetConnection();
-        var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(connection)!;
-        socket.SendBufferSize = 0;
+        var socket = TestSocketBackpressure.LimitSendBuffer(connection);
         var payload = Enumerable.Repeat((byte)'a', 5 * 1024 * 1024).ToArray();
         using var cancellation = new CancellationTokenSource();
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -658,9 +652,7 @@ public sealed class GatheredSetTests
         });
 #pragma warning restore RESP010
         var connection = client.Core.Multiplexer.GetConnection();
-        var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(connection)!;
-        socket.SendBufferSize = 0;
+        var socket = TestSocketBackpressure.LimitSendBuffer(connection);
         using var cancellation = new CancellationTokenSource();
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         // SET GET uses the copied serializer. Park the real kernel send before borrowing another array.

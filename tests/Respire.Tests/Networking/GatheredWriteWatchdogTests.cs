@@ -98,9 +98,7 @@ public sealed class GatheredWriteWatchdogTests
 
         await Assert.That(connection.HasRelaxedTimeoutAllowance).IsTrue();
         server.ReadGate = reads.Task;
-        var socket = (Socket)typeof(RespireConnection).GetField("_socket", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(connection)!;
-        socket.SendBufferSize = 0;
+        var socket = TestSocketBackpressure.LimitSendBuffer(connection);
         var payload = new byte[5 * 1024 * 1024];
         var pending = client.SetAsync("maintenance-stall", (RespireValue)payload, cancellationToken: guard.Token).AsTask();
 
