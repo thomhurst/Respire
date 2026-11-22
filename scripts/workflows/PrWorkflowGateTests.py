@@ -49,6 +49,17 @@ class PrWorkflowGateTests(unittest.TestCase):
                 run("benchmark-transport.yml", "failure"), run("server-compatibility.yml", None, "in_progress")]
         self.assertEqual(evaluate(runs, OWN), ([], []))
 
+    def test_opt_in_measurements_with_yaml_extension_are_ignored(self):
+        runs = [run("benchmark-transport.yaml", "failure"),
+                run("server-compatibility.yaml", None, "in_progress")]
+        for workflow_run in runs:
+            with self.subTest(path=workflow_run["path"]):
+                self.assertEqual(evaluate([workflow_run], OWN), ([], []))
+
+    def test_regular_pull_request_workflow_with_yaml_extension_counts(self):
+        self.assertEqual(evaluate([run("docs.yaml", "failure")], OWN),
+                         ([], ["docs.yaml (1): failure"]))
+
 
 if __name__ == "__main__":
     unittest.main()
