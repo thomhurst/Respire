@@ -1400,10 +1400,14 @@ public sealed record RespireOptions
 
         mode.Validate();
         var defaultPort = mode.ServiceName is null ? 6379 : 26379;
+
+        // IdnHost preserves the IPv6 scope ID and removes the authority brackets.
+        string host = uri.HostNameType == UriHostNameType.IPv6 ? uri.IdnHost : uri.Host;
+
         return new RespireOptions
         {
             Endpoints = { useUnixSocket ? RespireEndpoint.FromUnixUri(uri)
-                : new RespireEndpoint(uri.Host, uri.IsDefaultPort ? defaultPort : uri.Port) },
+                : new RespireEndpoint(host, uri.IsDefaultPort ? defaultPort : uri.Port) },
             Username = username,
             Password = password,
             SentinelUsername = mode.SentinelUsername,
