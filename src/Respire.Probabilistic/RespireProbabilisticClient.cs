@@ -838,7 +838,7 @@ public sealed class RespireProbabilisticClient
 
         foreach (var (item, amount) in increments)
         {
-            if (amount <= 0)
+            if (amount < 0)
             {
                 throw new ArgumentOutOfRangeException(nameof(increments));
             }

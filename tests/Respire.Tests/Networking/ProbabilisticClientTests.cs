@@ -139,15 +139,42 @@ public class ProbabilisticClientTests
     }
 
     [Test]
-    public async Task CountMinIncrementRejectsNonPositiveAmountsBeforeSending()
+    public async Task SketchIncrementCommandsSendZeroAmountsAlongsidePositiveAmounts()
+    {
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "HELLO 3" => Hello,
+            "CMS.INCRBY cms existing 0 new 2" => "*2\r\n:7\r\n:2\r\n"u8.ToArray(),
+            "TOPK.INCRBY topk existing 0 new 2" => "*2\r\n_\r\n_\r\n"u8.ToArray(),
+            _ => null,
+        };
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
+        var probabilistic = new RespireProbabilisticClient(client);
+        var increments = new Dictionary<RespireValue, long> { ["existing"] = 0, ["new"] = 2 };
+
+        var estimates = await probabilistic.CountMinIncrementAsync("cms", increments);
+        var evictions = await probabilistic.TopKIncrementAsync("topk", increments);
+
+        await Assert.That(estimates.SequenceEqual([7L, 2L])).IsTrue();
+        await Assert.That(evictions.Length).IsEqualTo(2);
+        await Assert.That(evictions.All(evicted => evicted is null)).IsTrue();
+    }
+
+    [Test]
+    public async Task SketchIncrementCommandsRejectNegativeAmountsBeforeSending()
     {
 #pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
         await using var client = RespireClient.Create(DisconnectedOptions());
 #pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
-        var increments = new Dictionary<RespireValue, long> { ["item"] = 0 };
+        var increments = new Dictionary<RespireValue, long> { ["item"] = -1 };
 
         await Assert.That(async () => await probabilistic.CountMinIncrementAsync("sketch", increments))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await probabilistic.TopKIncrementAsync("sketch", increments))
             .Throws<ArgumentOutOfRangeException>();
     }
 

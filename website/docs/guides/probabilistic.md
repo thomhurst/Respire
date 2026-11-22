@@ -43,6 +43,7 @@ var percentiles = await probabilistic.TDigestQuantileAsync("latency:api", [0.5, 
 | t-digest | Create/reset, merge options, add, min/max, quantile, CDF, rank/reverse rank, by-rank/by-reverse-rank, trimmed mean, info |
 
 - Cuckoo insert and insert-if-absent return a `RespireCuckooInsertResult` per item (`Inserted`, `AlreadyExists` or `FilterFull`), so a full filter is not reported as success.
+- Count-Min and Top-K increment batches accept zero deltas. Each zero delta is sent to Redis with its item.
 - Top-K add and increment return evicted items as nullable byte arrays, preserving binary items.
 - Keys receive the `WithKeyPrefix` prefix. Multi-key merges route by destination and source keys and enforce Cluster slot rules.
 - Mutations, including merges, invalidate only the written key (the merge destination) in the client-side cache.
