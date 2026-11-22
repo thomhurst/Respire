@@ -82,7 +82,8 @@ param(
     [string]$Worktree = '',
     [string]$OwnerId = '',
     [string]$Fingerprint = '',
-    [ValidateRange(60, 604800)]
+    # Also stores triage audit records for Start-IssuePrLoop.ps1 (-AuditDays up to 90).
+    [ValidateRange(60, 7776000)]
     [int]$DeferSeconds = 21600
 )
 
