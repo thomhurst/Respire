@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Respire.DependencyInjection;
 using Respire.HealthChecks;
 using Respire.Testing;
+using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -55,6 +56,54 @@ public class RespireStartupConnectionTests
         var report = await provider.GetRequiredService<HealthCheckService>().CheckHealthAsync();
         await Assert.That(report.Status).IsEqualTo(HealthStatus.Healthy);
         await connector.StopAsync(CancellationToken.None);
+    }
+
+    [Test]
+    public async Task HostStartConnectsPrimaryAfterReplicaRead()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var replica = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "ROLE" => "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray(),
+                "GET key" => "$7\r\nreplica\r\n"u8.ToArray(),
+                _ => FakeRespServer.PongReply,
+            },
+        };
+        IServiceCollection services = CreateServices();
+        services.AddRespire(_ => new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+            ReplicaEndpoints = [new("127.0.0.1", replica.Port)],
+            ReadFrom = RespireReadFrom.Replica,
+        });
+        services.AddHealthChecks().AddRespire();
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        IRespireClient client = provider.GetRequiredService<IRespireClient>();
+        HealthCheckService healthChecks = provider.GetRequiredService<HealthCheckService>();
+        RespireStartupConnector connector = Connector(provider);
+
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("replica");
+        await Assert.That(client.IsConnected).IsTrue();
+        HealthReport beforeStartup = await healthChecks.CheckHealthAsync();
+        await Assert.That(beforeStartup.Status).IsEqualTo(HealthStatus.Unhealthy);
+
+        await connector.StartAsync(CancellationToken.None);
+
+        try
+        {
+            await connector.Connecting.WaitAsync(Timeout);
+
+            HealthReport afterStartup = await healthChecks.CheckHealthAsync();
+            await Assert.That(afterStartup.Status).IsEqualTo(HealthStatus.Healthy);
+        }
+        finally
+        {
+            await connector.StopAsync(CancellationToken.None).WaitAsync(Timeout);
+        }
     }
 
     [Test]

@@ -70,8 +70,7 @@ internal sealed partial class RespireStartupConnector(
                     ? services.GetRequiredService<RespireClient>()
                     : services.GetRequiredKeyedService<RespireClient>(registration.ServiceKey);
 
-                // Application traffic may have connected the client already.
-                if (client.IsConnected)
+                if (client.HasStartupConnection)
                 {
                     return;
                 }
