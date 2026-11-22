@@ -465,10 +465,19 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 foreach (var task in connectTasks)
                 {
-                    if (task.IsCompletedSuccessfully)
+                    if (!task.IsCompletedSuccessfully)
                     {
-                        var connection = await task.ConfigureAwait(false);
+                        continue;
+                    }
+
+                    try
+                    {
+                        RespireConnection connection = await task.ConfigureAwait(false);
                         await connection.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Preserve the startup failure and continue disposing the remaining connections.
                     }
                 }
 
