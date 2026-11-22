@@ -424,11 +424,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
     }
 
-    /// <summary>
-    /// A view whose reads always go to Redis instead of the client-side cache. Writes still
-    /// invalidate cached entries. Shares this client's connections; disposing a view is a no-op.
-    /// </summary>
-    /// <remarks>Returns this client when client-side caching is disabled or already bypassed.</remarks>
+    /// <inheritdoc/>
     public IRespireClient WithoutClientCache()
         => ReadCache is null
             ? this

@@ -159,7 +159,10 @@ var stock = await fresh.Strings.GetAsync<int>("product:42:stock");
   Connections with tracking disabled, such as replica and dedicated connections, need no prelude.
 - In `Broadcast` mode, bypassing a read does not change the connection's prefix subscriptions.
 - `GetOrSetAsync` on the view reads Redis directly and never shares factories.
-- When client-side caching is disabled, `WithoutClientCache()` returns the same client.
+- When caching is disabled or already bypassed, `WithoutClientCache()` returns the same
+  instance. Disposing the result closes the connections if the original client owns them.
+  Leave disposal of the original client to its owner. Disposing a newly created bypass view is a
+  no-op.
 
 ## Concurrent misses
 
