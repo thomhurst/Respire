@@ -593,8 +593,16 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
     }
 
     /// <summary>Builds the dialect 2 query expression.</summary>
-    public RespireSearchExpression Expression
-        => RespireSearchExpression.FromBuilder($"{(Filter is null ? "*" : "(" + Filter.Value.Value + ")")}=>[KNN {K} @{RespireSearchQueryBuilder.EscapeField(Field)} ${VectorParameterName} AS {RespireSearchQueryBuilder.EscapeField(ScoreField)}]");
+    public RespireSearchExpression Expression => BuildExpression(out _);
+
+    internal RespireSearchExpression BuildExpression(out string scoreAlias)
+    {
+        // Redis retains the escapes in the KNN alias, including when resolving SORTBY.
+        scoreAlias = RespireSearchQueryBuilder.EscapeField(ScoreField);
+        string filter = Filter is { } expression ? $"({expression.Value})" : "*";
+        string vectorField = RespireSearchQueryBuilder.EscapeField(Field);
+        return RespireSearchExpression.FromBuilder($"{filter}=>[KNN {K} @{vectorField} ${VectorParameterName} AS {scoreAlias}]");
+    }
 
     private static string RequireText(string value, string name)
     {

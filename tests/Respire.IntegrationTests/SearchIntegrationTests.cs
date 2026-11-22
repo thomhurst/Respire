@@ -235,6 +235,36 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(2, "distance")]
+    [Arguments(2, "distance-score")]
+    [Arguments(2, "distance score")]
+    [Arguments(3, "distance")]
+    [Arguments(3, "distance-score")]
+    [Arguments(3, "distance score")]
+    public async Task VectorSearchSortsByCustomScoreAliasByDefault(int protocol, string scoreField)
+    {
+        await using RespireClient client = await ConnectAsync(protocol);
+        RespireSearchClient search = client.Search;
+        string index = NewIndex();
+
+        try
+        {
+            await CreateDocumentsAsync(client, search, index);
+
+            RespireSearchResult nearest = await search.VectorSearchAsync(index, new("embedding", Vector, 3)
+            {
+                ScoreField = scoreField,
+                Filter = RespireSearchQueryBuilder.Tag("category", "cache|client"),
+            });
+            nearest.Documents.Should().ContainSingle().Which.Id.Should().Be(index + ":doc:1");
+        }
+        finally
+        {
+            await DropIndexIfPresentAsync(search, index);
+        }
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task ErrorsPrefixesAndPreCancellationPreserveTheIndex(int protocol)
