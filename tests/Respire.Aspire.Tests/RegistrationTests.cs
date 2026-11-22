@@ -18,6 +18,7 @@ using OpenTelemetry.Trace;
 using Respire.Aspire;
 using Respire.Azure;
 using Respire.DependencyInjection;
+using Respire.OutputCaching;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -217,6 +218,42 @@ public class RegistrationTests
         await selected.SetAsync("entry", [1], new DistributedCacheEntryOptions());
         await Assert.That(firstServer.ReceivedCommands).IsEmpty();
         await Assert.That(lastServer.ReceivedCommands.Any(command => command.Contains("last:entry", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task LastOutputCacheRegistrationSelectsItsClientAndOptions(bool configureLast)
+    {
+        await using var firstServer = new FakeRespServer(FakeRespServer.OkReply);
+        await using var lastServer = new FakeRespServer(FakeRespServer.OkReply);
+        HostApplicationBuilder builder = Builder(new()
+        {
+            ["ConnectionStrings:first"] = $"127.0.0.1:{firstServer.Port}",
+            ["ConnectionStrings:last"] = $"127.0.0.1:{lastServer.Port}",
+            ["Aspire:Respire:Options:Protocol"] = "Resp2",
+        });
+        var cleanupInterval = TimeSpan.FromMinutes(1);
+        builder.Services.Configure<RespireOutputCacheOptions>(options => options.CleanupInterval = cleanupInterval);
+        builder.AddRespireClientBuilder("first").AddOutputCache(options =>
+        {
+            options.InstanceName = "first:";
+            options.CleanupInterval = TimeSpan.FromMinutes(2);
+        });
+        builder.AddKeyedRespireClientBuilder("last")
+            .AddOutputCache(configureLast ? options => options.InstanceName = "last:" : null);
+        using IHost host = builder.Build();
+        IOutputCacheStore output = host.Services.GetRequiredService<IOutputCacheStore>();
+
+        await output.SetAsync("entry", [1], [], TimeSpan.FromMinutes(1), CancellationToken.None);
+
+        string prefix = configureLast ? "last:" : "";
+        await Assert.That(firstServer.ReceivedCommands).IsEmpty();
+        await Assert.That(lastServer.ReceivedCommands.Any(command =>
+            command.StartsWith($"SET {prefix}__MSOCV_entry ", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(host.Services.GetServices<RespireOutputCacheStore>().Single()).IsSameReferenceAs(output);
+        await Assert.That(host.Services.GetRequiredService<IOptions<RespireOutputCacheOptions>>().Value.CleanupInterval)
+            .IsEqualTo(cleanupInterval);
     }
 
     /// <summary>Creates a host without environment defaults so configuration tests remain isolated.</summary>
