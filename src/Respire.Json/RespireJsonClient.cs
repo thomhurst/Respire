@@ -153,8 +153,9 @@ public sealed class RespireJsonClient
 
     /// <summary>Gets formatted JSON text for one or more paths, or null when the key does not exist.</summary>
     /// <remarks>
-    /// Redis rejects requests that mix legacy and JSONPath paths; that error surfaces as a
-    /// <see cref="RespireServerException"/>.
+    /// With multiple paths, Redis returns a JSON object keyed by path. If every path uses legacy
+    /// syntax, each property holds the selected JSON value. If any path uses JSONPath, every
+    /// property holds an array of matches, including properties for legacy paths.
     /// </remarks>
     public ValueTask<string?> GetJsonAsync(
         RespireKey key,

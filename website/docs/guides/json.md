@@ -57,8 +57,11 @@ internal sealed record Customer(string Name, string Email);
 ## Reading and writing
 
 - `GetJsonAsync` returns JSON text. `RespireJsonGetOptions` maps `Indent`, `NewLine`, `Space`, and
-  `NoEscape` to `INDENT`, `NEWLINE`, `SPACE`, and `NOESCAPE`, and takes one or more `Paths`. Do not
-  mix legacy and `$` paths.
+  `NoEscape` to `INDENT`, `NEWLINE`, `SPACE`, and `NOESCAPE`, and takes one or more `Paths`.
+  With multiple paths, Redis returns a JSON object keyed by path. If every path uses legacy
+  syntax, each property holds the selected JSON value. If any path uses JSONPath, every
+  property holds an array of matches, including properties for legacy paths. For the document
+  `{"a":1,"b":2}` and `Paths = [".a", "$.b"]`, the result is equivalent to `{".a":[1],"$.b":[2]}`.
 - `SetAsync` serializes typed values straight to UTF-8. `SetJsonAsync` takes pre-serialized JSON as
   a string or UTF-8 bytes. Both return `false` when `RespireJsonSetCondition.Nx` or `Xx` rejects the
   write.
