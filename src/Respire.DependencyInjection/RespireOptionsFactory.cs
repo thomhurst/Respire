@@ -30,12 +30,6 @@ internal sealed class RespireOptionsValidator : IValidateOptions<RespireOptions>
         try
         {
             options.ValidateAndSnapshot();
-            // Configuration-bound endpoint objects need a host check at startup; core validation
-            // otherwise leaves empty TCP hosts to connection setup.
-            if (options.Endpoints.Concat(options.ReplicaEndpoints).Any(endpoint => string.IsNullOrWhiteSpace(endpoint.Host)))
-            {
-                return ValidateOptionsResult.Fail("Respire endpoint Host must not be empty.");
-            }
 
             return ValidateOptionsResult.Success;
         }

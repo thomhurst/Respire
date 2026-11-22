@@ -1098,31 +1098,12 @@ public sealed record RespireOptions
 
         foreach (var endpoint in Endpoints)
         {
-            if (endpoint.IsUnixSocket)
-            {
-                ValidateUnixEndpoint(endpoint, nameof(Endpoints));
-                continue;
-            }
-
-            if (endpoint.Port is < 1 or > 65535)
-            {
-                throw new RespireConfigurationException(
-                    $"RespireOptions.Endpoints contains invalid TCP port {endpoint.Port}.");
-            }
+            ValidateEndpoint(endpoint, nameof(Endpoints));
         }
 
         foreach (var endpoint in ReplicaEndpoints)
         {
-            if (endpoint.IsUnixSocket)
-            {
-                ValidateUnixEndpoint(endpoint, nameof(ReplicaEndpoints));
-                continue;
-            }
-
-            if (endpoint.Port is < 1 or > 65535)
-            {
-                throw new RespireConfigurationException($"RespireOptions.ReplicaEndpoints contains invalid TCP port {endpoint.Port}.");
-            }
+            ValidateEndpoint(endpoint, nameof(ReplicaEndpoints));
         }
 
         if (PubSubPrefix.Text is { } pubSubPrefixText)
@@ -1142,14 +1123,26 @@ public sealed record RespireOptions
         };
     }
 
-    private void ValidateUnixEndpoint(RespireEndpoint endpoint, string optionName)
+    private void ValidateEndpoint(RespireEndpoint endpoint, string optionName)
     {
-        UnixSocketConfiguration.Validate(endpoint.Host, UseTls, MaintenanceNotifications, $"RespireOptions.{optionName}");
-
-        if (UseCluster || !string.IsNullOrWhiteSpace(SentinelPrimaryName))
+        if (endpoint.IsUnixSocket)
         {
-            throw new RespireConfigurationException("Unix socket endpoints cannot be mixed with Cluster or Sentinel discovery, which advertises TCP endpoints.");
+            UnixSocketConfiguration.Validate(endpoint.Host, UseTls, MaintenanceNotifications, $"RespireOptions.{optionName}");
+
+            if (UseCluster || !string.IsNullOrWhiteSpace(SentinelPrimaryName))
+            {
+                throw new RespireConfigurationException("Unix socket endpoints cannot be mixed with Cluster or Sentinel discovery, which advertises TCP endpoints.");
+            }
+
+            return;
         }
+
+        if (endpoint.Port is < 1 or > 65535)
+        {
+            throw new RespireConfigurationException($"RespireOptions.{optionName} contains invalid TCP port {endpoint.Port}.");
+        }
+
+        Require(!string.IsNullOrWhiteSpace(endpoint.Host), optionName, "contains a blank TCP host");
     }
 
     private static void Require(bool condition, string optionName, string requirement)
