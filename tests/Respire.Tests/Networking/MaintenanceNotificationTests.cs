@@ -380,6 +380,38 @@ public class MaintenanceNotificationTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task HealthProbeReportsReplacementEndpointAfterMoving(bool rejectPing)
+    {
+        await using FakeRespServer source = Server();
+        await using FakeRespServer target = Server();
+        Func<int, string, byte[]?> targetReply = target.ReplyOverride!;
+        target.ReplyOverride = (id, command) => rejectPing && command == "PING"
+            ? "-ERR probe rejected\r\n"u8.ToArray()
+            : targetReply(id, command);
+
+        // A test-owned client isolates maintenance negotiation and handoff state for these scripted endpoints.
+#pragma warning disable RESP010
+        await using RespireClient client = await RespireClient.ConnectAsync(Options(source));
+#pragma warning restore RESP010
+        RespireConnectionMultiplexer multiplexer = client.Core.Multiplexer;
+        RespireConnection original = multiplexer.GetConnection();
+        await source.SendRawAsync(Moving(1, target.Port));
+        await WaitForPort(multiplexer, target.Port);
+        await WaitForRetirement(original);
+
+        RespireHealthProbeResult[] results = await client.ProbeHealthAsync();
+
+        await Assert.That(results.Length).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+        await Assert.That(results[0].IsConnected).IsTrue();
+        await Assert.That(results[0].Error is RespireServerException).IsEqualTo(rejectPing);
+        await Assert.That(results[0].Latency.HasValue).IsEqualTo(!rejectPing);
+        await Assert.That(results[0].Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", target.Port));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task DedicatedTelemetryUsesEndpointAfterMoving(bool streaming)
     {
         await using var source = Server(maxConnections: 4);
