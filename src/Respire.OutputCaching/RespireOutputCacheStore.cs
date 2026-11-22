@@ -187,7 +187,7 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
         var tagKey = (RespireKey)(_tagPrefix + tag);
         List<string> members = new(250);
 
-        await foreach (var entry in _client.SortedSets.ScanAsync(tagKey, cancellationToken: cancellationToken).ConfigureAwait(false))
+        await foreach (RespireSortedSetEntry entry in ScanTagIndexAsync(tagKey, cancellationToken).ConfigureAwait(false))
         {
             members.Add(entry.Member);
 
@@ -251,7 +251,7 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
         var cutoff = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         List<RespireValue> tags = new(250);
 
-        await foreach (var tag in _client.SortedSets.ScanAsync(_tagMaster, cancellationToken: cancellationToken).ConfigureAwait(false))
+        await foreach (RespireSortedSetEntry tag in ScanTagIndexAsync(_tagMaster, cancellationToken).ConfigureAwait(false))
         {
             tags.Add(tag.Member);
 
@@ -275,6 +275,12 @@ public sealed partial class RespireOutputCacheStore : IOutputCacheBufferStore
         // Both passes use the same cutoff. Concurrent writes with later deadlines survive the
         // per-tag removal and increase the master score, so the final purge preserves that tag.
         await _client.SortedSets.RemoveRangeByScoreAsync(_tagMaster, 0, cutoff, cancellationToken).ConfigureAwait(false);
+    }
+
+    private IAsyncEnumerable<RespireSortedSetEntry> ScanTagIndexAsync(RespireKey key, CancellationToken cancellationToken)
+    {
+        // These scans drive writes. A stale replica can omit members that the primary needs to remove.
+        return _client.WithReadFrom(RespireReadFrom.Primary).SortedSets.ScanAsync(key, cancellationToken: cancellationToken);
     }
 
     private async ValueTask RemoveExpiredMembersAsync(List<RespireValue> tags, long cutoff, CancellationToken cancellationToken)
