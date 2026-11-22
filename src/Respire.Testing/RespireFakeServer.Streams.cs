@@ -238,18 +238,24 @@ public sealed partial class RespireFakeServer
 
         if (automaticId)
         {
-            var parts = stream.Last.ToString().Split('-');
-            var lastTime = ulong.Parse(parts[0], CultureInfo.InvariantCulture);
-            var time = Math.Max((ulong)Math.Max(0, Now), lastTime);
-            generatedMilliseconds = time;
-            var sequence = time == lastTime && parts.Length == 2 ? checked(ulong.Parse(parts[1], CultureInfo.InvariantCulture) + 1) : 0;
+            string[] parts = stream.Last.ToString().Split('-');
+            ulong lastMilliseconds = ulong.Parse(parts[0], CultureInfo.InvariantCulture);
+            ulong lastSequence = ulong.Parse(parts[1], CultureInfo.InvariantCulture);
+            ulong milliseconds = Math.Max((ulong)Math.Max(0, Now), lastMilliseconds);
 
-            if (time == 0 && sequence == 0)
+            if (milliseconds == lastMilliseconds && lastSequence == ulong.MaxValue)
             {
-                sequence = 1;
+                if (milliseconds == ulong.MaxValue)
+                {
+                    return FakeReply.Error("ERR The stream has exhausted the last possible ID, unable to add more items");
+                }
+
+                milliseconds++;
             }
 
-            id = new($"{time.ToString(CultureInfo.InvariantCulture)}-{sequence.ToString(CultureInfo.InvariantCulture)}");
+            ulong sequence = milliseconds == lastMilliseconds ? lastSequence + 1 : 0;
+            generatedMilliseconds = milliseconds;
+            id = new($"{milliseconds.ToString(CultureInfo.InvariantCulture)}-{sequence.ToString(CultureInfo.InvariantCulture)}");
         }
         else
         {
