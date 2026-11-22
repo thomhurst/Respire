@@ -386,6 +386,20 @@ public class RespireOptionsTests
     }
 
     [Test]
+    [Arguments("redis://[::1]", "[::1]:6379")]
+    [Arguments("redis://[fe80::1%1]:6379", "[fe80::1%1]:6379")]
+    [Arguments("rediss://user:password@[fe80::1%251]:6380/2", "[fe80::1%251]:6380")]
+    [Arguments("redis://[::1]?sentinelPrimaryName=primary", "[::1]:26379")]
+    public async Task UriEndpoint_PreservesIpv6AddressAndScope(string uri, string expectedEndpoint)
+    {
+        RespireEndpoint endpoint = RespireOptions.Parse(uri).Endpoints[0];
+
+        await Assert.That(endpoint).IsEqualTo(RespireEndpoint.Parse(expectedEndpoint));
+        await Assert.That(endpoint.ToString()).IsEqualTo(expectedEndpoint);
+        await Assert.That(RespireEndpoint.Parse(endpoint.ToString())).IsEqualTo(endpoint);
+    }
+
+    [Test]
     public async Task StackExchangeConnectionString_ParsesEndpointPasswordAndTls()
     {
         var options = RespireOptions.Parse("localhost:6379,password=secret,ssl=true");
