@@ -239,6 +239,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         => !_core.Disposed && (_core.Sentinel?.IsConnected == true || _core.Cluster?.IsConnected == true
             || _core.Multiplexer.IsConnected || _core.ReadRouter.IsConnected);
 
+    // Standalone and Sentinel readiness use the primary command pool.
+    internal bool HasStartupConnection
+        => !_core.Disposed && (_core.Sentinel?.IsConnected ?? _core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
+
     /// <summary>Captures owned Cluster retirement diagnostics, or null for a non-Cluster client.</summary>
     /// <remarks>Performs no network I/O. Prefix views share the underlying router's state.
     /// Counters are best-effort observations, not a completion or correction-ordering barrier.
