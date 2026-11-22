@@ -75,8 +75,13 @@ public sealed record RespireSearchQuery(RespireSearchExpression Expression, Resp
 /// </remarks>
 public static class RespireSearchQueryBuilder
 {
+    private const string MatchAllQuery = "*";
+
     /// <summary>Matches all indexed documents.</summary>
-    public static RespireSearchExpression MatchAll() => RespireSearchExpression.FromBuilder("*");
+    public static RespireSearchExpression MatchAll()
+    {
+        return RespireSearchExpression.FromBuilder(MatchAllQuery);
+    }
 
     /// <summary>Matches an exact quoted term or phrase across indexed text fields.</summary>
     public static RespireSearchExpression Text(string term) => RespireSearchExpression.FromBuilder(Quote(term));
@@ -129,11 +134,17 @@ public static class RespireSearchQueryBuilder
             exclusiveMaximum);
     }
 
-    /// <summary>Combines already-built expressions with AND. Multiple inputs are parenthesized; inputs are not escaped.</summary>
-    public static RespireSearchExpression And(params RespireSearchExpression[] expressions) => Combine(" ", expressions);
+    /// <summary>Combines already-built expressions with AND, omitting <c>*</c> when other operands are present.</summary>
+    public static RespireSearchExpression And(params RespireSearchExpression[] expressions)
+    {
+        return Combine(" ", expressions, isDisjunction: false);
+    }
 
-    /// <summary>Combines already-built expressions with OR. Multiple inputs are parenthesized; inputs are not escaped.</summary>
-    public static RespireSearchExpression Or(params RespireSearchExpression[] expressions) => Combine(" | ", expressions);
+    /// <summary>Combines already-built expressions with OR, returning <c>*</c> if any operand is <c>*</c>.</summary>
+    public static RespireSearchExpression Or(params RespireSearchExpression[] expressions)
+    {
+        return Combine(" | ", expressions, isDisjunction: true);
+    }
 
     internal static string EscapeField(string value) => EscapeIdentifier(value);
 
@@ -148,7 +159,7 @@ public static class RespireSearchQueryBuilder
         _ => value.ToString("R", CultureInfo.InvariantCulture).Replace("E+", "E", StringComparison.Ordinal),
     };
 
-    private static RespireSearchExpression Combine(string separator, RespireSearchExpression[] expressions)
+    private static RespireSearchExpression Combine(string separator, RespireSearchExpression[] expressions, bool isDisjunction)
     {
         ArgumentNullException.ThrowIfNull(expressions);
 
@@ -157,14 +168,38 @@ public static class RespireSearchQueryBuilder
             throw new ArgumentException("At least one expression is required.", nameof(expressions));
         }
 
-        foreach (var expression in expressions)
+        int otherOperandCount = 0;
+        RespireSearchExpression lastOtherOperand = default;
+
+        foreach (RespireSearchExpression expression in expressions)
         {
             expression.RequireValid(nameof(expressions));
+
+            if (expression.Value != MatchAllQuery)
+            {
+                otherOperandCount++;
+                lastOtherOperand = expression;
+            }
         }
 
-        return RespireSearchExpression.FromBuilder(expressions.Length == 1
-            ? expressions[0].Value
-            : $"({string.Join(separator, expressions.Select(value => $"({value.Value})"))})");
+        // Redis accepts the match-all wildcard only as a standalone query.
+        bool hasMatchAll = otherOperandCount != expressions.Length;
+
+        if (otherOperandCount == 0 || (isDisjunction && hasMatchAll))
+        {
+            return MatchAll();
+        }
+
+        if (otherOperandCount == 1)
+        {
+            return lastOtherOperand;
+        }
+
+        IEnumerable<RespireSearchExpression> operands = hasMatchAll
+            ? expressions.Where(static expression => expression.Value != MatchAllQuery)
+            : expressions;
+        string joinedOperands = string.Join(separator, operands.Select(static expression => $"({expression.Value})"));
+        return RespireSearchExpression.FromBuilder($"({joinedOperands})");
     }
 
     private static string Quote(string value)

@@ -632,6 +632,33 @@ public class SearchClientTests
     }
 
     [Test]
+    public async Task SearchExpressionBuilderSimplifiesMatchAll()
+    {
+        RespireSearchExpression all = RespireSearchQueryBuilder.MatchAll();
+        RespireSearchExpression rawAll = RespireSearchExpression.FromRaw("*");
+        RespireSearchExpression rankOne = RespireSearchQueryBuilder.NumericRange("rank", 1, 1);
+        RespireSearchExpression other = RespireSearchExpression.FromRaw("prefix*");
+
+        await Assert.That(RespireSearchQueryBuilder.And(all, rankOne)).IsEqualTo(rankOne);
+        await Assert.That(RespireSearchQueryBuilder.And(rankOne, rawAll)).IsEqualTo(rankOne);
+        await Assert.That(RespireSearchQueryBuilder.And(all, rankOne, rawAll, other))
+            .IsEqualTo(RespireSearchQueryBuilder.And(rankOne, other));
+        await Assert.That(RespireSearchQueryBuilder.And(all, rawAll)).IsEqualTo(all);
+        await Assert.That(RespireSearchQueryBuilder.Or(all, rankOne)).IsEqualTo(all);
+        await Assert.That(RespireSearchQueryBuilder.Or(rankOne, rawAll, other)).IsEqualTo(all);
+        await Assert.That(RespireSearchQueryBuilder.Or(all, rawAll)).IsEqualTo(all);
+    }
+
+    [Test]
+    public async Task SearchExpressionBuilderValidatesAllOperandsBeforeSimplifyingMatchAll()
+    {
+        RespireSearchExpression all = RespireSearchQueryBuilder.MatchAll();
+
+        await Assert.That(() => RespireSearchQueryBuilder.And(all, default)).Throws<ArgumentException>();
+        await Assert.That(() => RespireSearchQueryBuilder.Or(all, default)).Throws<ArgumentException>();
+    }
+
+    [Test]
     public async Task NamedParametersRequireExplicitCompatibleDialect()
     {
         await using var server = new FakeRespServer(1, FakeRespServer.PongReply)
