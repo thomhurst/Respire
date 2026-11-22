@@ -330,6 +330,8 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
                         if (wait > TimeSpan.Zero)
                         {
+                            // Task.Delay truncates positive waits below its one-millisecond resolution to zero.
+                            wait = TimeSpan.FromTicks(Math.Max(wait.Ticks, TimeSpan.TicksPerMillisecond));
                             await Task.Delay(wait, readers.Token).ConfigureAwait(false);
                         }
                     }

@@ -598,7 +598,8 @@ checks pause and rate limits again; the recovery interval restarts after the bou
 giving fresh jobs a read turn between passes.
 Idle or paused readers check again within `SchedulingPollInterval` (one second when no queue
 options are supplied), subject to Redis availability. Busy readers check on every claim.
-Idle reads also honor a shorter `ReadWait`. Generic stream workers retain blocking, batched reads.
+Idle reads also honor a shorter `ReadWait`, with a minimum positive delay of one millisecond.
+Generic stream workers retain blocking, batched reads.
 
 The rate policy uses fixed windows and Redis server time. All hosts share one admission budget,
 including replay and recovery attempts. At most `PermitLimit` claims are admitted during a window;

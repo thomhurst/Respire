@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Respire.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -9,6 +11,60 @@ namespace Respire.Streaming.Tests;
 
 public class JobQueueTests
 {
+    [Test, NotInParallel]
+    public async Task SubMillisecondReadWaitPacesIdleJobReads()
+    {
+        const int WarmupReads = 16;
+        const int SampleReads = 128;
+
+        await using var server = new RespireFakeServer();
+        var elapsed = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var emptyRead = RespireFakeResponse.Array(RespireFakeResponse.Bulk("0-0"),
+            RespireFakeResponse.Array(), RespireFakeResponse.Integer(0), RespireFakeResponse.Integer(0));
+        int reads = 0;
+        long firstSample = 0;
+        server.RegisterScript(JobQueueControlTests.ControlScript("Read"), (_, _, _) =>
+        {
+            // Warm the first reads before timing an uninterrupted sample of empty replies.
+            switch (++reads)
+            {
+                case WarmupReads:
+                    firstSample = Stopwatch.GetTimestamp();
+                    break;
+                case WarmupReads + SampleReads:
+                    elapsed.TrySetResult(Stopwatch.GetElapsedTime(firstSample));
+                    break;
+            }
+
+            return emptyRead;
+        });
+
+        await using RespireClient client = await RespireClient.ConnectAsync(server.CreateOptions());
+        IServiceCollection services = new ServiceCollection().AddSingleton<IRespireClient>(client);
+        services.AddRespireJobQueue<Handler, string>("queue", Encoding.UTF8.GetBytes, Encoding.UTF8.GetString,
+            new RespireStreamWorkerOptions
+            {
+                ReadWait = TimeSpan.FromTicks(5_000),
+                RecoveryPollInterval = TimeSpan.FromMinutes(1),
+            });
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        IHostedService worker = provider.GetRequiredService<IHostedService>();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await worker.StartAsync(deadline.Token);
+
+        try
+        {
+            TimeSpan sample = await elapsed.Task.WaitAsync(deadline.Token);
+            // Allow for timer granularity while catching a loop with no delay between reads.
+            await Assert.That(sample).IsGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(50));
+        }
+        finally
+        {
+            using var stopping = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await worker.StopAsync(stopping.Token);
+        }
+    }
+
     [Test]
     public async Task InvalidDeduplicationModesAreRejectedBeforeSerialization()
     {
