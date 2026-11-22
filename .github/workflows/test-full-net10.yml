@@ -67,6 +67,9 @@ jobs:
               TUNIT_DISABLE_HTML_REPORTER=true dotnet run --project "$project" -c Release -f net10.0 --no-build -- \
                 --treenode-filter '/*/*/(!MetricSelectionTests)/*' --report-trx \
                 --report-trx-filename Respire.Tests-core-net10.trx
+            elif [[ "$project" == tests/Respire.Caching.Tests ]]; then
+              # The HTML reporter's listener changes the cache hit path measured by the allocation test.
+              TUNIT_DISABLE_HTML_REPORTER=true dotnet run --project "$project" -c Release -f net10.0 --no-build -- --report-trx
             else
               dotnet run --project "$project" -c Release -f net10.0 --no-build -- --report-trx
             fi

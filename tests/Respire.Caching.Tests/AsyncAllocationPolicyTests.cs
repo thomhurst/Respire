@@ -12,7 +12,7 @@ public class AsyncAllocationPolicyTests
     public async Task HotValueTaskMethodsUsePoolingBuilder()
     {
         // TryGetAsync is a synchronous ownership entry; its asynchronous work lives here.
-        string[] methodNames = ["TryGetCoreAsync", "SetCoreAsync", "RunGetScriptAsync"];
+        string[] methodNames = ["TryGetCoreAsync", "SetCoreAsync", "RunGetScriptAsync", "RunGetScriptCoreAsync"];
         var methods = typeof(RespireDistributedCache).GetMethods(
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 

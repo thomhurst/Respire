@@ -54,7 +54,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           redis.call('PERSIST', KEYS[1])
         end
         return 1
-        """);
+        """, readOnly: false, cacheReadOnly: false, accessesOnlyDeclaredKeys: true);
 
     // ARGV: [1] '1' to return the payload ('0' for refresh-only), [2] current UTC ticks (the
     // app's clock, sampled just before the send — a delayed send re-arms from a "now" stale by
@@ -110,7 +110,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           return {capped, entry[3]}
         end
         return {capped}
-        """);
+        """, readOnly: false, cacheReadOnly: false, accessesOnlyDeclaredKeys: true);
 
     // Shrink-only TTL correction for a set whose send was delayed (see CapDelayedTtlAsync).
     // ARGV: [1] absexp and [2] sldexp exactly as the delayed set stored them — a mismatch on
@@ -135,7 +135,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           redis.call('PEXPIRE', KEYS[1], remaining)
         end
         return 1
-        """);
+        """, readOnly: false, cacheReadOnly: false, accessesOnlyDeclaredKeys: true);
 
     // Shrink-only TTL correction for a sliding read whose send was delayed (see
     // RunGetScriptAsync). ARGV: [1] a fresh app-clock "now" (UTC ticks). Unlike CapTtlScript
@@ -164,7 +164,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           end
         end
         return 1
-        """);
+        """, readOnly: false, cacheReadOnly: false, accessesOnlyDeclaredKeys: true);
 
     private readonly IRespireClient _client;
     private readonly IRespireValueCodec? _valueCodec;
@@ -1009,6 +1009,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         return await RunGetScriptCoreAsync(key, returnData, token, trackedWire, observation).ConfigureAwait(false);
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
     private async ValueTask<RespireResult> RunGetScriptCoreAsync(string key, bool returnData, CancellationToken token,
         RespireClient? trackedWire, RespireTelemetry.ErrorObservation observation)
     {

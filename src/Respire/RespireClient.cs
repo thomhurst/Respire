@@ -6539,7 +6539,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
         var mutationFence = cache is null || (physicalKeys ? script.IsCacheReadOnly : script.IsReadOnly) ? default
-            : physicalKeys ? cache.BeginKeysMutation(keys) : cache.BeginUnknownMutation();
+            : physicalKeys ? cache.BeginKeysMutation(keys) : BeginScriptMutation(cache, script, keys);
         var responseOwnsFence = false;
         var started = RespireTelemetry.CaptureOperationStart(script.EvalShaOperation);
         var telemetryDispatched = false;
@@ -6887,31 +6887,47 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             connection,
             core.Options.Database,
             storedProcedureName: script.Sha1, started: started);
-        var telemetryEndpoint = new RespireEndpoint(connection.Host, connection.Port);
-        RespireConnection? telemetryConnection = connection;
+        // Only a redirect can move the reply to another endpoint; allocate its tracker only then.
+        ScriptRedirectTelemetry? redirect = execution.FollowsReplicaRedirects ? new ScriptRedirectTelemetry(telemetry, connection) : null;
 
         try
         {
             var result = await ExecuteScriptOnConnectionCoreAsync(
                     connection, script, tail, cancellationToken, mutationFence, execution.ErrorObservation, execution,
-                    commandDeadline: execution.FollowsReplicaRedirects ? CreateCircuitDeadline() : default,
-                    onEndpointSelected: execution.FollowsReplicaRedirects ? (endpoint, selected) =>
-                    {
-                        telemetryEndpoint = endpoint;
-                        telemetryConnection = selected;
-                        telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
-                    }
-            : null)
+                    commandDeadline: redirect is not null ? CreateCircuitDeadline() : default,
+                    onEndpointSelected: redirect is not null ? redirect.OnEndpointSelected : null)
                 .ConfigureAwait(false);
-            telemetry.Complete(script.EvalShaOperation, telemetryEndpoint.Host, telemetryEndpoint.Port,
-                core.Options.Database, script.Sha1, connection: telemetryConnection);
+            telemetry.Complete(script.EvalShaOperation, redirect?.Endpoint.Host ?? connection.Host,
+                redirect?.Endpoint.Port ?? connection.Port, core.Options.Database, script.Sha1,
+                connection: redirect is not null ? redirect.Connection : connection);
             return result;
         }
         catch (Exception ex)
         {
-            telemetry.Complete(script.EvalShaOperation, telemetryEndpoint.Host, telemetryEndpoint.Port,
-                core.Options.Database, script.Sha1, ex, telemetryConnection);
+            telemetry.Complete(script.EvalShaOperation, redirect?.Endpoint.Host ?? connection.Host,
+                redirect?.Endpoint.Port ?? connection.Port, core.Options.Database, script.Sha1, ex,
+                redirect is not null ? redirect.Connection : connection);
             throw;
+        }
+    }
+
+    private sealed class ScriptRedirectTelemetry(RespireTelemetry.OperationScope telemetry, RespireConnection connection)
+    {
+        internal RespireEndpoint Endpoint
+        {
+            get; private set;
+        } = new(connection.Host, connection.Port);
+
+        internal RespireConnection? Connection
+        {
+            get; private set;
+        } = connection;
+
+        internal void OnEndpointSelected(RespireEndpoint endpoint, RespireConnection? selected)
+        {
+            Endpoint = endpoint;
+            Connection = selected;
+            telemetry.UpdateServerEndpoint(endpoint.Host, endpoint.Port);
         }
     }
 
@@ -6934,7 +6950,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         try
         {
             reply = await SendScriptCommandAsync(
-                script.EvalShaOperation, connection, new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]),
+                script.EvalShaOperation, connection, new Cmd1N(script.EvalShaVerb, script.Sha1, tail),
                 cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline,
                 onEndpointSelected).ConfigureAwait(false);
         }
@@ -6949,7 +6965,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
             observation.Handled(error);
             reply = await SendScriptCommandAsync(
-                script.EvalOperation, execution?.Connection ?? connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]),
+                script.EvalOperation, execution?.Connection ?? connection, new Cmd1N(script.EvalVerb, script.Source, tail),
                 cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline,
                 onEndpointSelected).ConfigureAwait(false);
         }
@@ -6960,7 +6976,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     private ValueTask<RespValue> SendScriptCommandAsync(
         string operation,
         RespireConnection connection,
-        Cmd2N command,
+        Cmd1N command,
         CancellationToken cancellationToken,
         TrackedScriptExecution? execution, ClientSideCacheCoordinator.MutationFence mutationFence, bool cacheReadOnly,
         RespireTelemetry.ErrorObservation observation, CommandDeadline commandDeadline = default,
@@ -6968,7 +6984,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     {
         if (!mutationFence.IsRequired)
         {
-            var readOnly = ReadOnlyCommand<Cmd2N>.ForAuditedScript(command, cacheReadOnly);
+            var readOnly = ReadOnlyCommand<Cmd1N>.ForAuditedScript(command, cacheReadOnly);
 
             if (execution is { FollowsReplicaRedirects: true })
             {
@@ -6986,10 +7002,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             return execution is null
                 ? SendOnConnectionCoreAsync(operation, connection, readOnly, cancellationToken, observation: observation, commandDeadline: commandDeadline)
                 : SendOnConnectionCoreAsync(operation, connection,
-                    new SendTimestampCommand<ReadOnlyCommand<Cmd2N>>(readOnly, execution), cancellationToken, observation: observation, commandDeadline: commandDeadline);
+                    new SendTimestampCommand<ReadOnlyCommand<Cmd1N>>(readOnly, execution), cancellationToken, observation: observation, commandDeadline: commandDeadline);
         }
 
-        var bound = new MutationCommand<Cmd2N>(command, mutationFence);
+        var bound = new MutationCommand<Cmd1N>(command, mutationFence);
 
         if (execution is { FollowsReplicaRedirects: true })
         {
@@ -7007,7 +7023,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         return execution is null
             ? SendOnConnectionCoreAsync(operation, connection, bound, cancellationToken, observation: observation, commandDeadline: commandDeadline)
             : SendOnConnectionCoreAsync(operation, connection,
-                new SendTimestampCommand<MutationCommand<Cmd2N>>(bound, execution), cancellationToken, observation: observation, commandDeadline: commandDeadline);
+                new SendTimestampCommand<MutationCommand<Cmd1N>>(bound, execution), cancellationToken, observation: observation, commandDeadline: commandDeadline);
     }
 
     /// <summary>
@@ -7100,6 +7116,26 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         {
             await core.Multiplexer.RetireConnectionAsync(identity.ServerClientId).ConfigureAwait(false);
         }
+    }
+
+    // A script audited to touch only KEYS fences those keys, as the equivalent commands would.
+    // Any other script can reach undeclared keys, so it fences the whole client-side cache.
+    internal ClientSideCacheCoordinator.MutationFence BeginScriptMutation(
+        ClientSideCacheCoordinator cache, RespireScript script, RespireKey[] keys)
+    {
+        if (!script.AccessesOnlyDeclaredKeys || keys.Length == 0)
+        {
+            return cache.BeginUnknownMutation();
+        }
+
+        var physical = new RespireKey[keys.Length];
+
+        for (int index = 0; index < keys.Length; index++)
+        {
+            physical[index] = Key(in keys[index]).AsKey().Snapshot();
+        }
+
+        return cache.BeginKeysMutation(physical);
     }
 
     internal RespireValue[] BuildScriptTail(RespireKey[]? keys, RespireValue[]? args)
