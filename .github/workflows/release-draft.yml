@@ -166,7 +166,9 @@ jobs:
             # Re-read the draft just before updating it, and leave it alone if it was published in
             # the meantime. A publish in the sub-second gap between this read and the PATCH can still
             # be renamed; the PATCH never sends draft=true, so it cannot turn a release back into a draft.
-            if [ "$(gh api "$repo/releases/$draft_id" --jq .draft)" != true ]; then
+            # Captured first: a failed request must fail the step, not read as "published".
+            still_draft=$(gh api "$repo/releases/$draft_id" --jq .draft)
+            if [ "$still_draft" != true ]; then
               echo "::warning::Release $draft_id is no longer a draft; leaving it unchanged."
               exit 0
             fi
