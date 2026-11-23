@@ -1,3 +1,5 @@
+using System.Text;
+using Respire.Tests.Models;
 using TUnit.Assertions;
 
 namespace Respire;
@@ -15,6 +17,57 @@ public partial record ExpiringHashModel(string Id, string Name,
 
 internal static class GeneratedHashModelScenarios
 {
+    public static async Task BinaryFieldNamesAsync(IRespireClient root)
+    {
+        var client = root.WithKeyPrefix("generated:" + Guid.NewGuid().ToString("N") + ":");
+        var model = new StoredHashModel("id", "Ada", 0, null, null);
+        RespireKey modelKey = StoredHashModelHashMapper.GetKey(model);
+        await StoredHashModelHashMapper.SetAsync(client, model);
+        await SetBinaryFieldsAsync(client, modelKey);
+
+        await Assert.That(await client.Hashes.CountAsync(modelKey)).IsEqualTo(5);
+        var partial = await StoredHashModelHashMapper.GetPartialAsync(client, modelKey, ["Name"]);
+        await Assert.That(partial.Name.Found).IsTrue();
+        await Assert.That(partial.Name.Value).IsEqualTo("Ada");
+
+        const string replacement = "\uFFFD";
+#pragma warning disable RESP011 // The test creates and counts the five fields before reading the entire hash.
+        var text = await client.Hashes.GetAllAsync(modelKey);
+        var typed = await client.Hashes.GetAllAsync<byte[]>(modelKey);
+#pragma warning restore RESP011
+
+        await Assert.That(text.Count).IsEqualTo(4);
+        await Assert.That(text["Name"]).IsEqualTo("Ada");
+        await Assert.That(text[replacement] is "first" or "second").IsTrue();
+
+        await Assert.That(typed.Count).IsEqualTo(4);
+        await Assert.That(typed["Name"].AsSpan().SequenceEqual("Ada"u8)).IsTrue();
+        await Assert.That(Encoding.UTF8.GetString(typed[replacement]) is "first" or "second").IsTrue();
+
+        await Assert.That(await StoredHashModelHashMapper.GetAsync(client, modelKey)).IsEqualTo(model);
+
+        await SetBinaryFieldsAsync(client, "binary-only");
+        await Assert.That(await NullableHashModelHashMapper.GetAsync(client, "binary-only"))
+            .IsEqualTo(new NullableHashModel(null, null));
+        await Assert.That(async () => await StoredHashModelHashMapper.GetAsync(client, "binary-only"))
+            .Throws<FormatException>();
+
+        var searchModel = new SearchHashModel("id", "Ada", "authors", 1, new byte[8]);
+        RespireKey searchKey = SearchHashModelHashMapper.GetKey(searchModel);
+        await SearchHashModelHashMapper.SetAsync(client, searchModel);
+        await SetBinaryFieldsAsync(client, searchKey);
+        var searchResult = await SearchHashModelHashMapper.GetAsync(client, searchKey);
+        await Assert.That(searchResult?.Title).IsEqualTo("Ada");
+        await Assert.That(searchResult!.Embedding).IsEquivalentTo(searchModel.Embedding);
+    }
+
+    private static async Task SetBinaryFieldsAsync(IRespireClient client, RespireKey key)
+    {
+        using var reply = await client.ExecuteAsync(
+            RespireCommands.Hash.HSET, key.AsValue(), new byte[] { 0xff }, "first", new byte[] { 0xfe }, "second");
+        await Assert.That(reply.AsInteger()).IsEqualTo(2);
+    }
+
     public static async Task RoundTripAsync(IRespireClient root)
     {
         var client = root.WithKeyPrefix("generated:" + Guid.NewGuid().ToString("N") + ":");
