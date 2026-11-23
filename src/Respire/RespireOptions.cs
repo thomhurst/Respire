@@ -1074,15 +1074,7 @@ public sealed record RespireOptions
 
         if (ClientSideCache is { } cache)
         {
-            // OPTIN/OPTOUT Cluster ASK redirects can send ASKING, CACHING, and the read atomically.
-            var hasCachingPrelude = cache.TrackingMode != RespireClientTrackingMode.Broadcast;
-            var requiredInflightCommands = hasCachingPrelude ? 2 : 1;
-
-            if (UseCluster)
-            {
-                requiredInflightCommands = hasCachingPrelude ? 3 : 2;
-            }
-
+            int requiredInflightCommands = GetMinimumTrackingInflightCommands(cache.TrackingMode);
             var requirement = requiredInflightCommands switch
             {
                 3 => "must be at least three for OPTIN/OPTOUT caching with Cluster ASK redirects",
@@ -1128,6 +1120,14 @@ public sealed record RespireOptions
             KeyPrefix = KeyPrefix.IsEmpty ? default : KeyPrefix.Snapshot(),
             PubSubPrefix = PubSubPrefix.IsEmpty ? default : PubSubPrefix.Snapshot(),
         };
+    }
+
+    internal int GetMinimumTrackingInflightCommands(RespireClientTrackingMode trackingMode)
+    {
+        // Reserve one slot for the read, plus ASKING in Cluster and CACHING for OPTIN/OPTOUT.
+        int redirectSlots = UseCluster ? 1 : 0;
+        int trackingSlots = trackingMode == RespireClientTrackingMode.Broadcast ? 0 : 1;
+        return 1 + redirectSlots + trackingSlots;
     }
 
     private void ValidateEndpoint(RespireEndpoint endpoint, string optionName)

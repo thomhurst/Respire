@@ -23,6 +23,88 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
     };
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LocalOnlyEntriesIgnoreRedisTrackingFailures(bool useDefaultFlags)
+    {
+        await using var source = RespireClient.Create(fixture.IsolatedConnectionString);
+        var localOnly = new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCache };
+        var cacheOptions = useDefaultFlags ? null : localOnly;
+        await using var provider = BuildProvider(true, source, configureHybridCache: options =>
+        {
+            if (useDefaultFlags)
+            {
+                options.DefaultEntryOptions = localOnly;
+            }
+        });
+        var cache = Coherent(provider);
+        var key = NewKey();
+        await source.Strings.SetAsync(InstanceName + key, "redis string");
+
+        await cache.SetAsync(key, "local seed", cacheOptions);
+        await Assert.That(await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("factory"), cacheOptions))
+            .IsEqualTo("local seed");
+
+        // Keep a tracked generation so shutting down the tracker signals loss of tracking.
+        var trackedKey = NewKey();
+        var tracked = new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite };
+        await cache.SetAsync(trackedKey, "tracked", tracked);
+        await Assert.That(cache.ObservationCount).IsEqualTo(2);
+        await cache.TrackingClient.DisposeAsync();
+        await Assert.That(cache.ObservationCount).IsEqualTo(1);
+
+        await Assert.That(await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("factory"), cacheOptions))
+            .IsEqualTo("local seed");
+        var newKey = NewKey();
+        await Assert.That(await cache.GetOrCreateAsync(newKey, _ => ValueTask.FromResult("first"), cacheOptions))
+            .IsEqualTo("first");
+        await Assert.That(await cache.GetOrCreateAsync(newKey, _ => ValueTask.FromResult("second"), cacheOptions))
+            .IsEqualTo("first");
+        await Assert.That(await source.Strings.GetAsync<string>(InstanceName + key)).IsEqualTo("redis string");
+    }
+
+    [Test]
+    public async Task TrackedReadsDoNotReuseLocalOnlyValues()
+    {
+        await using var writer = BuildProvider(false);
+        await using var reader = BuildProvider(true);
+        var key = NewKey();
+        await writer.GetRequiredService<HybridCache>().SetAsync(key, "shared", LongLived);
+        var cache = Coherent(reader);
+        var localOnly = new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableDistributedCache };
+        await cache.SetAsync(key, "local", localOnly);
+        await Assert.That(await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("factory"), localOnly))
+            .IsEqualTo("local");
+
+        await Assert.That(await ReadAsync(cache, key)).IsEqualTo("shared");
+    }
+
+    [Test]
+    [Arguments(RespireClientTrackingMode.OptIn)]
+    [Arguments(RespireClientTrackingMode.OptOut)]
+    [Arguments(RespireClientTrackingMode.Broadcast)]
+    public async Task CoherenceWorksWithOneSourceCommandSlot(RespireClientTrackingMode mode)
+    {
+        await using var source = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with
+        {
+            MaxInflightCommands = 1,
+        });
+        await using var writer = BuildProvider(false, source);
+        await using var reader = BuildProvider(true, source, configure: options =>
+            options.TrackingOptions = new() { TrackingMode = mode });
+        var key = NewKey();
+        var writerCache = writer.GetRequiredService<HybridCache>();
+        var readerCache = Coherent(reader);
+        await writerCache.SetAsync(key, "old", LongLived);
+        await PrimeAsync(readerCache, key);
+
+        await writerCache.SetAsync(key, "new", LongLived);
+        await UntilAsync(() => readerCache.ObservationCount == 0);
+
+        await Assert.That(await ReadAsync(readerCache, key)).IsEqualTo("new");
+    }
+
+    [Test]
     [NotInParallel]
     public async Task ReplicaRoutingOnTheSourceStillTracksPrimaryInvalidations()
     {
@@ -682,7 +764,8 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
 
     private ServiceProvider BuildProvider(bool coherent, RespireClient? client = null, string? clientPrefix = null,
         bool codec = false, Action<RespireHybridCacheCoherenceOptions>? configure = null, ParkedSerializer? serializer = null,
-        IRespireValueCodec? valueCodec = null, IMemoryCache? memory = null)
+        IRespireValueCodec? valueCodec = null, IMemoryCache? memory = null,
+        Action<HybridCacheOptions>? configureHybridCache = null)
     {
         var services = new ServiceCollection();
 
@@ -709,7 +792,7 @@ public partial class RespireHybridCacheCoherenceTests(RedisTestContainer fixture
             {
                 options.ValueCodec = valueCodec;
             }
-        });
+        }, configureHybridCache);
 
         if (serializer is not null)
         {

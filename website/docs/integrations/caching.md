@@ -155,9 +155,12 @@ builder.Services.AddRespireHybridCache("redis://localhost", instanceName: "myapp
 
 When L1 is skipped:
 
-- Keys outside the tracking prefixes, failed tracking reads, and keys beyond `MaxObservedKeys`
-  use L2 only.
-- Tracking-client shutdown retires L1 and stops further local admission.
+- Keys outside the tracking prefixes and failed tracking reads use L2 only. Tracking-client
+  shutdown retires tracked L1 entries and stops further tracked admission.
+- Use `HybridCacheEntryFlags.DisableDistributedCache` for local-only entries. These entries
+  skip Redis key tracking and still count toward `MaxObservedKeys`. Use the same flags when
+  setting and reading a key. Switching between local-only and tracked access replaces the
+  local generation for that key.
 - Explicit clears and continuity losses on an observed registered client retire the matching
   local entries.
 
@@ -178,6 +181,7 @@ Costs and bounds:
 - Size `MaxObservedKeys` for your working set. Expired or evicted entries release idle
   observations. The sweep runs every `ObservationSweepInterval`, which defaults to 30 seconds
   and must be at least 1 millisecond. Active requests keep observations until they finish.
+  When the limit is reached, new keys bypass L1.
 - The provider's own L2 writes also notify the tracker, so a miss or `SetAsync` can retire its
   first L1 entry. The next read reloads L2, then L1 serves until the next invalidation.
 - Local `RemoveByTagAsync` writes the shared tag marker once. `MaxRememberedTagInvalidations`
@@ -228,7 +232,8 @@ builder.Services.AddRespireHybridCache("redis://localhost", instanceName: "myapp
 - Unrelated idle L1 entries stay cached. Active fills are retired conservatively: callers
   already waiting can get the earlier result, but later requests cannot join that fill.
 - The first local admission waits for the subscriber acknowledgment and honors the request's
-  cancellation token. The subscriber uses the client's `ConnectTimeout` and `CommandTimeout`
+  cancellation token. Requests with `HybridCacheEntryFlags.DisableLocalCache` can use L2
+  while the subscriber starts. The subscriber uses the client's `ConnectTimeout` and `CommandTimeout`
   (10 seconds each by default). Disabling `CommandTimeout` removes the acknowledgment deadline,
   so pass a cancellation token.
 - Startup failure, terminal subscriber failure, or a replay or cleanup failure disables L1 for
