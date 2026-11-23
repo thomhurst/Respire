@@ -225,6 +225,8 @@ try {
         New-TemplateApp 'respire-api' 'Catalog_Api' 2
         New-TemplateApp 'respire-worker' $workerName 4
         New-TemplateApp 'respire-worker' 'Shop_Workers' 4
+        New-TemplateApp 'respire-worker' 'event' 4
+        New-TemplateApp 'respire-worker' 'Renamed.event' 4
 
         docker run --detach --rm --name $container --memory 128m --cpus 1 --publish 127.0.0.1::6379 redis:7-alpine | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Could not start template Redis.' }

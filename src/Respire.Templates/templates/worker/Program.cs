@@ -7,7 +7,7 @@ using Respire.DependencyInjection;
 using Respire.HealthChecks;
 using Respire.Streaming;
 using Respire.Streaming.Dashboard;
-using RespireWorker;
+using RespireStarter.Worker;
 
 var builder = WebApplication.CreateBuilder(args);
 if (string.IsNullOrWhiteSpace(builder.Configuration["Dashboard:Password"]))

@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 using Respire;
 using Respire.Streaming;
 
-namespace RespireWorker;
+namespace RespireStarter.Worker;
 
 public sealed record SampleJob(string Message);
 
