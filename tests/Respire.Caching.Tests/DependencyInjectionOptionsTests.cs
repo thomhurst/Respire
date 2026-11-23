@@ -552,6 +552,29 @@ public class DependencyInjectionOptionsTests
         await Assert.That(options.UseMappedHostForTls).IsTrue();
     }
 
+    [Test]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task Configuration_BindsCacheAndDedicatedPoolFlags(bool noLoop, bool unblockOnCancel)
+    {
+        var services = new ServiceCollection();
+        services.AddRespire(Section(new()
+        {
+            ["Endpoints:0"] = "localhost:6379",
+            ["ClientSideCache:MaxEntries"] = "123",
+            ["ClientSideCache:NoLoop"] = noLoop.ToString(),
+            ["DedicatedPool:MaximumSize"] = "5",
+            ["DedicatedPool:UnblockOnCancel"] = unblockOnCancel.ToString(),
+        }));
+
+        await using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptions<RespireOptions>>().Value;
+        await Assert.That(options.ClientSideCache!.MaxEntries).IsEqualTo(123);
+        await Assert.That(options.ClientSideCache.NoLoop).IsEqualTo(noLoop);
+        await Assert.That(options.DedicatedPool.MaximumSize).IsEqualTo(5);
+        await Assert.That(options.DedicatedPool.UnblockOnCancel).IsEqualTo(unblockOnCancel);
+    }
+
     private sealed class CommandHook : RespireCommandHook
     {
         public override object? OnExecuting(RespireCommandContext context) => null;

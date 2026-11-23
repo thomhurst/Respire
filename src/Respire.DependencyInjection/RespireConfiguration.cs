@@ -131,6 +131,7 @@ internal static class RespireConfiguration
             MaximumSize = OptionalInt32(section, "MaximumSize", options.MaximumSize),
             MaximumIdle = section.GetValue("MaximumIdle", options.MaximumIdle),
             IdleTimeout = OptionalTimeSpan(section, "IdleTimeout", options.IdleTimeout),
+            UnblockOnCancel = section.GetValue("UnblockOnCancel", options.UnblockOnCancel),
         };
     }
 
@@ -209,6 +210,7 @@ internal static class RespireConfiguration
             KeyPrefixes = prefixes.Exists() ? prefixes.GetChildren().Select(prefix => (RespireKey)(prefix.Value
                 ?? throw new InvalidOperationException($"{prefix.Path} must be a string."))).ToArray() : options.KeyPrefixes,
             TrackingMode = section.GetValue("TrackingMode", options.TrackingMode),
+            NoLoop = section.GetValue("NoLoop", options.NoLoop),
             CoalesceConcurrentMisses = section.GetValue("CoalesceConcurrentMisses", options.CoalesceConcurrentMisses),
             ReuseHashFields = section.GetValue("ReuseHashFields", options.ReuseHashFields),
         };
