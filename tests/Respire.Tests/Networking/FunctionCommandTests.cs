@@ -164,6 +164,27 @@ public class FunctionCommandTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MissingFunctionReloadMatchesNamesIgnoringAsciiCase(bool alreadyLoaded)
+    {
+        const string source = "#!lua name=sample\nreturn 1";
+        byte[] missing = "-ERR Function not found\r\n"u8.ToArray();
+        byte[] metadata = FunctionLibraryList(source, "caseEcho");
+        byte[] success = ":42\r\n"u8.ToArray();
+        byte[][] replies = alreadyLoaded
+            ? [missing, metadata, success]
+            : [missing, "*0\r\n"u8.ToArray(), "$6\r\nsample\r\n"u8.ToArray(), metadata, success];
+        await using var server = new FakeRespServer(replies);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var function = RespireFunctionLibrary.Create(source).Function("CASEECHO", readOnly: true);
+
+        await Assert.That(await client.Functions.ExecuteIntegerAsync(function)).IsEqualTo(42);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "FCALL_RO CASEECHO 0")).IsEqualTo(2);
+        await Assert.That(server.CommandsSeen).IsEqualTo(replies.Length);
+    }
+
+    [Test]
     public async Task MissingFunctionReloadIsBoundedAndOtherErrorsNeverRetry()
     {
         var missing = "-ERR Function not found\r\n"u8.ToArray();
@@ -363,7 +384,7 @@ public class FunctionCommandTests
         await using var server = new FakeRespServer("-ERR Function not found\r\n"u8.ToArray(), "*0\r\n"u8.ToArray(),
             "-ERR Library 'sample' already exists\r\n"u8.ToArray(), metadata, ":42\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var function = RespireFunctionLibrary.Create(source).Function("function");
+        var function = RespireFunctionLibrary.Create(source).Function("FUNCTION");
 
         if (outcome == 0)
         {

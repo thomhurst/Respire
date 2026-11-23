@@ -378,9 +378,10 @@ An empty `Weights` uses one for every key. Otherwise supply exactly one `double`
 per input key, in key order. `Sum`, `Min`, and `Max` combine scores after multiplying
 by the corresponding weight. `Count` ignores original scores: without weights it
 counts the input sets containing each member; with weights it sums those sets'
-weights. **`Count` requires Redis 8.8 or later**; Respire sends the selected option
-and older servers reject it. The read commands require Redis 6.2 or later; the
-store commands support weights and SUM/MIN/MAX from Redis 2.0.
+weights. **`Count` requires Redis 8.8 or later.** Redis versions before 8.8 and
+Valkey 9.2 reject `AGGREGATE COUNT`. Valkey 9.2 supports `Sum`, `Min`, and `Max`
+for both read and store combinations. On Redis, the read commands require 6.2
+or later, and the store commands support weights and SUM/MIN/MAX from 2.0.
 
 The options overloads reject empty key lists, mismatched weight counts, and unknown
 aggregate values before dispatch. `batch.SortedSets` and `transaction.SortedSets`
@@ -504,9 +505,12 @@ long removed = await redis.Streams.TrimAsync("events", new RespireStreamTrimOpti
 - MINID and LIMIT require Redis 6.2+; MAXLEN requires Redis 5.0+. See [XADD](https://redis.io/docs/latest/commands/xadd/) and [XTRIM](https://redis.io/docs/latest/commands/xtrim/).
 - Queued `Streams.Add` and `Streams.Trim` validate and copy keys and values when queued. Immediate calls borrow binary keys and values until the call completes.
 
-### Reference-aware removal (Redis 8.2+)
+### Reference-aware removal {#reference-aware-removal-redis-82}
 
-`RespireStreamReferencePolicy` controls pending-entry references for XDELEX, XACKDEL, and trimming (`RespireStreamAddOptions.ReferencePolicy`, `RespireStreamTrimOptions.ReferencePolicy`). Null omits the token, which works on older servers. Any explicit policy, including `KeepReferences`, requires Redis 8.2+.
+`RespireStreamReferencePolicy` controls pending-entry references during removal, acknowledgement, and trimming.
+
+- XDELEX and XACKDEL support reference policies on Redis 8.2+ and Valkey 9.2+.
+- XADD and XTRIM support reference policies on Redis 8.2+. Valkey 9.2 rejects these options. Leave `RespireStreamAddOptions.ReferencePolicy` and `RespireStreamTrimOptions.ReferencePolicy` null to omit the policy token when adding or trimming on Valkey or older Redis servers.
 
 | Policy | Wire token | Effect |
 |---|---|---|

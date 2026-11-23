@@ -671,7 +671,7 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
 
         if (matching is not null)
         {
-            return matching.Functions.Any(function => function.Name == functionName);
+            return LibraryContainsFunction(matching, functionName);
         }
 
         try
@@ -680,7 +680,7 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
                 static (FunctionCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken,
                 observation: observation).ConfigureAwait(false);
             matching = await FindMatchingLibraryAsync(connection, library, cancellationToken, observation).ConfigureAwait(false);
-            return matching?.Functions.Any(function => function.Name == functionName) == true;
+            return LibraryContainsFunction(matching, functionName);
         }
         catch (RespireServerException error) when (!library.Replace
             && error.Message == $"ERR Library '{library.Name}' already exists")
@@ -697,8 +697,15 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
                 throw;
             }
 
-            return matching.Functions.Any(function => function.Name == functionName);
+            return LibraryContainsFunction(matching, functionName);
         }
+    }
+
+    private static bool LibraryContainsFunction(RespireFunctionLibraryInfo? library, string functionName)
+    {
+        // Redis and Valkey resolve registered function names without regard to ASCII case.
+        return library?.Functions.Any(function =>
+            function.Name == functionName || Ascii.EqualsIgnoreCase(function.Name, functionName)) == true;
     }
 
     private async ValueTask<RespireFunctionLibraryInfo?> FindMatchingLibraryAsync(RespireConnection connection,
