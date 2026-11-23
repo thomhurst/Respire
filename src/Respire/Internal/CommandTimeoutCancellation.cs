@@ -34,12 +34,30 @@ internal static class CommandTimeoutCancellation
             return source;
         }
 
+        var cancellation = CreateLongDeadline(callerToken, deadline);
+        token = cancellation.Token;
+        return cancellation;
+    }
+
+    internal static TimeoutScope CreateForTimeout(CancellationToken callerToken, TimeSpan timeout)
+    {
+        long milliseconds = timeout.Ticks / TimeSpan.TicksPerMillisecond;
+
+        if (milliseconds <= MaximumTimerMilliseconds)
+        {
+            return new TimeoutScope(Create(callerToken, timeout));
+        }
+
+        return new TimeoutScope(CreateLongDeadline(callerToken, CommandDeadline.After(milliseconds)));
+    }
+
+    private static DeadlineCancellation CreateLongDeadline(CancellationToken callerToken, CommandDeadline deadline)
+    {
         var cancellation = new DeadlineCancellation(callerToken);
 
         try
         {
             cancellation.Arm(deadline);
-            token = cancellation.Token;
             return cancellation;
         }
         catch
@@ -62,6 +80,42 @@ internal static class CommandTimeoutCancellation
         {
             source.Dispose();
             throw;
+        }
+    }
+
+    internal readonly struct TimeoutScope : IDisposable
+    {
+        private readonly CancellationTokenSource? _source;
+        private readonly DeadlineCancellation? _deadline;
+
+        internal TimeoutScope(CancellationTokenSource source)
+        {
+            _source = source;
+        }
+
+        internal TimeoutScope(DeadlineCancellation deadline)
+        {
+            _deadline = deadline;
+        }
+
+        internal CancellationToken Token => _deadline?.Token ?? _source!.Token;
+
+        internal void Disarm()
+        {
+            if (_deadline is { } deadline)
+            {
+                deadline.Disarm();
+            }
+            else
+            {
+                _source!.CancelAfter(Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        public void Dispose()
+        {
+            _deadline?.Dispose();
+            _source?.Dispose();
         }
     }
 }

@@ -53,6 +53,26 @@ public class CommandTimeoutCancellationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LongTimeoutFollowsCallerCancellation(bool disarm)
+    {
+        using var caller = new CancellationTokenSource();
+        using var timeout = CommandTimeoutCancellation.CreateForTimeout(caller.Token, TimeSpan.MaxValue);
+
+        if (disarm)
+        {
+            timeout.Disarm();
+        }
+
+        await Assert.That(timeout.Token.IsCancellationRequested).IsFalse();
+
+        caller.Cancel();
+
+        await Assert.That(timeout.Token.IsCancellationRequested).IsTrue();
+    }
+
+    [Test]
     public async Task ReturningLinkedSourceRemovesCallerRegistrationBeforeReuse()
     {
         // Other tests rent command timeout sources concurrently. A dedicated pool makes
