@@ -28,7 +28,17 @@ public readonly record struct RespireSlowLogEntry(
         Justification = "Response DTO retains its existing array storage without copying on access.")]
     string[] Command,
     string? ClientAddress,
-    string? ClientName);
+    string? ClientName)
+{
+    /// <summary>
+    /// Number of arguments before truncation, including the command name.
+    /// Null when the server omits the count.
+    /// </summary>
+    public long? OriginalArgumentCount
+    {
+        get; init;
+    }
+}
 
 /// <summary>A row returned by LATENCY LATEST.</summary>
 public readonly record struct RespireLatencySample(
@@ -138,6 +148,8 @@ public partial interface IRespireServerCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Slow command log entries. Redis: SLOWLOG GET [count].</summary>
+    /// <param name="count">Maximum entries to return. Use -1 for all retained entries or null for the server default of ten.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
     ValueTask<RespireSlowLogEntry[]> SlowLogAsync(
         long? count = null,
         CancellationToken cancellationToken = default);
@@ -266,7 +278,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
 
         try
         {
-            if (count is < 0)
+            if (count is < -1)
             {
                 throw new ArgumentOutOfRangeException(nameof(count));
             }
@@ -626,7 +638,12 @@ internal sealed partial class ServerCommands(RespireClient client) : IRespireSer
                 parts.Length > 2 ? FromMicroseconds(ReadInt64(in parts[2])) : TimeSpan.Zero,
                 parts.Length > 3 ? ParseStringArray(in parts[3]) : [],
                 parts.Length > 4 ? ReadOptionalString(in parts[4]) : null,
-                parts.Length > 5 ? ReadOptionalString(in parts[5]) : null);
+                parts.Length > 5 ? ReadOptionalString(in parts[5]) : null)
+            {
+                OriginalArgumentCount = parts.Length > 6 && parts[6].Type == RespireDataType.Integer
+                    ? parts[6].AsInteger()
+                    : null,
+            };
         }
 
         return result;

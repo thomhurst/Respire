@@ -28,7 +28,8 @@ public class ServerCommandTests
                 Integer(1234),
                 Array(Bulk("SET"), Bulk("key"), Bulk("value")),
                 Bulk("127.0.0.1:6379"),
-                Bulk("worker"))),
+                Bulk("worker"),
+                Integer(3))),
             SimpleString("OK"),
             Array(Array(Bulk("command"), Integer(latencyTimestamp), Integer(12), Integer(34))),
             Integer(1),
@@ -67,6 +68,7 @@ public class ServerCommandTests
         await Assert.That(slowLog[0].Command).IsEquivalentTo(["SET", "key", "value"]);
         await Assert.That(slowLog[0].ClientAddress).IsEqualTo("127.0.0.1:6379");
         await Assert.That(slowLog[0].ClientName).IsEqualTo("worker");
+        await Assert.That(slowLog[0].OriginalArgumentCount).IsEqualTo(3L);
 
         await client.Server.ResetSlowLogAsync();
 
@@ -139,6 +141,7 @@ public class ServerCommandTests
         await Assert.That(slowLog[0].Command).IsEquivalentTo(["PING"]);
         await Assert.That(slowLog[0].ClientAddress).IsNull();
         await Assert.That(slowLog[0].ClientName).IsNull();
+        await Assert.That(slowLog[0].OriginalArgumentCount).IsNull();
 
         var memory = await client.Server.MemoryStatsAsync();
         await Assert.That(memory.Values["peak.allocated"].AsInt64).IsEqualTo(1000);
@@ -149,6 +152,20 @@ public class ServerCommandTests
     }
 
     [Test]
+    [Arguments(-1)]
+    [Arguments(0)]
+    public async Task SlowLogAsync_SendsExplicitCount(int count)
+    {
+        await using var server = new FakeRespServer(Array());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var entries = await client.Server.SlowLogAsync(count);
+
+        await Assert.That(entries).IsEmpty();
+        await Assert.That(server.ReceivedCommands.Single()).IsEqualTo($"SLOWLOG GET {count}");
+    }
+
+    [Test]
     public async Task ServerIntrospectionCommands_ValidateBeforeSending()
     {
         await using var server = new FakeRespServer();
@@ -156,7 +173,7 @@ public class ServerCommandTests
 
         await Assert.That(async () => await client.Server.KillClientAsync(0))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Server.SlowLogAsync(-1))
+        await Assert.That(async () => await client.Server.SlowLogAsync(-2))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Server.MemoryUsageAsync("key", samples: -1))
             .Throws<ArgumentOutOfRangeException>();

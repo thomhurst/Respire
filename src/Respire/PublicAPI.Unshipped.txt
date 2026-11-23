@@ -1,4 +1,6 @@
 #nullable enable
+Respire.RespireSlowLogEntry.OriginalArgumentCount.get -> long?
+Respire.RespireSlowLogEntry.OriginalArgumentCount.init -> void
 Respire.RespireContinuationDispatch
 Respire.RespireContinuationDispatch.Adaptive = 0 -> Respire.RespireContinuationDispatch
 Respire.RespireContinuationDispatch.Inline = 1 -> Respire.RespireContinuationDispatch

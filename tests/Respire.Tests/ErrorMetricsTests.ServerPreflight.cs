@@ -46,7 +46,7 @@ public partial class ErrorMetricsTests
                     await client.Server.KillClientAsync(0);
                     break;
                 case "slowlog":
-                    await client.Server.SlowLogAsync(-1);
+                    await client.Server.SlowLogAsync(-2);
                     break;
                 case "latency":
                     await client.Server.ResetLatencyAsync("");

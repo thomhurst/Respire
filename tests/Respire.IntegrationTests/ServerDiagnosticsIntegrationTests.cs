@@ -8,6 +8,49 @@ namespace Respire.IntegrationTests;
 public class ServerDiagnosticsIntegrationTests
 {
     [Test]
+    [Arguments("redis:8.10", 2, true)]
+    [Arguments("redis:8.10", 3, true)]
+    [Arguments("valkey/valkey:9-alpine", 2, false)]
+    [Arguments("valkey/valkey:9-alpine", 3, false)]
+    public async Task SlowLogAsync_ReadsAllRetainedEntriesAndOriginalArgumentCount(
+        string image, int protocol, bool reportsArgumentCount)
+    {
+        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
+            .WithPortBinding(6379, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
+            .Build(), [6379]);
+        var address = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}&allowAdmin=true";
+        await using var client = await RespireClient.ConnectAsync(address);
+        var server = client.Server;
+        await server.SetConfigAsync("slowlog-max-len", 128);
+        await server.SetConfigAsync("slowlog-log-slower-than", 0);
+        await server.ResetSlowLogAsync();
+
+        for (int i = 0; i < 12; i++)
+        {
+            await client.GetStringAsync("slowlog:key");
+        }
+
+        RespireValue[] members = [.. Enumerable.Range(0, 40).Select(member => (RespireValue)member)];
+        (await client.Sets.AddAsync("slowlog:members", members)).Should().Be(40);
+
+        // Freeze the log so all reads see the same retained entries.
+        await server.SetConfigAsync("slowlog-log-slower-than", -1);
+        var all = await server.SlowLogAsync(-1);
+        all.Length.Should().BeGreaterThan(10);
+        all.LongLength.Should().Be(await server.SlowLogLengthAsync());
+        (await server.SlowLogAsync()).Select(entry => entry.Id).Should().Equal(all.Take(10).Select(entry => entry.Id));
+
+        var setAdd = all.Single(entry => entry.Command[0].Equals("SADD", StringComparison.OrdinalIgnoreCase));
+        setAdd.OriginalArgumentCount.Should().Be(reportsArgumentCount ? 42L : null);
+
+        if (reportsArgumentCount)
+        {
+            setAdd.Command.Should().HaveCount(32);
+        }
+    }
+
+    [Test]
     [Arguments("redis:6.2.14-alpine", 2, false)]
     [Arguments("redis:6.2.14-alpine", 3, false)]
     [Arguments("redis:7.0.15", 2, true)]
