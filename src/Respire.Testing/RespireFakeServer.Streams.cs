@@ -455,8 +455,13 @@ public sealed partial class RespireFakeServer
         for (var i = 0; i < length; i++)
         {
             var token = Token(args[index + length + i]);
-            ids[i] = (group is null && token == "$") || (group is not null && token == ">")
-                ? new RespireStreamId(token) : StreamId(args[index + length + i]);
+            ids[i] = token switch
+            {
+                "$" when group is null => RespireStreamId.New,
+                "+" when group is null => RespireStreamId.Max,
+                ">" when group is not null => new RespireStreamId(token),
+                _ => StreamId(args[index + length + i])
+            };
         }
 
         return new(group, consumer, count ?? long.MaxValue, maxCount ?? long.MaxValue, maxSize ?? long.MaxValue, block, keys, ids);
@@ -497,7 +502,7 @@ public sealed partial class RespireFakeServer
                         && entry.Value.Consumer.AsSpan().SequenceEqual(request.Consumer))
                     .OrderBy(entry => entry.Key)
                     .Select(entry => (Id: entry.Key, Fields: stream.Entries.GetValueOrDefault(entry.Key)))
-                : stream.Entries.Where(entry => entry.Key > cursor)
+                : ReadLiveStreamEntries(stream, cursor)
                     .Select(entry => (Id: entry.Key, Fields: (byte[][]?)entry.Value))).GetEnumerator();
             var hasEntry = candidates.MoveNext();
 
@@ -563,6 +568,13 @@ public sealed partial class RespireFakeServer
 
         return pairs.Count == 0 ? FakeReply.NullArray
             : connection.Resp3 ? FakeReply.Map(pairs.ToArray()) : FakeReply.Array(pairs.ToArray());
+    }
+
+    private static IEnumerable<KeyValuePair<RespireStreamId, byte[][]>> ReadLiveStreamEntries(FakeStream stream, RespireStreamId cursor)
+    {
+        return cursor == RespireStreamId.Max
+            ? stream.Entries.TakeLast(1)
+            : stream.Entries.Where(entry => entry.Key > cursor);
     }
 
     private FakeReply StreamAcknowledge(byte[][] args)
