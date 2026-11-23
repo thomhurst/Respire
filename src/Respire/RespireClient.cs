@@ -6425,9 +6425,11 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
                 {
                     observation.Handled(ex);
-                    clusterReply = await SendClusterScriptSourceAsync(cluster, script,
-                        new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments), replicaMiss?.Connection,
-                        mutationFence, scriptTelemetry, observation, cancellationToken).ConfigureAwait(false);
+                    var source = new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments);
+                    var command = new MutationCommand<ReadOnlyCommand<Cmd2N>>(
+                        ReadOnlyCommand<Cmd2N>.ForAuditedScript(source, script.IsCacheReadOnly), mutationFence);
+                    clusterReply = await SendClusterScriptSourceAsync(cluster, script, command, replicaMiss?.Connection,
+                        scriptTelemetry, observation, cancellationToken).ConfigureAwait(false);
                 }
 
                 scriptTelemetry?.Complete();
@@ -6540,16 +6542,14 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
     [RuntimeAsyncMethodGeneration(false)]
 #endif
     private async ValueTask<RespValue> SendClusterScriptSourceAsync(ClusterRouter cluster, RespireScript script,
-        Cmd2N source, RespireConnection? missingReplica, ClientSideCacheCoordinator.MutationFence mutationFence,
+        MutationCommand<ReadOnlyCommand<Cmd2N>> command, RespireConnection? missingReplica,
         ClusterScriptTelemetry? telemetry, RespireTelemetry.ErrorObservation observation, CancellationToken cancellationToken)
     {
-        var command = new MutationCommand<ReadOnlyCommand<Cmd2N>>(
-            ReadOnlyCommand<Cmd2N>.ForAuditedScript(source, script.IsCacheReadOnly), mutationFence);
         CommandDeadline deadline = default;
 
         // The script cache is node-local. Prefer the replica that missed while it still serves this slot.
         if (missingReplica is { IsAcceptingCommands: true, Multiplexer: { IsRetired: false } node }
-            && source.TryGetClusterSlot(out int slot) && cluster.RoutingSnapshot[slot].Replicas?.Nodes.Contains(node) == true
+            && command.TryGetClusterSlot(out int slot) && cluster.RoutingSnapshot[slot].Replicas?.Nodes.Contains(node) == true
             && !cluster.IsBacklogDraining(slot))
         {
             deadline = CreateCircuitDeadline();
