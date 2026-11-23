@@ -439,6 +439,28 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task GeoSearch_CountAnyReturnsMatchesInRequestedOrder(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        var key = $"geo:any:{Guid.NewGuid():N}";
+        await client.Geo.AddAsync(key, new RespireGeoEntry(2, 48, "near"), new RespireGeoEntry(2.01, 48.01, "far"));
+        var origin = RespireGeoSearchOrigin.FromCoordinates(2, 48);
+        var shape = RespireGeoSearchShape.Circle(5, RespireGeoUnit.Kilometers);
+        var options = new RespireGeoSearchOptions { Sort = RespireGeoSortOrder.Ascending, Count = 2, Any = true };
+
+        var ascending = await client.Geo.SearchAsync(key, origin, shape, options);
+        ascending.Select(static result => result.Member).Should().Equal("near", "far");
+
+        await using var transaction = client.CreateTransaction();
+        var descending = transaction.Geo.Search(key, origin, shape, options with { Sort = RespireGeoSortOrder.Descending });
+        await transaction.CommitAsync();
+        descending.Result.Select(static result => result.Member).Should().Equal("far", "near");
+    }
+
+    [Test]
     public async Task CatalogDescriptor_ExecutesAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.IsolatedConnectionString);

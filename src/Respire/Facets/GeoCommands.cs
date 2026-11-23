@@ -182,9 +182,21 @@ public readonly struct RespireGeoSearchOrigin
 /// <summary>The circular, rectangular, or polygon area searched by GEOSEARCH.</summary>
 public readonly struct RespireGeoSearchShape
 {
-    private RespireGeoSearchShape(double radius, double width, double height, RespireGeoUnit unit,
+    private enum ShapeKind
+    {
+        Uninitialized,
+        Circle,
+        Box,
+        Polygon,
+    }
+
+    private readonly ShapeKind _kind;
+    private readonly RespireGeoPosition[]? _vertices;
+
+    private RespireGeoSearchShape(ShapeKind kind, double radius, double width, double height, RespireGeoUnit unit,
         RespireGeoPosition[]? vertices = null)
     {
+        _kind = kind;
         Radius = radius;
         Width = width;
         Height = height;
@@ -192,11 +204,11 @@ public readonly struct RespireGeoSearchShape
         _vertices = vertices;
     }
 
-    private readonly RespireGeoPosition[]? _vertices;
-
     internal ReadOnlySpan<RespireGeoPosition> Vertices => _vertices;
 
-    internal bool IsPolygon => _vertices is not null;
+    internal bool IsInitialized => _kind != ShapeKind.Uninitialized;
+
+    internal bool IsPolygon => _kind == ShapeKind.Polygon;
 
     internal double Radius
     {
@@ -218,21 +230,21 @@ public readonly struct RespireGeoSearchShape
         get;
     }
 
-    internal bool IsRadius => Radius > 0;
+    internal bool IsRadius => _kind == ShapeKind.Circle;
 
     /// <summary>Creates a Redis GEOSEARCH <c>BYRADIUS</c> shape.</summary>
     public static RespireGeoSearchShape Circle(double radius, RespireGeoUnit unit = RespireGeoUnit.Meters)
     {
-        ValidatePositiveFinite(radius, nameof(radius));
-        return new(radius, 0, 0, unit);
+        ValidateDimension(radius, nameof(radius));
+        return new(ShapeKind.Circle, radius, 0, 0, unit);
     }
 
     /// <summary>Creates a Redis GEOSEARCH <c>BYBOX</c> shape.</summary>
     public static RespireGeoSearchShape Box(double width, double height, RespireGeoUnit unit = RespireGeoUnit.Meters)
     {
-        ValidatePositiveFinite(width, nameof(width));
-        ValidatePositiveFinite(height, nameof(height));
-        return new(0, width, height, unit);
+        ValidateDimension(width, nameof(width));
+        ValidateDimension(height, nameof(height));
+        return new(ShapeKind.Box, 0, width, height, unit);
     }
 
     /// <summary>Creates a Valkey 9.0+ <c>BYPOLYGON</c> shape from longitude/latitude vertices.</summary>
@@ -263,14 +275,14 @@ public readonly struct RespireGeoSearchShape
             throw new ArgumentException("A polygon requires at least three distinct vertices.", nameof(vertices));
         }
 
-        return new(0, 0, 0, RespireGeoUnit.Meters, vertices.ToArray());
+        return new(ShapeKind.Polygon, 0, 0, 0, RespireGeoUnit.Meters, vertices.ToArray());
     }
 
-    internal static void ValidatePositiveFinite(double value, string parameterName)
+    private static void ValidateDimension(double value, string parameterName)
     {
-        if (value <= 0 || !double.IsFinite(value))
+        if (value < 0 || !double.IsFinite(value))
         {
-            throw new ArgumentOutOfRangeException(parameterName, value, "Value must be positive and finite.");
+            throw new ArgumentOutOfRangeException(parameterName, value, "Value must be nonnegative and finite.");
         }
     }
 }
@@ -290,7 +302,8 @@ public readonly record struct RespireGeoSearchOptions
         get; init;
     }
 
-    /// <summary>Gets whether Redis may stop after any <see cref="Count"/> matches.</summary>
+    /// <summary>Gets whether the server may stop after finding <see cref="Count"/> matches.</summary>
+    /// <remarks>The requested <see cref="Sort"/> applies to the matches the server found before stopping.</remarks>
     public bool Any
     {
         get; init;
@@ -555,14 +568,8 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
         RespireGeoSearchOptions options = default, bool storeDistance = false,
         CancellationToken cancellationToken = default)
     {
-        Validate(origin, shape, options);
-        ValidateSearchStore(options);
-        var response = client.IntegerAsync(
-            "GEOSEARCHSTORE",
-            new GeoSearchCommand(
-                RespireCommands.Geo.GEOSEARCHSTORE.Verb, client.Key(in source), origin, shape, options,
-                client.Key(in destination), storeDistance),
-            cancellationToken);
+        var command = CreateSearchStoreCommand(client, destination, source, origin, shape, options, storeDistance);
+        var response = client.IntegerAsync("GEOSEARCHSTORE", command, cancellationToken);
         return shape.IsPolygon ? CompletePolygonAsync(response) : response;
     }
 
@@ -640,13 +647,34 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
         }
     }
 
-    /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
-    internal static void ValidateSearchStore(RespireGeoSearchOptions options)
+    internal static GeoSearchCommand CreateSearchStoreCommand(
+        RespireClient client, RespireKey destination, RespireKey source, RespireGeoSearchOrigin origin,
+        RespireGeoSearchShape shape, RespireGeoSearchOptions options, bool storeDistance)
     {
+        Validate(origin, shape, options);
+
         if (options.IncludeDistance || options.IncludeHash || options.IncludeCoordinates)
         {
             throw new ArgumentException("GEOSEARCHSTORE cannot return distance, hash, or coordinates.", nameof(options));
         }
+
+        var resolvedDestination = client.Key(in destination);
+        var resolvedSource = client.Key(in source);
+
+        if (client.Core.Cluster is not null)
+        {
+            var expectedSlot = resolvedDestination.AsKey().ClusterSlot;
+            var sourceSlot = resolvedSource.AsKey().ClusterSlot;
+
+            if (sourceSlot != expectedSlot)
+            {
+                throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext,
+                    "GEOSEARCHSTORE", expectedSlot, sourceSlot, resolvedSource);
+            }
+        }
+
+        return new GeoSearchCommand(RespireCommands.Geo.GEOSEARCHSTORE.Verb, resolvedSource, origin, shape, options,
+            resolvedDestination, storeDistance);
     }
 
     internal static void RequireMembers(ReadOnlySpan<RespireValue> members)
@@ -675,14 +703,9 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
             ValidateCoordinates(origin.Longitude, origin.Latitude);
         }
 
-        if (shape.IsRadius)
+        if (!shape.IsInitialized)
         {
-            RespireGeoSearchShape.ValidatePositiveFinite(shape.Radius, nameof(shape));
-        }
-        else if (!shape.IsPolygon)
-        {
-            RespireGeoSearchShape.ValidatePositiveFinite(shape.Width, nameof(shape));
-            RespireGeoSearchShape.ValidatePositiveFinite(shape.Height, nameof(shape));
+            throw new ArgumentOutOfRangeException(nameof(shape), "Shape must be created with Circle, Box, or Polygon.");
         }
 
         _ = Unit(shape.Unit);
@@ -700,11 +723,6 @@ internal sealed class GeoCommands(RespireClient client) : IRespireGeoCommands
         if (options.Any && options.Count is null)
         {
             throw new ArgumentException("Any requires Count.", nameof(options));
-        }
-
-        if (options.Any && options.Sort != RespireGeoSortOrder.Unsorted)
-        {
-            throw new ArgumentException("Any cannot be combined with sorting.", nameof(options));
         }
     }
 
@@ -753,6 +771,13 @@ internal readonly struct GeoSearchCommand(
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey cacheKey)
     {
+        if (destination is { } destinationKey)
+        {
+            // Mutation layout reads the write key from the first wire argument.
+            cacheKey = new(operation, destinationKey, source);
+            return true;
+        }
+
         if (options.Any)
         {
             cacheKey = default;
@@ -776,8 +801,6 @@ internal readonly struct GeoSearchCommand(
             options.IncludeDistance,
             options.IncludeHash,
             options.IncludeCoordinates,
-            destination ?? RespireValue.Null,
-            storeDistance,
         ];
 
         if (shape.IsPolygon)

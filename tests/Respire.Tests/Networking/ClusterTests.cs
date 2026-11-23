@@ -3859,8 +3859,6 @@ public class ClusterTests
             transaction => transaction.Bitmaps.Operate(RespireBitOperation.Or, "foo", "bar"),
             transaction => transaction.HyperLogLog.Count("foo", "bar"),
             transaction => transaction.HyperLogLog.Merge("foo", "bar"),
-            transaction => transaction.Geo.SearchStore(
-                "foo", "bar", RespireGeoSearchOrigin.FromMember("member"), RespireGeoSearchShape.Circle(1)),
         ];
 
         foreach (var queueCommand in queueCommands)
@@ -3872,6 +3870,13 @@ public class ClusterTests
             await Assert.That(error.Message).Contains("same hash slot");
             await Assert.That(transaction.Count).IsEqualTo(0);
         }
+
+        await using var geoTransaction = client.CreateTransaction();
+        var geoError = Assert.Throws<RespireCrossSlotException>(() => geoTransaction.Geo.SearchStore(
+            "foo", "bar", RespireGeoSearchOrigin.FromMember("member"), RespireGeoSearchShape.Circle(1)));
+
+        await Assert.That(geoError.CommandName).IsEqualTo("GEOSEARCHSTORE");
+        await Assert.That(geoTransaction.Count).IsEqualTo(0);
     }
 
     [Test]

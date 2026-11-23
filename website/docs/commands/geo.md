@@ -28,10 +28,13 @@ RespireGeoSearchResult[] nearby = await redis.Geo.SearchAsync(
 ```
 
 `RespireGeoSearchOrigin.FromMember` searches around an existing member. Use `RespireGeoSearchShape.Box`
-for a rectangular area. `Count` limits results and must be positive. `Any = true`
-requires `Count` and `Sort = RespireGeoSortOrder.Unsorted`; it cannot be combined with the
-ascending sort in the example above. It lets the server stop early, so it does not
-guarantee the nearest matches. Distance uses the search shape's unit.
+for a rectangular area. Circle and box dimensions can be zero. The server determines
+which members match a zero-sized shape.
+
+`Count` limits results and must be positive. `Any = true` requires `Count` and lets the
+server stop once it finds enough matches. When you also set `Sort`, the server orders
+only the matches it found before stopping. Leave `Any` off to get the nearest or
+farthest matches across the full search area. Distance uses the search shape's unit.
 
 ## Polygon searches (Valkey 9.0+)
 
