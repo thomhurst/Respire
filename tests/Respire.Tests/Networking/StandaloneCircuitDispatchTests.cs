@@ -1178,7 +1178,6 @@ public partial class StandaloneCircuitDispatchTests
         }
         // Complete the discarded frame before later replies: the same connection keeps FIFO.
         await server.SendRawAsync(Encoding.UTF8.GetBytes(new string('x', 99) + "\r\n"));
-        server.SuppressReply = null;
         await Send(client, "string", "full-1");
         await Send(client, "string", "full-2");
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
@@ -1192,16 +1191,18 @@ public partial class StandaloneCircuitDispatchTests
         await using var client = await RespireClient.ConnectAsync(Options(server));
 #pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
+        server.SuppressReply = command => command.StartsWith("GET stream-", StringComparison.Ordinal);
 
         for (var i = 0; i < 8; i++)
         {
-            await Trip(client, server);
+            Open(client, server);
             clock.Advance(TimeSpan.FromMinutes(1));
             var key = $"stream-{i}";
             var streamCommand = $"GET {key}";
             var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-            server.GateCommand(streamCommand, Task.CompletedTask, id => received.TrySetResult(id));
-            server.SuppressReply = command => command == streamCommand;
+            var releaseReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Park the server's normal reply path while the test sends the frame itself.
+            server.GateCommand(streamCommand, releaseReply.Task, id => received.TrySetResult(id));
             using var cancellation = new CancellationTokenSource();
             var pending = client.Strings.GetStreamAsync(key, cancellation.Token).AsTask();
             int connectionId = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1213,11 +1214,13 @@ public partial class StandaloneCircuitDispatchTests
                 await stream!.DisposeAsync();
             }));
             await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
-            server.SuppressReply = null;
-            // If frame completion wins, it has already satisfied one probe. At most
-            // one more concurrent admission is allowed until the circuit closes.
-            await Send(client, "string", "race-full-1");
-            await Send(client, "raw", "race-full-2");
+            releaseReply.SetResult();
+
+            // A completed frame may already have satisfied one probe. Check reply alignment
+            // and circuit recovery regardless of whether completion or cancellation won.
+            await Assert.That(await client.GetStringAsync("race-full-1")).IsEqualTo("race-full-1");
+            using var reply = await client.ExecuteAsync("GET", "race-full-2");
+            await Assert.That(reply.AsString()).IsEqualTo("race-full-2");
             await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
         }
     }
@@ -1280,10 +1283,17 @@ public partial class StandaloneCircuitDispatchTests
     // need an open circuit use the synthetic Open helper instead of paying that wait.
     private static async Task Trip(RespireClient client, FakeRespServer server)
     {
-        server.SuppressReply = command => command == "GET fail";
-        await Assert.That(await Failure(() => Send(client, "raw", "fail"))).IsTypeOf<RespireTimeoutException>();
-        await server.SendRawAsync("$4\r\nlate\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
-        server.SuppressReply = null;
+        var releaseReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.GateCommand("GET fail", releaseReply.Task);
+
+        try
+        {
+            await Assert.That(await Failure(() => Send(client, "raw", "fail"))).IsTypeOf<RespireTimeoutException>();
+        }
+        finally
+        {
+            releaseReply.SetResult();
+        }
     }
 
     private static async Task Send(IRespireClient client, string shape, string key, CancellationToken cancellationToken = default)
