@@ -76,7 +76,8 @@ Generated methods call `IRespireClient.ExecuteAsync` with a static descriptor, s
 
 - An already-canceled token is rejected before encoding or sending. Cancellation after admission does not prove the server skipped the command.
 - Connection-affine commands such as `AUTH` stay rejected.
-- Single-token generated commands have retry category `Never`, so `RespireOptions.RetryPolicy` never resends them.
+- Single-token custom commands have retry category `Never`. The built-in RedisJSON `GetAsync` and
+  `GetPathAsync` methods use the `JSON.GET` catalog descriptor for replica routing and read retries.
 - All failures (arguments, cancellation, safety) surface through the returned task, for every return shape including non-async `ValueTask<RespireResult>`. The call never throws before returning.
 
 ### Cache mutation

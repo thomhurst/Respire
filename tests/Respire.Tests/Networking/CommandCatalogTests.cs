@@ -125,10 +125,13 @@ public class CommandCatalogTests
     [Arguments("XREADGROUP", false)]
     [Arguments("SORT", false)]
     [Arguments("SORT_RO", true)]
-    [Arguments("JSON.GET", false)]
+    [Arguments("JSON.GET", true)]
+    [Arguments("TS.GET", true)]
+    [Arguments("JSON.MGET", false)]
+    [Arguments("TS.MGET", false)]
     [Arguments("KEYDB.NHGET", false)]
     [Arguments("READONLY", false)]
-    public async Task CatalogReadOnlyMetadataRequiresAuthoritativeFlags(string name, bool expected)
+    public async Task CatalogReadOnlyMetadataRequiresProviderEvidence(string name, bool expected)
     {
         var descriptor = RespireCommands.All.ToArray().Single(command => command.Name == name);
         await Assert.That(descriptor.IsReadOnly).IsEqualTo(expected);

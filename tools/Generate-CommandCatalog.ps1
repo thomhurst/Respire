@@ -45,6 +45,13 @@ $cacheUnknownOverrides = @('PFCOUNT')
 # ranges rather than SCAN cursors. Preserve its conservative CursorRead classification
 # with index -1; the standard cursor-continuation layout does not apply to it.
 $primaryOnlyReadOverrides = @('TOUCH')
+
+# Core metadata omits these module commands. COMMAND INFO confirms replica-read
+# eligibility for JSON.GET on Redis and Valkey Bundle and TS.GET on Redis.
+$auditedModuleReplicaReads = @{
+    'JSON.GET' = @('Redis', 'Valkey')
+    'TS.GET' = @('Redis')
+}
 $cursorArgumentIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; PHSCAN = 1; ARSCAN = -1 }
 
 # Retry risk is a separate audit. Cache ReadOnly means no tracked keyspace mutation,
@@ -210,12 +217,14 @@ $merged = $commands |
     Group-Object Name |
     ForEach-Object {
         $providers = @($_.Group.Provider | Sort-Object -Unique)
-        # Manual reference entries have no flag audit. A provider needs authoritative
-        # metadata, and every authoritative entry for that provider must agree.
+        # Require provider metadata or a manual audit for each provider. Metadata
+        # takes precedence over the audit if the provider starts publishing flags.
+        $auditedProviders = $auditedModuleReplicaReads[$_.Name]
         $isReadOnly = $true
         foreach ($provider in ($_.Group | Group-Object Provider)) {
             $metadata = @($provider.Group | Where-Object { $null -ne $_.IsReadOnly })
-            if ($metadata.Count -eq 0 -or ($metadata | Where-Object { -not $_.IsReadOnly })) {
+            if (($metadata.Count -eq 0 -and $provider.Name -notin $auditedProviders) -or
+                ($metadata | Where-Object { -not $_.IsReadOnly })) {
                 $isReadOnly = $false
                 break
             }
@@ -258,7 +267,7 @@ foreach ($group in ($merged | Group-Object Group | Sort-Object { Get-ClassName $
         $sources = ($command.Providers | ForEach-Object { "RespireCommandSource.$_" }) -join ' | '
         $readOnlyArgument = if ($command.IsReadOnly) { ', isReadOnly: true' } else { '' }
         [void] $builder.AppendLine("        /// <summary><c>$($command.Name)</c>.</summary>")
-        if ($command.Name.Contains(' ')) {
+        if ($command.Name.Contains(' ') -or $auditedModuleReplicaReads.ContainsKey($command.Name)) {
             [void] $builder.AppendLine("        [RespireCommandCatalogName(`"$($command.Name)`")]")
         }
         [void] $builder.AppendLine("        public static readonly RespireCommand $identifier = new(`"$($command.Name)`", $sources, RespireCacheMutation.$($command.CacheMutation)$readOnlyArgument, retryCategory: RespireCommandRetryCategory.$($command.RetryCategory));")

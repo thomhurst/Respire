@@ -542,7 +542,7 @@ public sealed partial class RespireTimeSeriesClient
     private static readonly RespireCommand MultiAddCommand = RespireCommand.Create("TS.MADD", RespireCacheMutation.Unknown);
     private static readonly RespireCommand IncrementByCommand = RespireCommand.Create("TS.INCRBY", RespireCacheMutation.Unknown);
     private static readonly RespireCommand DecrementByCommand = RespireCommand.Create("TS.DECRBY", RespireCacheMutation.Unknown);
-    private static readonly RespireCommand GetCommand = RespireCommand.Create("TS.GET", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand GetCommand = RespireCommands.TimeSeries.TS_GET;
     private static readonly RespireCommand MultiGetCommand = RespireCommand.Create("TS.MGET", RespireCacheMutation.ReadOnly);
     private static readonly RespireCommand RangeCommand = RespireCommand.Create("TS.RANGE", RespireCacheMutation.ReadOnly);
     private static readonly RespireCommand ReverseRangeCommand = RespireCommand.Create("TS.REVRANGE", RespireCacheMutation.ReadOnly);

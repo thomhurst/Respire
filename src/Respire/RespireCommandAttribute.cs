@@ -24,3 +24,7 @@ public sealed class RespireCommandAttribute(string name) : Attribute
         get; set;
     }
 }
+
+// Lets Respire's generated module facets share audited routing with catalog calls.
+[AttributeUsage(AttributeTargets.Method, Inherited = false)]
+internal sealed class RespireUseCatalogCommandAttribute : Attribute;

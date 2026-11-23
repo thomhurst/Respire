@@ -87,7 +87,8 @@ With client-side caching enabled, each `AddAsync`, `IncrementByAsync`, `Decremen
 
 ## Reads
 
-- `GetAsync` returns the latest sample, or `null` for an empty series.
+- `GetAsync` returns the latest sample, or `null` for an empty series. It follows the client's
+  [replica read policy](../fundamentals/connections.md#read-from-replicas).
 - `RangeAsync` and `ReverseRangeAsync` read one series, with exact timestamp and value filters, `COUNT`, `LATEST`, and aggregation with `ALIGN`, `BUCKETTIMESTAMP` and `EMPTY`.
 - `MultiGetAsync`, `MultiRangeAsync` and `MultiReverseRangeAsync` select series by label filters such as `sensor=temperature`, and accept `WITHLABELS` or `SELECTED_LABELS`. Multi-series ranges also accept `GROUPBY`/`REDUCE`; single-series ranges reject these locally.
 - `QueryIndexAsync` returns matching keys as `RespireKey`, preserving arbitrary bytes. Multi-series results expose the lossless key in `KeyValue`; `Key` is its display string.

@@ -165,17 +165,16 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
             return "Each method needs [RespireCommand] with a non-empty printable ASCII command name.";
         }
 
-        if (name.Contains(' '))
+        if (UsesCatalogCommand(method, name))
         {
-            if (name[0] == ' ' || name[name.Length - 1] == ' ' || name.Contains("  ")
-                || ResolveCatalogCommand(compilation, name) is null)
+            if (ResolveCatalogCommand(compilation, name) is null)
             {
-                return "Multi-token [RespireCommand] names must match a catalog command with single spaces between tokens.";
+                return "Catalog [RespireCommand] names must match a catalog command with single spaces between tokens.";
             }
 
             if (attribute.NamedArguments.Any(argument => argument.Key == "Mutation"))
             {
-                return "Catalog subcommands use their descriptor's cache mutation metadata; omit Mutation.";
+                return "Catalog commands use their descriptor's cache mutation metadata; omit Mutation.";
             }
         }
 
@@ -218,6 +217,12 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
     private static AttributeData? CommandAttribute(IMethodSymbol method)
         => method.GetAttributes().FirstOrDefault(attribute =>
             attribute.AttributeClass?.ToDisplayString() == "Respire.RespireCommandAttribute");
+
+    private static bool UsesCatalogCommand(IMethodSymbol method, string name)
+    {
+        return name.Contains(' ') || method.GetAttributes().Any(attribute =>
+            attribute.AttributeClass?.ToDisplayString() == "Respire.RespireUseCatalogCommandAttribute");
+    }
 
     private static string? CacheMutation(IMethodSymbol method)
     {
@@ -300,7 +305,7 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         Compilation compilation)
     {
         var command = (string)CommandAttribute(method)!.ConstructorArguments[0].Value!;
-        var catalogCommand = command.Contains(' ') ? ResolveCatalogCommand(compilation, command) : null;
+        var catalogCommand = UsesCatalogCommand(method, command) ? ResolveCatalogCommand(compilation, command) : null;
         var task = (INamedTypeSymbol)method.ReturnType;
         var reply = task.TypeArguments.FirstOrDefault();
         var raw = reply?.ToDisplayString() == "Respire.RespireResult";

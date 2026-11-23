@@ -25,12 +25,12 @@ public interface IRespireJsonCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>JSON.GET with formatting options and one or more paths.</summary>
-    [RespireCommand("JSON.GET", Mutation = RespireCacheMutation.ReadOnly)]
+    [RespireCommand("JSON.GET"), RespireUseCatalogCommand]
     ValueTask<RespireResult> GetAsync(RespireKey key, string[] optionsAndPaths,
         CancellationToken cancellationToken = default);
 
     /// <summary>JSON.GET for one path.</summary>
-    [RespireCommand("JSON.GET", Mutation = RespireCacheMutation.ReadOnly)]
+    [RespireCommand("JSON.GET"), RespireUseCatalogCommand]
     ValueTask<RespireResult> GetPathAsync(RespireKey key, string path,
         CancellationToken cancellationToken = default);
 
