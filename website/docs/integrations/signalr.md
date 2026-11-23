@@ -40,6 +40,12 @@ Map hubs with the usual `MapHub<THub>`.
   container disposes the client. A normal shutdown does not log `SubscriptionEnded`; that event
   means a subscription ended while the app was still running.
 
+For client results, point every app at the same writable backplane endpoint, or use a
+topology-aware client configured for the same deployment, such as one using Sentinel to discover
+the writable primary. Outside Cluster, a direct connection to a read replica can receive an
+invocation even when the primary reports zero subscribers. The calling app then reports that
+the client is missing, and the replica cannot publish the result back to the primary.
+
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `ChannelPrefix` | `""` | Literal channel prefix; no separator is added |
