@@ -78,6 +78,7 @@ await using var multiple = await redis.SubscribeAsync(targets, cancellationToken
 
 - `SubscribeAsync(RespireChannel)` uses `Kind` to choose SUBSCRIBE, PSUBSCRIBE, or SSUBSCRIBE.
 - A multi-target subscription needs one kind. Use separate subscriptions for mixed kinds.
+- On Redis Cluster, use separate subscriptions for keyspace notification descriptors and ordinary targets, even when they have the same kind.
 - `SubscribePatternAsync` and `SubscribeShardedAsync` also accept binary targets.
 - Patterns cannot be published.
 - Equality and hashing compare bytes only, ignoring kind. Equivalent text and UTF-8 targets deduplicate within a subscription.
@@ -166,6 +167,8 @@ OrderCreated order = message.As<OrderCreated>();
 Channel, pattern, and payload bytes stay valid after enumeration advances. `.Bytes` does not allocate; text conversion can. Do not mutate the read-only storage through unsafe APIs.
 
 ## Reconnection and pressure
+
+If an unsubscribe times out on the shared Pub/Sub connection, Respire closes that connection to release the server-side subscriptions. Active subscriptions on the connection resume after recovery and receive a reconnect gap.
 
 Subscriptions resubscribe after reconnection. `RespireOptions.ReconnectPolicy` can bound and delay this:
 
