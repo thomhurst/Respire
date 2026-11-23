@@ -93,6 +93,8 @@ Other index commands: `FT.ALTER`, `FT.DROPINDEX` and `FT.INFO`. `GetIndexInfoAsy
 
 Query helpers build exact text, tag, numeric range (inclusive or exclusive, infinite bounds allowed), AND and OR expressions, escaping field names and values. For prefix, fuzzy, wildcard and other syntax, wrap trusted query text in `RespireSearchExpression.FromRaw`.
 
+To match an empty string, add `INDEXEMPTY` to the text or tag field's `Options` at index creation and query with `Dialect = 2`. Pass `""` to `Text`, `TextField` or `Tag`. Generated text `Matches` and tag `EqualTo` filters also accept `""`.
+
 ### Untrusted input
 
 Query, vector filter, hybrid text, explain and aggregate query parameters take `RespireSearchExpression`, so plain strings cannot reach them by accident. Builder helpers return this type; `FromRaw` marks trusted native syntax such as `@title:$term`.
@@ -100,6 +102,8 @@ Query, vector filter, hybrid text, explain and aggregate query parameters take `
 **Pass untrusted values through a helper** (`Tag`, `TextField`, `NumericRange`) or as `$name` entries in `Parameters` (dialect 2 or later). Aggregation `FILTER` and `APPLY` use a separate expression language and stay raw strings, so never put untrusted text in them.
 
 ## Query options and returned text
+
+For sorted queries in dialect 4, Redis can stop scanning once it fills the requested page. `Total` reports the server's count and can be smaller than the full match count. Use dialect 2 when paging requires an exact total. Redis also supports `SORTBY ... WITHCOUNT` through the native command.
 
 More `RespireSearchQueryOptions`: binary-safe `InKeys`, text `InFields`, `Slop`, `InOrder`, `Language`, `Scorer`, `Verbatim` and `NoStopWords`. Empty key and field lists leave the search unrestricted. The server validates languages and scorer names (built-in or server-registered).
 
@@ -228,7 +232,7 @@ foreach (var suggestion in suggestions)
 - Negative weights are valid; NaN is rejected. An empty prefix is allowed.
 - `Fuzzy` allows one edit in the prefix. `Max` must be positive; the server default is 5.
 - Scores are server match scores, not necessarily stored weights; null without `WithScores`.
-- Payloads are binary: null means absent or not requested, empty means an empty payload. Keep input payload memory unchanged until `AddSuggestionAsync` completes. Redis 8.10 supports payloads, though [FT.SUGADD](https://redis.io/docs/latest/commands/ft.sugadd/) marks `PAYLOAD` deprecated.
+- Payloads are binary. On Redis 8.10, an empty payload on a new suggestion reads back as null. An update with an empty payload preserves the existing bytes. Keep input payload memory unchanged until `AddSuggestionAsync` completes. Redis marks `PAYLOAD` deprecated. See [FT.SUGADD](https://redis.io/docs/latest/commands/ft.sugadd/).
 - The dictionary is a binary-safe `RespireKey` and routes by key. Clustered Redis Software/Cloud has restrictions; see [FT.SUGGET](https://redis.io/docs/latest/commands/ft.sugget/).
 
 ## Synonyms and tag values

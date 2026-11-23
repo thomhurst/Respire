@@ -21,6 +21,97 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task ExactQueriesMatchEmptyIndexedValues(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var search = client.Search;
+        string index = NewIndex();
+        string emptyKey = index + ":doc:empty";
+
+        try
+        {
+            await search.CreateIndexAsync(index, new()
+            {
+                Prefixes = [index + ":doc:"],
+                SkipInitialScan = true,
+                Fields =
+                [
+                    new("title", RespireSearchFieldType.Text) { Options = ["INDEXEMPTY"] },
+                    new("category", RespireSearchFieldType.Tag) { Options = ["INDEXEMPTY"] },
+                ],
+            });
+            await client.Hashes.SetAsync(emptyKey, ("title", ""), ("category", ""));
+            await client.Hashes.SetAsync(index + ":doc:other", ("title", "redis"), ("category", "database"));
+
+            RespireSearchExpression[] expressions =
+            [
+                RespireSearchQueryBuilder.Text(""),
+                RespireSearchQueryBuilder.TextField("title", ""),
+                RespireSearchQueryBuilder.Tag("category", ""),
+            ];
+
+            foreach (var expression in expressions)
+            {
+                var result = await search.SearchAsync(index, new(expression, new() { Dialect = 2 }));
+                result.Documents.Should().ContainSingle().Which.Id.Should().Be(emptyKey);
+            }
+        }
+        finally
+        {
+            await DropIndexIfPresentAsync(search, index);
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ExactQueriesMatchUnicodeFieldsAndTagValues(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var search = client.Search;
+        string index = NewIndex();
+        string specialFieldsKey = index + ":doc:special-fields";
+
+        try
+        {
+            await search.CreateIndexAsync(index, new()
+            {
+                Prefixes = [index + ":doc:"],
+                SkipInitialScan = true,
+                Fields =
+                [
+                    new("réservé🐛", RespireSearchFieldType.Text),
+                    new("display—rank", RespireSearchFieldType.Numeric),
+                    new("category", RespireSearchFieldType.Tag) { CaseSensitive = true },
+                ],
+            });
+            await client.Hashes.SetAsync(specialFieldsKey, ("réservé🐛", "hello"), ("display—rank", "1"));
+
+            foreach (string value in new[] { "cafe\u0301", "café", "abc—xyz", "x🐛y", "雪、猫", "has.dot" })
+            {
+                string key = index + ":doc:tag:" + value;
+                await client.Hashes.SetAsync(key, ("category", value));
+                var expression = RespireSearchQueryBuilder.Tag("category", value);
+                var result = await search.SearchAsync(index, new(expression, new() { Dialect = 2 }));
+                result.Documents.Should().ContainSingle().Which.Id.Should().Be(key);
+            }
+
+            var text = RespireSearchQueryBuilder.TextField("réservé🐛", "hello");
+            var number = RespireSearchQueryBuilder.NumericRange("display—rank", 1L, 1L);
+            var textMatches = await search.SearchAsync(index, new(text, new() { Dialect = 2 }));
+            var numericMatches = await search.SearchAsync(index, new(number, new() { Dialect = 2 }));
+            textMatches.Documents.Should().ContainSingle().Which.Id.Should().Be(specialFieldsKey);
+            numericMatches.Documents.Should().ContainSingle().Which.Id.Should().Be(specialFieldsKey);
+        }
+        finally
+        {
+            await DropIndexIfPresentAsync(search, index);
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task TextPresentationAndScorerMetadataUseRealServerReplies(int protocol)
     {
         await using var client = await ConnectAsync(protocol);

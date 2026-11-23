@@ -76,6 +76,7 @@ public sealed record RespireSearchQuery(RespireSearchExpression Expression, Resp
 public static class RespireSearchQueryBuilder
 {
     private const string MatchAllQuery = "*";
+    private const string EmptyQuotedValue = "\"\"";
 
     /// <summary>Matches all indexed documents.</summary>
     public static RespireSearchExpression MatchAll()
@@ -84,13 +85,27 @@ public static class RespireSearchQueryBuilder
     }
 
     /// <summary>Matches an exact quoted term or phrase across indexed text fields.</summary>
-    public static RespireSearchExpression Text(string term) => RespireSearchExpression.FromBuilder(Quote(term));
+    /// <remarks>An empty string matches empty values in fields with INDEXEMPTY when using dialect 2.</remarks>
+    public static RespireSearchExpression Text(string term)
+    {
+        return RespireSearchExpression.FromBuilder(Quote(term));
+    }
 
     /// <summary>Matches an exact quoted term or phrase in one text field.</summary>
-    public static RespireSearchExpression TextField(string field, string term) => RespireSearchExpression.FromBuilder($"@{EscapeField(field)}:{Quote(term)}");
+    /// <remarks>An empty string requires INDEXEMPTY on the field and dialect 2.</remarks>
+    public static RespireSearchExpression TextField(string field, string term)
+    {
+        return RespireSearchExpression.FromBuilder($"@{EscapeField(field)}:{Quote(term)}");
+    }
 
     /// <summary>Matches an exact tag value.</summary>
-    public static RespireSearchExpression Tag(string field, string value) => RespireSearchExpression.FromBuilder($"@{EscapeField(field)}:{{{EscapeIdentifier(value)}}}");
+    /// <remarks>An empty string requires INDEXEMPTY on the field and dialect 2.</remarks>
+    public static RespireSearchExpression Tag(string field, string value)
+    {
+        string escapedField = EscapeField(field);
+        string escapedValue = value is "" ? EmptyQuotedValue : EscapeIdentifier(value);
+        return RespireSearchExpression.FromBuilder($"@{escapedField}:{{{escapedValue}}}");
+    }
 
     /// <summary>Matches a numeric range. Bounds are inclusive unless marked exclusive; infinities are allowed.</summary>
     public static RespireSearchExpression NumericRange(string field, double minimum, double maximum, bool exclusiveMinimum = false, bool exclusiveMaximum = false)
@@ -204,6 +219,11 @@ public static class RespireSearchQueryBuilder
 
     private static string Quote(string value)
     {
+        if (value is "")
+        {
+            return EmptyQuotedValue;
+        }
+
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
         var escaped = value.Replace("\\", "\\\\", StringComparison.Ordinal)
             .Replace("\"", "\\\"", StringComparison.Ordinal);
@@ -217,7 +237,8 @@ public static class RespireSearchQueryBuilder
 
         foreach (var rune in value.EnumerateRunes())
         {
-            if (!Rune.IsLetterOrDigit(rune) && rune.Value != '_')
+            // Redis Search treats non-ASCII UTF-8 bytes as literal text in field names and tags.
+            if (rune.IsAscii && !Rune.IsLetterOrDigit(rune) && rune.Value != '_')
             {
                 escaped.Append('\\');
             }
