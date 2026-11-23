@@ -277,7 +277,7 @@ public class SearchProfileTests
             new object[] { "Total profile time" },
             new object[] { "Warning", "first warning", "second warning" },
             new object[] { "Iterators profile", new object?[] { "Type", "UNION", "Child iterators", null,
-                new object?[] { "Type", "NOT", "Child iterator", null }, "Counter", 1L } },
+                new object?[] { "Type", "NOT", "Child iterator", null }, "Counter", 2L } },
             new object[] { "Result processors profile", new object[] { "Type", "Index", "Counter", 1L } },
         ];
         await using var server = Server(_ => Frame(Envelope(2, "SEARCH", profile), 2));
@@ -294,7 +294,7 @@ public class SearchProfileTests
         await Assert.That(child.Name).IsEqualTo("Child iterators #2");
         await Assert.That(child.Type).IsEqualTo("NOT");
         await Assert.That(child.Children.Count).IsEqualTo(0);
-        await Assert.That(iterator.Metrics["Counter"]).IsEqualTo(1d);
+        await Assert.That(iterator.Metrics["Counter"]).IsEqualTo(2d);
         await Assert.That(iterator.Properties["Child iterators"].Items.Count).IsEqualTo(2);
         await Assert.That(iterator.Properties["Child iterators"].Items[0].Type).IsEqualTo(RespireDataType.Null);
         await Assert.That(child.Properties["Child iterator"].Type).IsEqualTo(RespireDataType.Null);

@@ -89,10 +89,16 @@ The decorator applies wherever Respire uses `IRespireSerializer`:
 
 It does not apply to:
 
-- Primitive and raw paths: strings, byte arrays, characters, booleans, and numbers.
+- Primitive and raw paths: strings, byte arrays, characters, booleans, and the numeric types `byte`,
+  `sbyte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `float`, `double`, and `decimal`, including
+  their nullable forms when present.
 - Arguments bound as `RespireValue`, raw `ExecuteAsync` arguments, `AsBytes`, `AsSpan`, and string
   accessors.
 - Missing values, which return the normal missing result without calling a decoder.
+
+Other numeric types, such as `Half` and `Int128`, use the configured serializer. With a value codec
+enabled, raw byte readers see a codec frame for these values. Use the matching typed reader to decode
+and deserialize them.
 
 The decorator forwards both generic and runtime-type serializer methods, so it can wrap a custom
 binary serializer or `RespireSystemTextJsonSerializer.FromContext(...)` without adding reflection. The
