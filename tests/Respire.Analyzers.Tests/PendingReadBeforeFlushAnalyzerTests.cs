@@ -2054,6 +2054,60 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    [Arguments("batch.SendAsync().AsTask()", "")]
+    [Arguments("execution", "var execution = batch.SendAsync().AsTask();")]
+    public async Task WhenEachDoesNotFlushPendingQueuedInLoopAsync(string task, string setup)
+    {
+        await Verify.VerifyWithNet10Async($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                public async Task<string> Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("first");
+                    {{setup}}
+                    await foreach (var flush in Task.WhenEach({{task}}))
+                    {
+                        await flush;
+                        batch = client.CreateBatch();
+                        pending = batch.GetStringAsync("second");
+                    }
+
+                    return {|RESP002:pending.Result|};
+                }
+            }
+            """);
+    }
+
+    [Test]
+    public async Task WhenEachDoesNotFlushPendingQueuedAfterStoredFlushAsync()
+    {
+        await Verify.VerifyWithNet10Async(
+            """
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                public async Task<string> Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var execution = batch.SendAsync().AsTask();
+                    batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    await foreach (var flush in Task.WhenEach(execution))
+                    {
+                        await flush;
+                    }
+
+                    return {|RESP002:pending.Result|};
+                }
+            }
+            """);
+    }
+
+    [Test]
     public async Task StoredFlushTaskDrainedByConfiguredWhenEachAsync() => await Verify.VerifyWithNet10Async(
         """
         using System.Threading.Tasks;

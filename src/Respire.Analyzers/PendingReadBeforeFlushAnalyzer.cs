@@ -678,7 +678,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         ILocalSymbol batch,
         SyntaxNode origin)
     {
-        if (GetCompletionExpression(context, invocation) is { } directCompletion)
+        if (GetCompletionExpression(context, invocation, origin) is { } directCompletion)
         {
             yield return directCompletion;
             yield break;
@@ -692,7 +692,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         foreach (var reference in ScopeWalker.FindReferences(
                      scope, flush, context.SemanticModel, context.CancellationToken))
         {
-            var completion = GetCompletionExpression(context, reference);
+            var completion = GetCompletionExpression(context, reference, origin);
             var useSite = completion switch
             {
                 ExpressionSyntax expression => expression,
@@ -701,7 +701,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             };
 
             if (completion is not null && useSite is not null
-                && HasOnlyMatchingReachingDefinitions(context, scope, flush, batch, origin, useSite))
+                && HasOnlyMatchingReachingDefinitions(context, scope, flush, batch, origin, useSite,
+                    requireFlushAfterOrigin: completion is ForEachStatementSyntax))
             {
                 yield return completion;
             }
@@ -743,7 +744,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         ILocalSymbol flush,
         ILocalSymbol batch,
         SyntaxNode origin,
-        ExpressionSyntax completion)
+        ExpressionSyntax completion,
+        bool requireFlushAfterOrigin)
     {
         var definitions = FindStoredValueDefinitions(context, scope, flush).ToArray();
         var reachingDefinitions = definitions.Where(definition =>
@@ -758,6 +760,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return reachingDefinitions.Length > 0
                && reachingDefinitions.All(definition =>
                    IsMatchingFlushDefinition(context, scope, definition, batch, origin))
+               && (!requireFlushAfterOrigin || !ScopeWalker.CanReachWithoutCrossing(
+                   context.SemanticModel, scope, origin, completion, reachingDefinitions, context.CancellationToken))
                && !HasMutatingCallBefore(context, scope, flush, completion);
     }
 
@@ -871,7 +875,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     }
 
     private static SyntaxNode? GetCompletionExpression(
-        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression, SyntaxNode origin)
     {
         expression = GetOutermostCompletionExpression(context, expression);
 
@@ -881,11 +885,12 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return awaitExpression;
         }
 
-        return (SyntaxNode?)GetSynchronousGetResult(context, expression) ?? GetWhenEachLoopCompletion(context, expression);
+        return (SyntaxNode?)GetSynchronousGetResult(context, expression)
+               ?? GetWhenEachLoopCompletion(context, expression, origin);
     }
 
     private static ForEachStatementSyntax? GetWhenEachLoopCompletion(
-        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression, SyntaxNode origin)
     {
         if (ScopeWalker.Unwrap(expression) is BaseObjectCreationExpressionSyntax
             || expression.Parent is not ArgumentSyntax { Parent.Parent: InvocationExpressionSyntax combinator }
@@ -918,6 +923,12 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         if (expression.Parent is not ForEachStatementSyntax loop
             || !loop.AwaitKeyword.IsKind(SyntaxKind.AwaitKeyword)
             || !ScopeWalker.IsSame(loop.Expression, expression))
+        {
+            return null;
+        }
+
+        // Reaching exhaustion does not prove the header ran after work queued in this loop.
+        if (loop.Span.Contains(origin.Span))
         {
             return null;
         }
