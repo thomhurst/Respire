@@ -21,6 +21,7 @@ internal static class RespireApiStub
                 public RespireResult this[int index] => default;
                 public string AsString() => string.Empty;
                 public long AsInteger() => 0;
+                public System.Collections.Generic.IEnumerator<RespireResult> GetEnumerator() => throw new NotSupportedException();
                 public void Dispose() { }
             }
 

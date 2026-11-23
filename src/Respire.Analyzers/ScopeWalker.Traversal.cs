@@ -296,6 +296,7 @@ internal static partial class ScopeWalker
                     ArrayCreationExpressionSyntax array when array.Initializer == expression => array,
                     ImplicitArrayCreationExpressionSyntax array when array.Initializer == expression => array,
                     CastExpressionSyntax cast when cast.Expression == expression => cast,
+                    MemberAccessExpressionSyntax => GetValuePreservingWrapper(expression, semanticModel, cancellationToken),
                     CheckedExpressionSyntax checkedExpression => checkedExpression,
                     ConditionalExpressionSyntax conditional when conditional.Condition != expression => conditional,
                     BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression) => coalesce,
@@ -387,7 +388,7 @@ internal static partial class ScopeWalker
                 }
             }
 
-            if (expression is not null && (wrapped || Unwrap(expression) is IdentifierNameSyntax)
+            if (expression is not null && (wrapped || Unwrap(expression) is IdentifierNameSyntax or AssignmentExpressionSyntax)
                 && expression.Parent is AssignmentExpressionSyntax assignment
                 && (assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) || assignment.IsKind(SyntaxKind.CoalesceAssignmentExpression))
                 && assignment.Right == expression)
@@ -489,7 +490,8 @@ internal static partial class ScopeWalker
             }
 
             static bool ContainsReference(IOperation operation, SyntaxNode reference)
-                => operation.Syntax == reference && operation is ILocalReferenceOperation or IParameterReferenceOperation or IDelegateCreationOperation
+                => operation.Syntax == reference
+                    && operation is ILocalReferenceOperation or IParameterReferenceOperation or IDelegateCreationOperation or ISimpleAssignmentOperation
                     || operation.ChildOperations.Any(child => ContainsReference(child, reference));
         }
 
@@ -795,7 +797,11 @@ internal static partial class ScopeWalker
             var transferFailure = (TransferPosition(operation.Syntax) == firstBarrier || collectionTransfer) && !completionOperation
                 ? GetTransferFailure(operation, known, values) : TransferFailure.None;
 
-            if (!deconstructionStoresHandled && operation.Syntax.SpanStart > entryPosition
+            // An enclosing store can fail after acquisition even when its syntax starts before it.
+            var afterEntry = operation.Syntax.SpanStart > entryPosition
+                || transferFailure != TransferFailure.None && TransferPosition(operation.Syntax) > entryPosition;
+
+            if (!deconstructionStoresHandled && afterEntry
                 // Arguments and receivers inside the origin run before acquisition completes.
                 && !(entryPosition == startPosition && origin?.Span.Contains(operation.Syntax.Span) == true)
                 && !(exceptionSource is IFieldReferenceOperation { Field.IsStatic: false, Instance: { } fieldReceiver }
@@ -990,6 +996,12 @@ internal static partial class ScopeWalker
             }
 
             _conditions.ForgetOwnWrite(operation, ref known, ref values);
+
+            if (operation is ISimpleAssignmentOperation && _transferTriggers.TryGetValue(operation.Syntax, out var assignmentFlag))
+            {
+                known |= assignmentFlag;
+                values |= assignmentFlag;
+            }
 
             if (operation is IFlowCaptureOperation captured)
             {

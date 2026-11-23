@@ -528,4 +528,49 @@ internal static partial class ScopeWalker
             }
         }
     }
+
+    public static ExpressionSyntax? GetValuePreservingWrapper(
+        ExpressionSyntax expression, SemanticModel semanticModel, CancellationToken cancellationToken)
+    {
+        var wrapper = expression.Parent as ExpressionSyntax;
+
+        if (wrapper is MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax invocation } member
+            && IsSame(invocation.Expression, member))
+        {
+            wrapper = invocation;
+        }
+
+        return wrapper is not null
+               && GetPreservedValueOperand(wrapper, semanticModel, cancellationToken) is { } operand
+               && IsSame(operand, expression)
+            ? wrapper
+            : null;
+    }
+
+    // These casts and Nullable<T> accesses pass through the underlying value.
+    public static ExpressionSyntax? GetPreservedValueOperand(
+        ExpressionSyntax expression, SemanticModel semanticModel, CancellationToken cancellationToken)
+    {
+        switch (expression)
+        {
+            case CastExpressionSyntax cast when semanticModel.GetTypeInfo(cast.Type, cancellationToken).Type is { } target:
+                Conversion conversion = semanticModel.ClassifyConversion(cast.Expression, target, isExplicitInSource: true);
+                return conversion.IsIdentity || conversion.IsNullable && !conversion.IsUserDefined
+                    ? cast.Expression
+                    : null;
+
+            case MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Value" } member when semanticModel.GetSymbolInfo(member, cancellationToken).Symbol is IPropertySymbol { ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }:
+                return member.Expression;
+
+            case InvocationExpressionSyntax
+            {
+                Expression: MemberAccessExpressionSyntax { Name.Identifier.ValueText: "GetValueOrDefault" } member,
+                ArgumentList.Arguments.Count: 0,
+            } invocation when semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol is IMethodSymbol { ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }:
+                return member.Expression;
+
+            default:
+                return null;
+        }
+    }
 }

@@ -2660,6 +2660,8 @@ public class ExceptionAwareFlowTests
     [Arguments("holder.Field = choice ? result : result;", "InvalidOperationException", false)]
     [Arguments("holder.Value = (RespireResult)result;", "InvalidOperationException", false)]
     [Arguments("buffer[0] = (RespireResult)result;", "IndexOutOfRangeException", true)]
+    [Arguments("holder.Value = ((RespireResult?)result).Value;", "NullReferenceException", true)]
+    [Arguments("buffer[0] = ((RespireResult?)result).GetValueOrDefault();", "IndexOutOfRangeException", true)]
     public async Task WrappedAssignmentWaitsForTargetChecks(string transfer, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;
@@ -2679,6 +2681,34 @@ public class ExceptionAwareFlowTests
             }
         }
         """);
+
+    [Test]
+    [Arguments("holder.Value = (result = lease).GetValueOrDefault();", "NullReferenceException", "", true)]
+    [Arguments("holder.Value = (result = lease).Value;", "NullReferenceException", "result.GetValueOrDefault().Dispose();", false)]
+    [Arguments("this.Value = (result = lease).Value;", "NullReferenceException", "", false)]
+    [Arguments("buffer[0] = (result = lease).GetValueOrDefault();", "IndexOutOfRangeException", "", true)]
+    [Arguments("holder.Value = (result = lease);", "NullReferenceException", "", true)]
+    [Arguments("this.Value = (result = lease);", "NullReferenceException", "", false)]
+    public async Task InlineAcquisitionWaitsForTargetChecks(string store, string catchType, string cleanup, bool warning)
+    {
+        var acquisition = (warning ? "{|RESP001:result|}" : "result") + " = await client.ExecuteLeaseAsync(\"PING\")";
+        await Disposal.VerifyAsync($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Holder { public RespireResult? Value { set { value.GetValueOrDefault().Dispose(); } } }
+            class Caller
+            {
+                RespireResult? Value { set { value.GetValueOrDefault().Dispose(); } }
+                async Task Run(RespireClient client, Holder holder, RespireResult[] buffer)
+                {
+                    RespireResult? result = null;
+                    try { {{store.Replace("result = lease", acquisition, StringComparison.Ordinal)}} }
+                    catch ({{catchType}}) { {{cleanup}} }
+                }
+            }
+            """);
+    }
 
     [Test]
     [Arguments("_ = new Owner(result);", "OutOfMemoryException", false, true)]
