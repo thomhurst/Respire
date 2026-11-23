@@ -329,10 +329,20 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             .ToArray();
         var releases = new List<SyntaxNode>();
 
-        if (acquisitionAssignment is not null
-            && IsImmediatelyReleasedOrTransferred(context, GetOutermostLeaseValue(context, acquisitionAssignment)))
+        if (acquisitionAssignment is not null)
         {
-            return true;
+            var use = GetOutermostLeaseValue(context, acquisitionAssignment);
+
+            if (IsImmediatelyReleasedOrTransferred(context, use))
+            {
+                if (use.Parent is not AssignmentExpressionSyntax)
+                {
+                    return true;
+                }
+
+                // A store can fail after the inner assignment has acquired the lease.
+                releases.Add(acquisitionAssignment);
+            }
         }
 
         foreach (var reference in references)
