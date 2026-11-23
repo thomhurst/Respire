@@ -717,6 +717,54 @@ public class ClientSideCacheCoalescingTests
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("x");
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task WireBarrierObservesPendingPingFaultOnDisconnect()
+    {
+        await using var server = CreateServer();
+        int serverPort = server.Port;
+        var pingFaultUnobserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs args)
+        {
+            foreach (var error in args.Exception.InnerExceptions)
+            {
+                if (error is RespireConnectionException { Endpoint.Port: var port } && port == serverPort)
+                {
+                    pingFaultUnobserved.TrySetResult();
+                }
+            }
+        }
+
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+
+        try
+        {
+            await using (var client = await ConnectAsync(server))
+            {
+                await BarrierAsync(server, client, 0);
+                var active = client.PingAsync().AsTask();
+                await WaitUntilAsync(() => server.ReceivedCommands.Count(command => command == "PING") == 2);
+                server.CloseConnection(server.ReceivedConnectionIds[^1]);
+                await Assert.That(async () => await active.WaitAsync(Timeout)).Throws<RespireConnectionException>();
+            }
+
+            // Task exception holders can finalize after the task itself becomes unreachable.
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                await Task.Yield();
+            }
+
+            await Assert.That(pingFaultUnobserved.Task.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
+    }
+
     private static FakeRespServer CreateServer()
         => new(Hello, FakeRespServer.OkReply)
         {
@@ -734,7 +782,8 @@ public class ClientSideCacheCoalescingTests
     // PING is queued after every caller. Its arrival proves all preceding wire writes are visible.
     private static async Task BarrierAsync(FakeRespServer server, RespireClient client, int expectedReads)
     {
-        _ = client.PingAsync().AsTask();
+        // Cancellation tests can close the connection without replying to the marker.
+        CleanupTasks.ObserveFault(client.PingAsync().AsTask());
         await WaitUntilAsync(() => server.ReceivedCommands.Contains("PING"));
         await Assert.That(server.ReceivedCommands.Count(c => c == "CLIENT CACHING YES")).IsEqualTo(expectedReads);
     }
