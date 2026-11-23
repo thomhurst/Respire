@@ -26,14 +26,12 @@ public sealed partial class RespireFakeServer
         return fence
         """;
 
-    private const string EffectsReplicationPrelude = "if redis.replicate_commands then redis.replicate_commands() end\n";
-
     // The prefix always ends with LF. The raw script body keeps its checkout line endings.
     // Keep the unprefixed variants for older Respire.Coordination builds.
     private static readonly RespireScript[] FencedLockAcquireScripts =
     [
-        RespireScript.Create(EffectsReplicationPrelude + FencedLockAcquireSource.ReplaceLineEndings("\n")),
-        RespireScript.Create(EffectsReplicationPrelude + FencedLockAcquireSource.ReplaceLineEndings("\r\n")),
+        RespireScript.Create(RespireScript.EffectsReplicationPrelude + FencedLockAcquireSource.ReplaceLineEndings("\n")),
+        RespireScript.Create(RespireScript.EffectsReplicationPrelude + FencedLockAcquireSource.ReplaceLineEndings("\r\n")),
         RespireScript.Create(FencedLockAcquireSource.ReplaceLineEndings("\n")),
         RespireScript.Create(FencedLockAcquireSource.ReplaceLineEndings("\r\n")),
     ];

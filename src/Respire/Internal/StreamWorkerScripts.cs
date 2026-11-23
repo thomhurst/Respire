@@ -39,7 +39,7 @@ internal static class StreamWorkerScripts
         return {page[1], entries}
         """;
 
-    internal const string AckSource = """
+    internal const string AckSource = RespireScript.EffectsReplicationPrelude + """
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
         if #pending == 1 and pending[1][2] == ARGV[2] and tostring(pending[1][4]) == ARGV[4] then
             return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3])
@@ -69,7 +69,7 @@ internal static class StreamWorkerScripts
 
         """;
 
-    internal const string CapabilityClaimSource = CapabilitySource + """
+    internal const string CapabilityClaimSource = RespireScript.EffectsReplicationPrelude + CapabilitySource + """
         -- Cleanup permissions are additional to compatible recovery. Check them
         -- before CLAIM mutates the PEL: Lua errors cannot roll back those writes.
         if supports(4) and redis.acl_check_cmd('XRANGE', KEYS[1], '0-0', '0-0')
@@ -106,7 +106,7 @@ internal static class StreamWorkerScripts
 
         """ + ClaimSource;
 
-    internal const string AckAndDeleteSource = CapabilitySource + """
+    internal const string AckAndDeleteSource = RespireScript.EffectsReplicationPrelude + CapabilitySource + """
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
         if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
         if supports(2) then

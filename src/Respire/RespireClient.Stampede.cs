@@ -313,7 +313,7 @@ public sealed partial class RespireClient
         return {entry[1], ttl - tonumber(entry[4]), entry[2], entry[3]}
         """, readOnly: false, cacheReadOnly: true);
 
-    private static readonly RespireScript ProtectedCacheAcquire = RespireScript.Create("""
+    private static readonly RespireScript ProtectedCacheAcquire = RespireScript.Create(RespireScript.EffectsReplicationPrelude + """
         if (redis.call('HGET', KEYS[1], 'version') or '') ~= ARGV[1] then return 0 end
         if ARGV[4] == '1' and not redis.call('SET', KEYS[2], ARGV[2], 'NX', 'PX', ARGV[3]) then return 0 end
         if redis.call('HEXISTS', KEYS[1], 'value') == 0 then
@@ -330,7 +330,7 @@ public sealed partial class RespireClient
         return 1
         """);
 
-    private static readonly RespireScript ProtectedCachePublish = RespireScript.Create("""
+    private static readonly RespireScript ProtectedCachePublish = RespireScript.Create(RespireScript.EffectsReplicationPrelude + """
         if ARGV[3] == '1' and redis.call('GET', KEYS[2]) ~= ARGV[2] then return 0 end
         if (redis.call('HGET', KEYS[1], 'version') or '') ~= ARGV[1] then return 0 end
         local ttl = tonumber(ARGV[6])
