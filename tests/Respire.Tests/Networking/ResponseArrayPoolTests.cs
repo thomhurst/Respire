@@ -12,23 +12,82 @@ namespace Respire.Tests.Networking;
 [NotInParallel]
 public class ResponseArrayPoolTests
 {
-    [Test]
-    public async Task WarmPayloadBurstsDoNotAllocate()
-        => await CheckWarmBursts(RespirePools.CreateResponsePayloadPool());
+    private const string ProbeMode = "RESPIRE_RESPONSE_ARRAY_POOL_PROBE";
+    private const string ProbeRuntime = "RESPIRE_RESPONSE_ARRAY_POOL_RUNTIME";
 
     [Test]
-    public async Task WarmElementBurstsDoNotAllocate()
-        => await CheckWarmBursts(RespirePools.CreateValueArrayPool());
+    public Task WarmPayloadBurstsDoNotAllocate()
+    {
+        return RunProbeAsync("payload");
+    }
 
-    private static async Task CheckWarmBursts<T>(ArrayPool<T> pool)
+    [Test]
+    public Task WarmElementBurstsDoNotAllocate()
+    {
+        return RunProbeAsync("element");
+    }
+
+    private static Task RunProbeAsync(string mode)
+    {
+        var start = AsyncFlushSignalTests.CreateProbeStartInfo(Environment.ProcessPath,
+            Environment.GetEnvironmentVariable("DOTNET_HOST_PATH"), typeof(ResponseArrayPoolTests).Assembly.Location);
+        start.Environment[ProbeMode] = mode;
+        start.Environment[ProbeRuntime] = Environment.Version.ToString();
+
+        return AsyncFlushSignalTests.RunProbeAsync(start, TimeSpan.FromSeconds(30));
+    }
+
+    internal static int? RunIsolatedAllocationProbe()
+    {
+        string? mode = Environment.GetEnvironmentVariable(ProbeMode);
+
+        if (mode is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (Environment.GetEnvironmentVariable(ProbeRuntime) != Environment.Version.ToString())
+            {
+                throw new InvalidOperationException("Response array pool probe runtime differs from parent.");
+            }
+
+            switch (mode)
+            {
+                case "payload":
+                    CheckWarmBursts(RespirePools.CreateResponsePayloadPool());
+                    break;
+                case "element":
+                    CheckWarmBursts(RespirePools.CreateValueArrayPool());
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unknown response array pool probe mode: {mode}.");
+            }
+
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+    }
+
+    private static void CheckWarmBursts<T>(ArrayPool<T> pool)
     {
         var burst = new T[200][];
         Measure(pool, burst, false);
         Measure(pool, burst, true);
-        var ordinary = AllocationMeasurement.WithoutConcurrentGc(() => Measure(pool, burst, false));
-        var positive = AllocationMeasurement.WithoutConcurrentGc(() => Measure(pool, burst, true));
-        await Assert.That(ordinary).IsEqualTo(0L);
-        await Assert.That(positive).IsGreaterThanOrEqualTo(32L * 37);
+
+        long ordinary = AllocationMeasurement.WithoutConcurrentGc(() => Measure(pool, burst, false));
+        long positive = AllocationMeasurement.WithoutConcurrentGc(() => Measure(pool, burst, true));
+
+        if (ordinary != 0 || positive < 32L * 37)
+        {
+            throw new InvalidOperationException(
+                $"Response array pool probe for {typeof(T).Name} measured {ordinary} ordinary bytes and {positive} positive-control bytes.");
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

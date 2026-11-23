@@ -15,6 +15,7 @@ internal static class Program
             ?? StandaloneReplicaReadyTests.RunIsolatedAllocationProbe()
             ?? ConnectionMetricCleanupTests.RunIsolatedQueuedSelectionProbe()
             ?? AsyncFlushSignalTests.RunIsolatedAllocationProbe()
+            ?? ResponseArrayPoolTests.RunIsolatedAllocationProbe()
             ?? SentinelIdentityTests.RunIsolatedAllocationProbe()
             ?? StandaloneBatchFlushTests.RunIsolatedAllocationProbe();
         // TUnit 1.76.0 supplies this helper; keep the centrally pinned package and entry point in sync.

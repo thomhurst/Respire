@@ -494,7 +494,7 @@ long removed = await redis.Streams.TrimAsync("events", new RespireStreamTrimOpti
 |---|---|---|
 | `RespireStreamAddOptions.ApproximateTrim` | `true` | Approximate trimming removes whole internal nodes and can keep entries past the threshold. |
 | `RespireStreamTrimOptions.Approximate` | `false` | Same, for `TrimAsync`. `TrimByMaxLengthAsync` also defaults to exact. |
-| `Limit` | null (server default) | Caps trimming work, not the removed count. Only valid with approximate trimming and a threshold. `0` disables the cap. |
+| `Limit` | null (server default) | A positive limit caps the number of entries removed per command. Trimming whole nodes can remove fewer entries. Only valid with approximate trimming and a threshold. `0` disables the cap. |
 
 - Lengths and limits must be nonnegative.
 - `MinId` takes numeric IDs, including milliseconds-only IDs, not range or consumer-read sentinels.

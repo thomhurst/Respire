@@ -241,6 +241,34 @@ public class HashCollectionTests(ModernRedisTestContainer fixture)
     }
 
     [Test, Arguments(2), Arguments(3)]
+    public async Task CosineSearchKeepsValidHitsWhenAStoredVectorHasUndefinedDistance(int protocol)
+    {
+        await using var client = await Connect(protocol);
+        using var store = Store(client);
+        store.RegisterMapper(new TwinMapper());
+        using var collection = store.GetHashCollection<TwinMovie>("movies");
+
+        try
+        {
+            await collection.EnsureCollectionExistsAsync();
+            await WaitForInitialScan(client, store.IndexName(collection.Name));
+            await collection.UpsertAsync([
+                new TwinMovie("exact", new float[] { 1, 0 }, new float[] { 1, 0 }),
+                new TwinMovie("orthogonal", new float[] { 0, 1 }, new float[] { 1, 0 }),
+                new TwinMovie("placeholder", new float[] { 0, 0 }, new float[] { 1, 0 }),
+            ]);
+
+            var hits = await Collect(collection.SearchAsync(new float[] { 1, 0 }, 3, new() { VectorProperty = movie => movie.First }));
+            hits.Select(hit => hit.Record.Id).Should().Equal("exact", "orthogonal");
+            hits.Select(hit => hit.Score).Should().Equal(0, 1);
+        }
+        finally
+        {
+            await collection.EnsureCollectionDeletedAsync();
+        }
+    }
+
+    [Test, Arguments(2), Arguments(3)]
     public async Task SearchBatchesPreserveOrderVectorsAndEarlyDisposal(int protocol)
     {
         await using var client = await Connect(protocol);

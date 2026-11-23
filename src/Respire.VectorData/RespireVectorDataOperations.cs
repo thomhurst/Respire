@@ -22,21 +22,28 @@ internal static class RespireVectorDataOperations
         }
     }
 
-    internal static double ReadSearchScore(RespireSearchDocument document, string prefix, string collectionName)
+    internal static double? ReadSearchScore(RespireSearchDocument document, string prefix, string collectionName, RespireSearchDistanceMetric distanceMetric)
     {
         if (!document.Id.StartsWith(prefix, StringComparison.Ordinal))
         {
             throw CreateException(new InvalidOperationException("Search returned a document outside this collection."), "SearchAsync", collectionName);
         }
 
-        if (!document.Fields.TryGetValue("vector_score", out var value)
-            || !double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var score)
-            || !double.IsFinite(score))
+        if (document.Fields.TryGetValue("vector_score", out var value)
+            && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var score))
         {
-            throw CreateException(new InvalidOperationException("Search returned a missing, invalid or non-finite vector distance."), "SearchAsync", collectionName);
+            if (double.IsFinite(score))
+            {
+                return score;
+            }
+
+            if (distanceMetric == RespireSearchDistanceMetric.Cosine && double.IsNaN(score))
+            {
+                return null;
+            }
         }
 
-        return score;
+        throw CreateException(new InvalidOperationException("Search returned a missing, invalid or non-finite vector distance."), "SearchAsync", collectionName);
     }
 
     internal static async Task DeleteCollectionAsync(IRespireClient client, string index, string prefix, string collectionName, CancellationToken cancellationToken)
