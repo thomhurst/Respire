@@ -18,7 +18,12 @@ public sealed class ClusterKeyNotificationIntegrationTests(ClusterKeyNotificatio
     [Test]
     [Arguments(2)]
     [Arguments(3)]
-    public async Task PatternSubkeyAndExactKeyRoutesCoverRequiredPrimaries(int protocol)
+    public Task PatternSubkeyAndExactKeyRoutesCoverRequiredPrimaries(int protocol)
+    {
+        return VerifyNotificationRoutesAsync(protocol).WaitAsync(TimeSpan.FromSeconds(60));
+    }
+
+    private async Task VerifyNotificationRoutesAsync(int protocol)
     {
         var options = cluster.Options(protocol) with { CommandTimeout = TimeSpan.FromDays(50) };
         await using var client = await RespireClient.ConnectAsync(options);
@@ -223,7 +228,7 @@ public sealed class ClusterKeyNotificationRedisCluster : IAsyncInitializer, IAsy
     internal string KeyForPrimary(int node, string prefix)
     {
         var start = node * 5461;
-        var targetSlot = start + (node == 2 ? 100 : 100);
+        var targetSlot = start + 100;
         var tag = TagForSlot(targetSlot);
         return $"{prefix}{{{tag}}}:key";
     }
