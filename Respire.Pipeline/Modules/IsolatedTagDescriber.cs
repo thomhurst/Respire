@@ -7,7 +7,7 @@ namespace Respire.Pipeline.Modules;
 internal static class IsolatedTagDescriber
 {
     internal static async Task<string?> DescribeAsync(
-        string repositoryRoot, CancellationToken cancellationToken, Func<string?, bool> isStableTag, ILogger? logger)
+        string repositoryRoot, CancellationToken cancellationToken, Func<string?, bool> isVersionTag, ILogger? logger)
     {
         // Read local refs directly: clone/fetch advertisements can hide release tags.
         // Capture the calling worktree's HEAD and shared object/shallow paths together.
@@ -47,7 +47,7 @@ internal static class IsolatedTagDescriber
             var separator = line.IndexOf(' ');
             var name = line[(separator + 1)..];
 
-            if (name.StartsWith("refs/tags/", StringComparison.Ordinal) && !isStableTag(name[10..]))
+            if (name.StartsWith("refs/tags/", StringComparison.Ordinal) && !isVersionTag(name[10..]))
             {
                 continue;
             }
@@ -82,8 +82,8 @@ internal static class IsolatedTagDescriber
         // unlike catching Git failures, this leaves repository errors observable.
         var selected = await GitCommand.RunIsolatedAsync(repositoryRoot, temporary.FullName, cancellationToken,
             "describe", "--tags", "--abbrev=0", "--always", head);
-        // The hash fallback cannot satisfy the shared stable-tag grammar.
-        return isStableTag(selected) ? selected : null;
+        // The hash fallback cannot satisfy the shared version-tag grammar.
+        return isVersionTag(selected) ? selected : null;
     }
 
     private sealed class TemporaryRepository(ILogger? logger) : IDisposable

@@ -10,7 +10,7 @@ A ModularPipelines-based CI/CD pipeline for the Respire Redis client library.
 - **Version Generation**: Git-based semantic versioning
 - **NuGet Packaging**: Creates NuGet packages with proper versioning
 - **Local Development**: Supports local NuGet folder for development
-- **Production Deployment**: Publishes to NuGet.org and creates GitHub releases
+- **Production Deployment**: Publishes to NuGet.org when a GitHub release is published
 
 ## Configuration
 
@@ -30,7 +30,6 @@ Configure the pipeline through `appsettings.json`:
   },
   "Versioning": {
     "BaseVersion": "0.1.0",
-    "ReleaseVersion": "2.0.0",
     "ReleaseBranches": [
       "main",
       "master"
@@ -56,8 +55,7 @@ You can also use environment variables:
 - `NuGet__ApiKey`: NuGet API key
 - `GitHub__Token` or `GitHub__AccessToken`: GitHub personal access token
 - `GitHub__Owner`: GitHub repository owner
-- `Versioning__BaseVersion`: fallback base version when no version tag exists
-- `Versioning__ReleaseVersion`: explicit release target, currently `2.0.0`
+- `Versioning__BaseVersion`: fallback version when no version tag exists
 
 ## Usage
 
@@ -86,29 +84,13 @@ or change unrelated feeds. A registration failure stops the dependent local uplo
 
 ### Production Mode
 
-In production mode, packages are published to NuGet.org and GitHub releases are created:
+Production mode registers `UploadPackagesToNugetModule`, which pushes the packages to NuGet.org with
+`--skip-duplicate`. It runs only when `GITHUB_EVENT_NAME` is `release`, so a local
+`dotnet run --environment Production` builds, tests and packs but does not publish.
 
-```bash
-cd Respire.Pipeline
-dotnet run --environment Production
-```
-
-This will:
-1. Build the solution
-2. Run tests
-3. Run benchmarks  
-4. Create packages
-5. Upload packages to NuGet.org
-6. Create a GitHub release for the generated version
-
-The release module runs only after the NuGet upload module succeeds. It uses `ModularPipelines.GitHub`
-and Octokit to ask GitHub for automatically generated release notes between the latest release and
-the new `v{version}` tag, appends install commands for the uploaded NuGet packages, and publishes
-a ready release. Existing releases for the same tag are left untouched.
-
-In GitHub Actions, the modular pipeline only publishes packages and creates releases for a manual
-`workflow_dispatch` run on `main` with `publish-packages` set to `true`. Normal pushes and pull
-requests run in development mode and do not publish packages.
+In GitHub Actions, `modular-pipeline.yml` runs in production mode only for a published GitHub release
+(see [Releasing](#releasing)). Normal pushes and pull requests run in development mode and do not
+publish packages.
 
 ## Pipeline Modules
 
@@ -122,7 +104,6 @@ requests run in development mode and do not publish packages.
 
 ### Production Modules
 - `UploadPackagesToNugetModule`: Publishes packages to NuGet.org
-- `CreateGitHubReleaseModule`: Creates GitHub releases with release notes
 
 ### Development Modules
 - `CreateLocalNugetFolderModule`: Creates local NuGet package folder
@@ -137,47 +118,45 @@ The pipeline uses ModularPipelines with the following packages:
 
 ## Versioning Strategy
 
-The repository pins `Versioning:ReleaseVersion` to **2.0.0**. This skips the 1.x line,
-which contains the unlisted, permanently occupied NuGet version `Respire 1.0.116`.
-The stray `v1.0.116` Git tag has been removed. With an explicit target, unrelated
-tags and `+semver:` commit markers cannot change the release line.
+Every build is versioned as the release it would become: one step above the nearest version tag
+reachable from `HEAD`. GitHub creates these tags when a release is published.
 
-- Before `v2.0.0` is reachable, `main`/`master` generate `2.0.0-rc.N`, where `N` is
-  the total reachable commit count. RC tags do not reset the count. Use full Git history
-  (`fetch-depth: 0`, as in the workflow) and do not rewrite the release branch.
-- At `v2.0.0`, release branches generate `2.0.0`. Later commits generate `2.0.N`,
-  with the patch increment counted from that tag. Both lightweight and annotated tags work.
-- Feature branches always generate `-ci.<branch>.<height>.g<hash>` packages.
-- To prepare another minor or major, change `ReleaseVersion` to the next unused
-  target through a PR. This starts another RC phase until its exact `vX.Y.Z` tag is reachable.
+- A stable tag moves to its next patch: `v2.0.1` gives `2.0.2`.
+- A prerelease tag moves to its next candidate: `v2.0.0-rc.2000` gives `2.0.0-rc.2001`, and
+  `v2.0.0-beta` gives `2.0.0-beta.1`.
+- The number of commits since the tag does not change the version, and commit messages
+  (including `+semver:` markers) have no effect.
+- `main`/`master` builds use that version. Other branches add
+  `-ci.<branch>.<height>.g<hash>` (or `.ci.<branch>...` after a prerelease), where `height` counts
+  commits since the tag.
+- With no version tag, `Versioning:BaseVersion` is used.
+- On a published release (`GITHUB_EVENT_NAME=release`), the version is the release's tag, which the
+  workflow passes in `RESPIRE_RELEASE_VERSION`.
 
-### Publishing candidates and cutting stable
+Version tags are `X.Y.Z` with an optional `v` prefix and an optional prerelease suffix. Tags with
+build metadata (`+build`) or other names are ignored. Use full Git history (`fetch-depth: 0`, as in
+the workflow).
 
-1. Merge the intended changes to `main`, then manually run **Modular Pipeline** on
-   `main` with `publish-packages: true`. Before the stable tag, this publishes RC
-   packages and marks the GitHub release as a prerelease. Pushes only validate.
-2. After validating an RC and completing the release gates, tag its commit with
-   `v2.0.0` and push that tag. Run the same manual workflow on `main` while that commit
-   is still its tip to publish exactly `2.0.0`. A tag push alone does not publish.
-3. Later manual runs on `main` publish stable patch versions. Do not move or delete
-   a release tag after publishing; NuGet versions cannot be reused.
+## Releasing
 
-### Legacy versioning
+`.github/workflows/release-draft.yml` keeps one draft GitHub release for `main`, rewritten on every
+push. Its tag is one step above the last published release (prereleases included), it targets the
+newest `main` commit, and its notes are GitHub's generated notes since that release.
 
-When `ReleaseVersion` is omitted, the pipeline retains the previous tag/marker strategy:
+1. To release, edit the draft on GitHub. Change its tag to choose the version: keep the suggested
+   `v2.0.0-rc.N` for another candidate, use `v2.0.0` to cut the stable release, or `v2.1.0` for a
+   minor. Adjust the notes and publish it.
+2. Publishing creates the tag on the draft's commit and runs `modular-pipeline.yml` on it. That run
+   fails unless the tag is a version and its commit is on `main`. It builds, tests and packs the
+   commit with the tag's version, pushes the packages to NuGet.org, and runs the package checks.
+3. The run then renames the release to its version, points its compare link at the final tag,
+   marks it as a prerelease when the version has a suffix, and appends install commands for the
+   packages. This step never fails the release.
+4. To retry a failed publish, re-run that workflow run: packages already on NuGet are skipped.
 
-- **Main/Master Branch**: `0.1.266` from base version plus commit height
-- **Minor Marker**: `0.2.0` when the latest highest marker is `+semver:minor`
-- **Feature Branches**: `0.1.266-ci.feature-branch.266.abc12345`
-- **No Generated Version**: `0.1.0` fallback
-
-Version is based on:
-- Latest version tag, or `Versioning:BaseVersion` when no tag exists
-- Commit height since the latest version tag
-- Branch name and short commit hash for CI branch packages
-- Optional commit message markers: `+semver:major`, `+semver:minor`, `+semver:patch`, and `+semver:none`
-
-If no `+semver:` marker is present, the pipeline applies a patch increment. The highest marker in the commit range wins. Major and minor markers reset lower version parts; patch is then counted from commits after the selected marker.
+Every push to `main` rewrites the draft, so edits to it are lost if `main` moves before it is
+published. Do not move or delete a release tag after publishing; NuGet versions cannot be reused.
+Skip the 1.x line: it contains the unlisted, permanently occupied NuGet version `Respire 1.0.116`.
 
 ## Customization
 

@@ -39,8 +39,8 @@ public class Program
         }
         else
         {
-            builder.AddModule<UploadPackagesToNugetModule>()
-                .AddModule<CreateGitHubReleaseModule>();
+            // GitHub creates the tag and the release when the draft release is published.
+            builder.AddModule<UploadPackagesToNugetModule>();
         }
 
         await builder

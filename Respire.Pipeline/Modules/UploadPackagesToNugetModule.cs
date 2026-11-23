@@ -6,6 +6,8 @@ using Respire.Pipeline.Settings;
 
 namespace Respire.Pipeline.Modules;
 
+// Publishing runs only for a published GitHub release (see release-draft.yml): the release's tag is
+// the version, and GitHub has already created the tag and the release.
 [DependsOn<PackagePathsParserModule>]
 [DependsOn<VerifyCoreInternalsDependenciesModule>]
 public class UploadPackagesToNugetModule : Module<CommandResult[]>
@@ -16,6 +18,13 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
     {
         _nugetSettings = nugetSettings;
     }
+
+    protected override void Configure(ModuleConfigurationBuilder module) => module
+        .WithSkipWhen(_ => GetSkipDecision(Environment.GetEnvironmentVariable("GITHUB_EVENT_NAME")));
+
+    internal static SkipDecision GetSkipDecision(string? gitHubEventName) => gitHubEventName == "release"
+        ? SkipDecision.DoNotSkip
+        : SkipDecision.Skip("Not a published GitHub release");
 
     protected override async Task<CommandResult[]> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
@@ -46,6 +55,7 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
             {
                 Source = "https://api.nuget.org/v3/index.json",
                 ApiKey = _nugetSettings.Value.ApiKey,
+                // A failed release is retried by re-running its workflow; keep what already went up.
                 SkipDuplicate = true
             }, cancellationToken: cancellationToken);
 
