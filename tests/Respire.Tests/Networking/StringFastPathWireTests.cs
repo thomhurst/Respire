@@ -395,8 +395,14 @@ public class StringFastPathWireTests
         await Assert.That(read.IsCompleted).IsFalse();
 
         lifetime.Cancel();
-        await Assert.That(async () => await read.WaitAsync(TimeSpan.FromSeconds(5)))
+        var pendingError = await Assert.That(async () => await read.WaitAsync(TimeSpan.FromSeconds(5)))
             .Throws<OperationCanceledException>();
+        await Assert.That(pendingError!.CancellationToken).IsEqualTo(lifetime.Token);
+
+        var laterError = await Assert.That(async () =>
+            await stream.ReadAsync(new byte[16]).AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(laterError!.CancellationToken).IsEqualTo(lifetime.Token);
 
         await server.SendRawAsync("abcdefghij\r\n"u8.ToArray());
         var ping = connection.SendCheckedAsync(new Cmd(new Verb("PING")), commandName: "PING").AsTask();
@@ -409,6 +415,28 @@ public class StringFastPathWireTests
         await server.SendRawAsync("+PONG\r\n"u8.ToArray());
         using var pong = await ping.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(pong.AsString()).IsEqualTo("PONG");
+    }
+
+    [Test]
+    public async Task GetStream_LifetimeCancellationAbandonsBufferedPayload()
+    {
+        await using var server = new FakeRespServer("$5\r\nhello\r\n"u8.ToArray(), FakeRespServer.PongReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var lifetime = new CancellationTokenSource();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var stream = await client.Strings.GetStreamAsync("key", lifetime.Token)
+            .AsTask().WaitAsync(timeout.Token);
+        await client.PingAsync(timeout.Token);
+        lifetime.Cancel();
+
+        using var destination = new MemoryStream();
+        var copyError = await Assert.That(async () => await stream!.CopyToAsync(destination, timeout.Token))
+            .Throws<OperationCanceledException>();
+        var readError = await Assert.That(() => stream!.ReadByte()).Throws<OperationCanceledException>();
+        await Assert.That(copyError!.CancellationToken).IsEqualTo(lifetime.Token);
+        await Assert.That(readError!.CancellationToken).IsEqualTo(lifetime.Token);
+        await Assert.That(destination.Length).IsEqualTo(0L);
+        await client.PingAsync(timeout.Token);
     }
 
     [Test]
