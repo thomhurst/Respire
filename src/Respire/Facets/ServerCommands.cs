@@ -167,8 +167,8 @@ public partial interface IRespireServerCommands
     ValueTask<long> ResetLatencyAsync(string eventName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Memory used by a key, or null when the key is missing. With client-side caching enabled,
-    /// only exact <paramref name="samples"/> = 0 calls are cached; sampled estimates bypass it.
+    /// Memory used by a key, or null when the key is missing.
+    /// All calls bypass the client-side cache, including exact reads with <paramref name="samples"/> set to 0.
     /// Redis: MEMORY USAGE.
     /// </summary>
     ValueTask<long?> MemoryUsageAsync(

@@ -43,6 +43,7 @@ public class StreamClientSideCacheIntegrationTests(ModernRedisTestContainer fixt
 
         await writer.Streams.CreateGroupAsync(key, "other-workers", RespireStreamId.Beginning);
         await AssertReadsAsync(pending: 0, groupCount: 2);
+        // Verify the metadata and memory reads bypass the client-side cache.
         await Assert.That(reader.ClientSideCache!.Count).IsEqualTo(0);
 
         async Task AssertReadsAsync(long pending, int groupCount)
