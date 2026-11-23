@@ -217,6 +217,32 @@ public class TimeSeriesIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task PrefixedInfoKeysCanBeReusedToDeleteCompactionRule(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var prefix = $"tenant:{Guid.NewGuid():N}:";
+        var tenant = client.WithKeyPrefix(prefix).TimeSeries;
+
+        await tenant.CreateAsync("source");
+        await tenant.CreateAsync("destination");
+        await tenant.CreateRuleAsync("source", "destination", RespireTimeSeriesAggregation.Sum, 10);
+
+        var sourceInfo = await tenant.GetInfoAsync("source");
+        RespireKey destination = sourceInfo.Rules.Single().DestinationKey;
+        var destinationInfo = await tenant.GetInfoAsync("destination");
+        await Assert.That(destination).IsEqualTo(new RespireKey("destination"));
+        await Assert.That(destinationInfo.SourceKey).IsEqualTo(new RespireKey("source"));
+
+        var physicalInfo = await client.TimeSeries.GetInfoAsync(prefix + "source");
+        await Assert.That(physicalInfo.Rules.Single().DestinationKey).IsEqualTo(new RespireKey(prefix + "destination"));
+
+        await tenant.DeleteRuleAsync(destinationInfo.SourceKey!.Value, destination);
+        await Assert.That((await tenant.GetInfoAsync("source")).Rules).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task ServerErrorsAndCancelledWritesPreserveExistingSamples(int protocol)
     {
         await using var client = await ConnectAsync(protocol);

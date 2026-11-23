@@ -475,6 +475,11 @@ public sealed partial class RespireTimeSeriesClient
     }
 
     /// <summary>Returns series metadata from TS.INFO: sample counts, retention, chunks, labels, and compaction rules.</summary>
+    /// <remarks>
+    /// The view's key prefix is removed from matching compaction source and destination keys so they can be reused
+    /// on the same view. Keys outside the prefix keep their physical names. Use an unprefixed client to read
+    /// metadata and manage rules that cross prefixes.
+    /// </remarks>
     public ValueTask<RespireTimeSeriesInfo> GetInfoAsync(RespireKey key, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "TS.INFO", cancellationToken,
@@ -485,7 +490,7 @@ public sealed partial class RespireTimeSeriesClient
     private async ValueTask<RespireTimeSeriesInfo> GetInfoUnhookedAsync(RespireKey key, CancellationToken cancellationToken = default)
     {
         using var result = await DispatchAsync(InfoCommand, [key], cancellationToken).ConfigureAwait(false);
-        return TimeSeriesReplyParser.ParseInfo(result);
+        return TimeSeriesReplyParser.ParseInfo(result, (_client as RespireClient)?.KeyPrefix);
     }
 
     /// <summary>
@@ -496,6 +501,7 @@ public sealed partial class RespireTimeSeriesClient
     /// <param name="read">Projects the response. The result is disposed when it returns, so it must not escape.</param>
     /// <param name="debug">Sends TS.INFO DEBUG, which adds per-chunk details.</param>
     /// <param name="cancellationToken">Cancels the request.</param>
+    /// <remarks>The reply exposes physical keys as Redis returned them, including any key prefixes.</remarks>
     public ValueTask<T> GetRawInfoAsync<T>(RespireKey key, Func<RespireResult, T> read, bool debug = false, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "TS.INFO", cancellationToken,

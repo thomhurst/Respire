@@ -1,3 +1,4 @@
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire.TimeSeries;
@@ -104,7 +105,7 @@ internal static class TimeSeriesReplyParser
     }
 
     /// <summary>Parses a TS.INFO reply. RESP2 replies are flat name/value arrays and RESP3 replies are maps.</summary>
-    internal static RespireTimeSeriesInfo ParseInfo(RespireResult result)
+    internal static RespireTimeSeriesInfo ParseInfo(RespireResult result, KeyPrefix? prefix)
     {
         // Both shapes index as name/value pairs.
         if (result.Type is not (RespireDataType.Map or RespireDataType.Array) || result.Count % 2 != 0)
@@ -170,10 +171,10 @@ internal static class TimeSeriesReplyParser
                     labels = ParseLabels(value);
                     break;
                 case "sourceKey":
-                    sourceKey = value.IsNull ? (RespireKey?)null : new RespireKey(value.AsBytes());
+                    sourceKey = value.IsNull ? (RespireKey?)null : ParseInfoKey(value, prefix);
                     break;
                 case "rules":
-                    rules = ParseRules(value);
+                    rules = ParseRules(value, prefix);
                     break;
             }
         }
@@ -259,7 +260,7 @@ internal static class TimeSeriesReplyParser
         return new(sample[0].AsInteger(), sample[1].AsDouble());
     }
 
-    private static RespireTimeSeriesRule[] ParseRules(RespireResult rules)
+    private static RespireTimeSeriesRule[] ParseRules(RespireResult rules, KeyPrefix? prefix)
     {
         if (rules.Type == RespireDataType.Map)
         {
@@ -268,7 +269,7 @@ internal static class TimeSeriesReplyParser
 
             for (var index = 0; index + 1 < rules.Count; index += 2)
             {
-                mapped[index / 2] = ParseRule(rules[index], rules[index + 1], offset: 0);
+                mapped[index / 2] = ParseRule(rules[index], rules[index + 1], prefix, offset: 0);
             }
 
             return mapped;
@@ -286,13 +287,13 @@ internal static class TimeSeriesReplyParser
                 throw UnexpectedReply();
             }
 
-            parsed[index] = ParseRule(rule[0], rule, offset: 1);
+            parsed[index] = ParseRule(rule[0], rule, prefix, offset: 1);
         }
 
         return parsed;
     }
 
-    private static RespireTimeSeriesRule ParseRule(RespireResult destination, RespireResult fields, int offset)
+    private static RespireTimeSeriesRule ParseRule(RespireResult destination, RespireResult fields, KeyPrefix? prefix, int offset)
     {
         if (fields.Count < offset + 2)
         {
@@ -300,6 +301,14 @@ internal static class TimeSeriesReplyParser
         }
 
         var align = fields.Count > offset + 2 ? fields[offset + 2].AsInteger() : 0;
-        return new(new RespireKey(destination.AsBytes()), fields[offset].AsInteger(), fields[offset + 1].AsString(), align);
+        return new(ParseInfoKey(destination, prefix), fields[offset].AsInteger(), fields[offset + 1].AsString(), align);
+    }
+
+    private static RespireKey ParseInfoKey(RespireResult value, KeyPrefix? prefix)
+    {
+        var physical = value.AsSpan();
+        return prefix is not null && prefix.TryStripFromKey(physical, out var key)
+            ? key
+            : new RespireKey(physical.ToArray());
     }
 }

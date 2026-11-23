@@ -174,6 +174,8 @@ See Redis's [explicit-key range semantics](https://redis.io/docs/latest/commands
 
 `GetInfoAsync` returns `RespireTimeSeriesInfo`: sample count, first and last timestamps, retention, chunk settings, duplicate policy, labels, source key and rules. For other fields, `GetRawInfoAsync` reads raw `TS.INFO` or `TS.INFO DEBUG` through a projection, such as `GetRawInfoAsync(key, static info => info.Count)`. The response is disposed after the projection runs, so copy out what you need.
 
+On a prefixed view, `GetInfoAsync` removes the view's prefix from matching source and rule destination keys. Pass these `RespireKey` values directly to commands on the same view, for example `DeleteRuleAsync(source, info.Rules[0].DestinationKey)`. Keys outside the view's prefix retain their physical names. For a rule that crosses prefixes, read its metadata and manage the rule through an unprefixed client. `GetRawInfoAsync` always exposes the server's physical key bytes.
+
 ## Key prefixes and Cluster
 
 :::warning Label-filter queries in Redis Cluster

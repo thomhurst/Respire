@@ -149,7 +149,7 @@ internal static class ValkeyClusterScanParser
             {
                 owned = new RespireKey(bytes.ToArray());
             }
-            else if (!prefix.TryStripScanKey(bytes, out owned))
+            else if (!prefix.TryStripFromKey(bytes, out owned))
             {
                 continue;
             }

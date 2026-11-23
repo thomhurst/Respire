@@ -450,6 +450,34 @@ public class TimeSeriesClientTests
     }
 
     [Test]
+    public async Task Info_PreservesBinarySuffixAndPhysicalKeysOutsideThePrefix()
+    {
+        byte[] prefix = [0xFF, (byte)':'];
+        byte[] suffix = [0xFF, (byte)':', 0xFE];
+        byte[] physicalKey = [.. prefix, .. suffix];
+        byte[] reply = [
+            .. Frame("*4\r\n$9\r\nsourceKey\r\n$7\r\noutside\r\n$5\r\nrules\r\n*1\r\n*4\r\n$5\r\n"),
+            .. physicalKey,
+            .. Frame("\r\n:10\r\n+avg\r\n:0\r\n"),
+        ];
+        await using var server = new FakeRespServer(reply, reply, Ok);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = client.WithKeyPrefix(new RespireKey(new byte[] { 0xFF })).WithKeyPrefix(":").TimeSeries;
+
+        var info = await timeSeries.GetInfoAsync("series");
+        var destination = info.Rules.Single().DestinationKey;
+        await Assert.That(destination).IsEqualTo(new RespireKey(suffix));
+        await Assert.That(info.SourceKey).IsEqualTo(new RespireKey("outside"));
+
+        var rawDestination = await timeSeries.GetRawInfoAsync("series",
+            static result => new RespireKey(result[3][0][0].AsBytes()));
+        await Assert.That(rawDestination).IsEqualTo(new RespireKey(physicalKey));
+
+        await timeSeries.DeleteRuleAsync("series", destination);
+        await Assert.That(server.ReceivedArguments[^1][2].SequenceEqual(physicalKey)).IsTrue();
+    }
+
+    [Test]
     public async Task MultiAdd_ReportsEveryRejectedSampleAndKeepsAcceptedTimestamps()
     {
         await using var server = new FakeRespServer(
