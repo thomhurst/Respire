@@ -53,7 +53,9 @@ public enum RespireBitFieldOverflow
     /// <summary>Clamp overflowing values to the field's minimum or maximum.</summary>
     Saturate,
 
-    /// <summary>Return null and leave the field unchanged on overflow.</summary>
+    /// <summary>
+    /// Returns null and leaves the field unchanged on overflow. Redis can still create or extend the backing string.
+    /// </summary>
     Fail,
 }
 
@@ -235,7 +237,11 @@ public interface IRespireBitmapCommands
         RespireKey key, long start, long end, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte,
         CancellationToken cancellationToken = default);
 
-    /// <summary>The first offset holding <paramref name="value"/>, or null when none is found. Redis: BITPOS.</summary>
+    /// <summary>
+    /// Returns the first matching bit offset, or null when none is found. A clear-bit search on a missing key returns
+    /// zero even with a later start. Without an end bound, a clear-bit search can match just past the stored data.
+    /// Redis: BITPOS.
+    /// </summary>
     ValueTask<long?> PositionAsync(
         RespireKey key, bool value, long? start = null, long? end = null,
         RespireBitIndexUnit unit = RespireBitIndexUnit.Byte, CancellationToken cancellationToken = default);
@@ -303,10 +309,16 @@ internal sealed class BitmapCommands(RespireClient client) : IRespireBitmapComma
     public ValueTask<long> SetBitCountAsync(
         RespireKey key, long start, long end, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte,
         CancellationToken cancellationToken = default)
-        => client.IntegerAsync(
-            "BITCOUNT",
-            new Cmd4(RespireCommands.Bitmap.BITCOUNT.Verb, client.Key(in key), start, end, Unit(unit)),
-            cancellationToken);
+    {
+        ValidateUnit(unit);
+        var verb = RespireCommands.Bitmap.BITCOUNT.Verb;
+        var keyArgument = client.Key(in key);
+
+        // Redis defaults to byte offsets. The optional unit token requires Redis 7.
+        return unit == RespireBitIndexUnit.Byte
+            ? client.IntegerAsync("BITCOUNT", new Cmd3(verb, keyArgument, start, end), cancellationToken)
+            : client.IntegerAsync("BITCOUNT", new Cmd4(verb, keyArgument, start, end, "BIT"), cancellationToken);
+    }
 
     public ValueTask<long?> PositionAsync(
         RespireKey key, bool value, long? start = null, long? end = null,
@@ -319,9 +331,11 @@ internal sealed class BitmapCommands(RespireClient client) : IRespireBitmapComma
                 "BITPOS", new Cmd2(RespireCommands.Bitmap.BITPOS.Verb, client.Key(in key), value), cancellationToken),
             ({ } from, null) => client.IntegerMinusOneOrNullAsync(
                 "BITPOS", new Cmd3(RespireCommands.Bitmap.BITPOS.Verb, client.Key(in key), value, from), cancellationToken),
+            ({ } from, { } to) when unit == RespireBitIndexUnit.Byte => client.IntegerMinusOneOrNullAsync(
+                "BITPOS", new Cmd4(RespireCommands.Bitmap.BITPOS.Verb, client.Key(in key), value, from, to),
+                cancellationToken),
             ({ } from, { } to) => client.IntegerMinusOneOrNullAsync(
-                "BITPOS", new Cmd5(
-                    RespireCommands.Bitmap.BITPOS.Verb, client.Key(in key), value, from, to, Unit(unit)),
+                "BITPOS", new Cmd5(RespireCommands.Bitmap.BITPOS.Verb, client.Key(in key), value, from, to, "BIT"),
                 cancellationToken),
         };
     }
@@ -420,10 +434,7 @@ internal sealed class BitmapCommands(RespireClient client) : IRespireBitmapComma
             throw new ArgumentException("End requires start.", nameof(end));
         }
 
-        if (!Enum.IsDefined(unit))
-        {
-            throw new ArgumentOutOfRangeException(nameof(unit));
-        }
+        ValidateUnit(unit);
 
         if (start.HasValue && !end.HasValue && unit != RespireBitIndexUnit.Byte)
         {
@@ -431,12 +442,13 @@ internal sealed class BitmapCommands(RespireClient client) : IRespireBitmapComma
         }
     }
 
-    internal static string Unit(RespireBitIndexUnit unit) => unit switch
+    internal static void ValidateUnit(RespireBitIndexUnit unit)
     {
-        RespireBitIndexUnit.Byte => "BYTE",
-        RespireBitIndexUnit.Bit => "BIT",
-        _ => throw new ArgumentOutOfRangeException(nameof(unit)),
-    };
+        if (!Enum.IsDefined(unit))
+        {
+            throw new ArgumentOutOfRangeException(nameof(unit));
+        }
+    }
 
     internal static string Operation(RespireBitOperation operation) => operation switch
     {

@@ -16,9 +16,16 @@ long count = await redis.Bitmaps.SetBitCountAsync("{activity}:today");
 long? firstActive = await redis.Bitmaps.PositionAsync("{activity}:today", true);
 ```
 
-`SetAsync` returns the previous bit. `PositionAsync` returns `null` when Redis finds no match.
-Range overloads of `SetBitCountAsync` and `PositionAsync` use inclusive byte offsets by default;
-choose `RespireBitIndexUnit.Bit` for bit offsets (Redis 7+).
+`SetAsync` returns the previous bit. Range overloads of `SetBitCountAsync` and
+`PositionAsync` use inclusive byte offsets by default, including on Redis 6.2.
+Choose `RespireBitIndexUnit.Bit` for bit offsets (Redis 7+). `PositionAsync` always
+returns a zero-based bit offset, or `null` when Redis finds no match.
+
+When searching for a clear bit on an existing bitmap without an end bound, Redis can
+return the first bit past the stored data. For example, an unbounded search on a
+single `0xff` byte returns `8`, while a search bounded to byte 0 returns `null`.
+On a missing key, a clear-bit search returns `0` even if the start is greater than
+zero. A set-bit search on a missing key returns `null`.
 
 ## Combine bitmaps
 
@@ -52,7 +59,8 @@ Use `Signed(1..64)` or `Unsigned(1..63)` for the encoding. `Bits(n)` is an absol
 offset; `Fields(n)` multiplies the index by the encoding width. `Set` returns the old
 value, `Increment` the new value, and `Get` the current value. `SetOverflow` changes
 subsequent writes and has no result element. `Fail` returns `null` on overflow and leaves
-that field unchanged; `Wrap` and `Saturate` select the other overflow behaviors.
+that field unchanged. Redis can still create or extend the backing string with zero-filled
+bytes to make room for the field. `Wrap` and `Saturate` select the other overflow behaviors.
 
 The `batch.Bitmaps` and `transaction.Bitmaps` facets queue these operations without the
 `Async` suffix. See [batches and transactions](../guides/batches-and-transactions.md).

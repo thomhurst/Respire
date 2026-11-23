@@ -87,6 +87,44 @@ public class BitmapCommandTests
     }
 
     [Test]
+    public async Task BitmapRanges_SendUnitTokenOnlyForBitOffsets()
+    {
+        var countReply = ":1\r\n"u8.ToArray();
+        var positionReply = ":9\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(
+            countReply, positionReply, countReply, positionReply,
+            countReply, positionReply, countReply, positionReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(await client.Bitmaps.SetBitCountAsync("bits", 0, 0)).IsEqualTo(1);
+        await Assert.That(await client.Bitmaps.PositionAsync("bits", true, 1, 1)).IsEqualTo(9);
+        await Assert.That(await client.Bitmaps.SetBitCountAsync("bits", 1, 1, RespireBitIndexUnit.Bit)).IsEqualTo(1);
+        await Assert.That(await client.Bitmaps.PositionAsync("bits", true, 9, 9, RespireBitIndexUnit.Bit)).IsEqualTo(9);
+
+        using var batch = client.CreateBatch();
+        var byteCount = batch.Bitmaps.SetBitCount("bits", 0, 0, RespireBitIndexUnit.Byte);
+        var bytePosition = batch.Bitmaps.Position("bits", true, 1, 1, RespireBitIndexUnit.Byte);
+        var bitCount = batch.Bitmaps.SetBitCount("bits", 1, 1, RespireBitIndexUnit.Bit);
+        var bitPosition = batch.Bitmaps.Position("bits", true, 9, 9, RespireBitIndexUnit.Bit);
+        await batch.ExecuteAsync();
+
+        await Assert.That(byteCount.Result).IsEqualTo(1);
+        await Assert.That(bytePosition.Result).IsEqualTo(9);
+        await Assert.That(bitCount.Result).IsEqualTo(1);
+        await Assert.That(bitPosition.Result).IsEqualTo(9);
+
+        await AssertCommands(server.ReceivedCommands,
+            "BITCOUNT bits 0 0",
+            "BITPOS bits 1 1 1",
+            "BITCOUNT bits 1 1 BIT",
+            "BITPOS bits 1 9 9 BIT",
+            "BITCOUNT bits 0 0",
+            "BITPOS bits 1 1 1",
+            "BITCOUNT bits 1 1 BIT",
+            "BITPOS bits 1 9 9 BIT");
+    }
+
+    [Test]
     public async Task BitmapCommands_RejectInvalidShapesBeforeSending()
     {
         await using var server = new FakeRespServer();
