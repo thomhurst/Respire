@@ -473,15 +473,32 @@ function New-Candidate([string]$Kind, [int]$Number, [int]$Rank, [string]$Fingerp
     }
 }
 
-# Returns the latest completed push run of each workflow on main that failed. A newer
-# run still in progress hides an older failure, because it may already carry the fix.
+# Recent push runs define the workflows to check. A newer push still in progress
+# suppresses an older failure, and a dispatch counts only after it completes.
 function Get-MainFailures {
-    $runs = gh run list --repo $repoSlug --branch main --event push --limit 50 `
-        --json databaseId,workflowName,status,conclusion,headSha,url,createdAt | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0) { throw 'gh run list failed.' }
-    @($runs | Group-Object workflowName | ForEach-Object { $_.Group | Sort-Object createdAt | Select-Object -Last 1 } |
+    $fields = 'databaseId,workflowDatabaseId,workflowName,status,conclusion,headSha,url,createdAt'
+    $pushJson = gh run list --repo $repoSlug --branch main --event push --limit 50 --json $fields
+    if ($LASTEXITCODE -ne 0) { throw 'gh run list failed for push runs on main.' }
+
+    $latestPushRuns = $pushJson | ConvertFrom-Json | Group-Object workflowDatabaseId | ForEach-Object {
+        $_.Group | Sort-Object createdAt, databaseId | Select-Object -Last 1
+    }
+    $latestRuns = foreach ($pushRun in $latestPushRuns) {
+        $workflowId = $pushRun.workflowDatabaseId
+        # Query one workflow at a time so unrelated manual runs cannot crowd out its recovery run.
+        $manualJson = gh run list --repo $repoSlug --branch main --all --workflow $workflowId `
+            --event workflow_dispatch --status completed --limit 1 --json $fields
+        if ($LASTEXITCODE -ne 0) { throw "gh run list failed for manual runs of workflow $workflowId on main." }
+
+        @(
+            $pushRun
+            $manualJson | ConvertFrom-Json
+        ) |
+            Sort-Object createdAt, databaseId | Select-Object -Last 1
+    }
+    $latestRuns |
         Where-Object { $_.status -eq 'completed' -and $_.conclusion -in 'failure', 'timed_out', 'startup_failure' } |
-        Sort-Object workflowName)
+        Sort-Object workflowName, workflowDatabaseId
 }
 
 function Get-MainFingerprint([object[]]$Failures) {
@@ -502,7 +519,7 @@ function Get-MainCandidate {
         Rank        = -1
         Fingerprint = Get-MainFingerprint $failures
         Light       = $false
-        Hint        = "The latest push CI on main failed: $list."
+        Hint        = "Latest workflow runs failed on main ($list)."
         Branch      = ''
         Blocking    = 0
         Comments    = 0
