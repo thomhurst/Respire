@@ -156,6 +156,30 @@ public class FilterTests(ModernRedisTestContainer fixture)
     });
 
     [Test, Arguments(2), Arguments(3)]
+    public Task HashFiltersEnforceTheUtf8TagLimit(int protocol) => WithCollection(protocol, async collection =>
+    {
+        var maximum = new string('\u00e9', 1023) + "a";
+        string oversized = maximum + "b";
+        var record = new FilterRecord("0", 1, maximum, true, [maximum, "other"], [], null);
+        await collection.UpsertAsync(record);
+
+        (await Collect(collection.GetAsync(r => r.String == maximum, 1))).Should().ContainSingle();
+        (await Collect(collection.GetAsync(r => r.StringArray.Contains(maximum), 1))).Should().ContainSingle();
+
+        Func<Task> writeString = () => collection.UpsertAsync(record with { String = oversized });
+        Func<Task> writeCollection = () => collection.UpsertAsync(record with { StringArray = ["other", oversized] });
+        Func<Task> retrieve = () => Collect(collection.GetAsync(r => r.String == oversized, 1));
+        Func<Task> search = () => Collect(collection.SearchAsync(new float[] { 1, 0 }, 1,
+            new() { Filter = r => r.StringArray.Contains(oversized), VectorProperty = r => r.Vector }));
+        await writeString.Should().ThrowAsync<ArgumentException>().WithMessage("*2047 UTF-8 bytes*");
+        await writeCollection.Should().ThrowAsync<ArgumentException>().WithMessage("*2047 UTF-8 bytes*");
+        await retrieve.Should().ThrowAsync<ArgumentException>().WithMessage("*2047 UTF-8 bytes*");
+        await search.Should().ThrowAsync<ArgumentException>().WithMessage("*2047 UTF-8 bytes*");
+
+        (await collection.GetAsync(record.Id))!.String.Should().Be(maximum);
+    });
+
+    [Test, Arguments(2), Arguments(3)]
     public Task FilteredPagingAndSelectedVector(int protocol) => WithCollection(protocol, async collection =>
     {
         await collection.UpsertAsync(Data());

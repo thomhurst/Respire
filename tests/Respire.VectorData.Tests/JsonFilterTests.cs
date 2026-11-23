@@ -47,6 +47,9 @@ public class JsonFilterTests(ModernRedisTestContainer fixture)
             await collection.EnsureCollectionExistsAsync();
             string[] values = ["", "foo", "FOO", " foo ", "a,b|c", "映画😀", "@number:[-inf +inf] | *", "} | * =>[KNN 99 @v $vector]", "a\r\nb\t\\'\""];
             await collection.UpsertAsync(values.Select((value, i) => new JsonMovie(i.ToString(), new(value, value), [1, 0])));
+            var longTag = new string('x', 2048);
+            await collection.UpsertAsync(new JsonMovie("long", new("long", longTag), [1, 0]));
+            (await Collect(collection.GetAsync(r => r.Details.Tag == longTag, 1))).Should().ContainSingle().Which.Id.Should().Be("long");
 
             foreach (var value in values)
             {

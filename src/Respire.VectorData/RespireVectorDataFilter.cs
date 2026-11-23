@@ -8,7 +8,8 @@ namespace Respire.VectorData;
 
 // Expression metadata identifies properties; only explicit mapper declarations select storage fields.
 // Captured FieldInfo values are already rooted by the expression. Record members are never invoked.
-internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVectorDataFilterField> fields) where TRecord : class
+internal sealed class RespireVectorDataFilter<TRecord>(
+    IReadOnlyList<RespireVectorDataFilterField> fields, bool validateHashTags = false) where TRecord : class
 {
     // A contradiction remains empty even if a mapper indexes this text token.
     private const string None = "(__respire_filter_none__ -__respire_filter_none__)";
@@ -94,7 +95,7 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
         throw Unsupported(expression);
     }
 
-    private static string In(RespireVectorDataFilterField field, Type type, Expression source, bool membership = false)
+    private string In(RespireVectorDataFilterField field, Type type, Expression source, bool membership = false)
     {
         var value = Value(UnwrapSpan(source));
         // Never enumerate arbitrary user IEnumerable implementations during translation.
@@ -113,7 +114,7 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
         return alternatives.Count == 0 ? None : "(" + string.Join(" | ", alternatives) + ")";
     }
 
-    private static string Compare(RespireVectorDataFilterField field, Type type, ExpressionType operation, object? value)
+    private string Compare(RespireVectorDataFilterField field, Type type, ExpressionType operation, object? value)
     {
         var nullable = !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
         type = Nullable.GetUnderlyingType(type) ?? type;
@@ -241,8 +242,17 @@ internal sealed class RespireVectorDataFilter<TRecord>(IReadOnlyList<RespireVect
         }
     }
 
-    private static string Tag(RespireVectorDataFilterField field, string value)
-        => RespireSearchQueryBuilder.Tag(field.StorageName, RespireVectorDataFilterEncoding.EncodeTag(value)).Value;
+    private string Tag(RespireVectorDataFilterField field, string value)
+    {
+        string token = RespireVectorDataFilterEncoding.EncodeTag(value);
+
+        if (validateHashTags)
+        {
+            RespireVectorDataFilterEncoding.ValidateHashTagLength(token, field.StorageName, nameof(value));
+        }
+
+        return RespireSearchQueryBuilder.Tag(field.StorageName, token).Value;
+    }
 
     private static string Negate(string query) => query switch
     {

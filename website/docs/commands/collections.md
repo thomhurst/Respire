@@ -26,6 +26,8 @@ Rules that apply across this page unless a section says otherwise:
 
 `Keys.DumpAsync(key)` returns Redis's serialized bytes as an owned `byte[]`, or `null` for a missing key. These are not Respire serializer payloads. [DUMP](https://redis.io/docs/latest/commands/dump/) omits expiry; read `Keys.ExpiryAsync` separately.
 
+The destination server must support the RDB format used by the source. Compatibility can vary across Redis and Valkey versions and by value type. An incompatible payload returns a server error. [Redis DUMP format](https://redis.io/docs/latest/commands/dump/) · [Valkey DUMP format](https://valkey.io/commands/dump/)
+
 ```csharp
 byte[]? payload = await redis.Keys.DumpAsync("source");
 if (payload is not null)
@@ -51,7 +53,7 @@ if (payload is not null)
 
 `IdleTimeSeconds` and `Frequency` are mutually exclusive. [RESTORE](https://redis.io/docs/latest/commands/restore/) requires Redis 2.6+; `ABSTTL` requires 5.0+. Bad payloads and existing-key conflicts return Redis server errors.
 
-Queued forms are `Keys.Dump` and `Keys.Restore`. RESTORE borrows its input bytes until execution completes. DUMP does not invalidate cached data; RESTORE invalidates its target key.
+Queued forms are `Keys.Dump` and `Keys.Restore`. A batch borrows the RESTORE payload until execution completes. A transaction copies the bytes into its command buffer when you enqueue RESTORE, so you can reuse the input buffer after the call returns. DUMP does not invalidate cached data. RESTORE invalidates its target key.
 
 ## Hashes
 

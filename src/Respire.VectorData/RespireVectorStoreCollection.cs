@@ -410,7 +410,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
             throw new NotSupportedException("Filtered retrieval ordering is unsupported.");
         }
 
-        var query = new RespireSearchQuery(new RespireVectorDataFilter<TRecord>(_filterFields).Translate(filter),
+        var query = new RespireSearchQuery(TranslateFilter(filter),
             new() { Dialect = 2, NoContent = true, Limit = (skip, top) });
         var result = await RespireVectorDataOperations.ExecuteAsync(
             _client.Search.SearchAsync(_index, query, cancellationToken), nameof(GetAsync), Name).ConfigureAwait(false);
@@ -437,7 +437,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
             throw new ArgumentOutOfRangeException(nameof(top));
         }
 
-        var filter = options?.Filter is { } expression ? new RespireVectorDataFilter<TRecord>(_filterFields).Translate(expression) : (RespireSearchExpression?)null;
+        var filter = options?.Filter is { } expression ? TranslateFilter(expression) : (RespireSearchExpression?)null;
         var skip = options?.Skip ?? 0;
 
         if (skip < 0)
@@ -584,6 +584,11 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
         return RespireVectorDataOperations.DecodeName(id[_prefix.Length..], operation, Name);
     }
 
+    private RespireSearchExpression TranslateFilter(Expression<Func<TRecord, bool>> filter)
+    {
+        return new RespireVectorDataFilter<TRecord>(_filterFields, validateHashTags: _jsonMapper is null).Translate(filter);
+    }
+
     private void ValidateFilterValues(IReadOnlyDictionary<string, ReadOnlyMemory<byte>> fields)
     {
         foreach (var filter in _filterFields)
@@ -606,6 +611,8 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
 
                 foreach (var token in tokens)
                 {
+                    RespireVectorDataFilterEncoding.ValidateHashTagLength(token, filter.StorageName, nameof(fields));
+
                     if (RespireVectorDataFilterEncoding.EncodeTag(RespireVectorDataFilterEncoding.DecodeTag(token)) != token)
                     {
                         throw new ArgumentException($"Filter field '{filter.StorageName}' requires canonical encoded TAG values.", nameof(fields));
