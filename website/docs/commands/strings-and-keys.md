@@ -186,6 +186,8 @@ References: Redis [SET](https://redis.io/docs/latest/commands/set/), [DELEX](htt
 
 ## Bulk operations
 
+`SetManyExpireAsync` needs [Redis 8.4+](https://redis.io/docs/latest/commands/msetex/) or [Valkey 9.1+](https://valkey.io/commands/msetex/) for `MSETEX`.
+
 ```csharp
 await redis.Strings.SetManyAsync(
     ("feature:a", "on"),
@@ -196,10 +198,10 @@ bool allCreated = await redis.Strings.SetManyIfNotExistsAsync(
     ("reservation:42:owner", "alice"),
     ("reservation:42:state", "pending"));
 
-// One shared expiry (and optional NX/XX) for every pair — Redis MSETEX.
-await redis.Strings.SetManyExpireAsync(
+// Set a shared expiry if both feature keys still exist.
+bool expiryApplied = await redis.Strings.SetManyExpireAsync(
     TimeSpan.FromMinutes(5),
-    RespireSetWhen.NotExists,
+    RespireSetWhen.Exists,
     ("feature:a", "on"),
     ("feature:b", "off"));
 

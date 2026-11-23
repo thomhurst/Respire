@@ -223,8 +223,14 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         Func<Task> setNullBytes = async () =>
             await client.Hashes.SetAsync("typed:hash", "null-bytes", nullBytes);
         await setNullBytes.Should().ThrowAsync<ArgumentException>();
-        await client.Hashes.SetAsync("typed:hash", "nan", double.NaN);
+
+        Func<Task> setNaN = async () => await client.Hashes.SetAsync<double>("typed:hash", "nan", double.NaN);
+        await setNaN.Should().ThrowAsync<ArgumentException>();
+        (await client.Hashes.GetStringAsync("typed:hash", "nan")).Should().BeNull();
+
+        await client.Hashes.SetAsync<RespireValue>("typed:hash", "nan", double.NaN);
         (await client.Hashes.GetStringAsync("typed:hash", "nan")).Should().Be("NaN");
+
         await client.Hashes.SetAsync("typed:hash", "char", 'A');
         (await client.Hashes.GetStringAsync("typed:hash", "char")).Should().Be("A");
 

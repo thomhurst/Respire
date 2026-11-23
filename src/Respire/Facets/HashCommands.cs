@@ -378,7 +378,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
         RespireKey key, string field, T value,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
         => SetCoreAsync(
-            key, field, client.SerializeRawCompatible(value), RespireSetWhen.Always, cancellationToken, observation);
+            key, field, client.SerializeTypedScalar(value), RespireSetWhen.Always, cancellationToken, observation);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -400,7 +400,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
     private ValueTask<bool> SetBorrowedAsync<T>(
         RespireKey key, string field, T value, RespireSetWhen when,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => SetCoreAsync(key, field, client.SerializeRawCompatible(value), when, cancellationToken, observation);
+        => SetCoreAsync(key, field, client.SerializeTypedScalar(value), when, cancellationToken, observation);
 
     private ValueTask<bool> SetCoreAsync(
         RespireKey key, string field, RespireValue value, RespireSetWhen when, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation) => when switch

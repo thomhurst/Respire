@@ -181,13 +181,13 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IRespireBat
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [OverloadResolutionPriority(-1)]
     public RespirePending<bool> Set<T>(RespireKey key, string field, T value)
-        => Set(key, field, sink.Client.SerializeRawCompatible(value));
+        => Set(key, field, sink.Client.SerializeTypedScalar(value));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [OverloadResolutionPriority(-1)]
     public RespirePending<bool> Set<T>(RespireKey key, string field, T value, RespireSetWhen when)
-        => Set(key, field, sink.Client.SerializeRawCompatible(value), when);
+        => Set(key, field, sink.Client.SerializeTypedScalar(value), when);
 
     public RespirePending<long> Set(
         RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)

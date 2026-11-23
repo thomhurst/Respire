@@ -2101,11 +2101,23 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    internal RespireValue SerializeRawCompatible<T>(T value)
+    internal RespireValue SerializeTypedScalar<T>(T value)
     {
         if (value is null && (typeof(T) == typeof(string) || typeof(T) == typeof(byte[])))
         {
             return RespireValue.Null;
+        }
+
+        return Serialize(value);
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    internal RespireValue SerializeCollectionMember<T>(T value)
+    {
+        if (value is bool boolean)
+        {
+            return boolean;
         }
 
         if (typeof(T) == typeof(float) && !float.IsFinite((float)(object)value!))
@@ -2118,13 +2130,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             return (double)(object)value!;
         }
 
-        return Serialize(value);
+        return SerializeTypedScalar(value);
     }
-
-    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
-    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    internal RespireValue SerializeCollectionMember<T>(T value)
-        => value is bool boolean ? boolean : SerializeRawCompatible(value);
 
     /// <summary>
     /// Reads a value the caller does not own, keeping "reply was null" distinct from a

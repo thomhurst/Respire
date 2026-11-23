@@ -159,25 +159,25 @@ public class PrimitiveCodecTests
     }
 
     [Test]
-    public async Task RawCompatibility_PreservesMemoryAndNonFiniteScalars()
+    public async Task CollectionMembers_PreserveMemoryAndNonFiniteScalars()
     {
         var serializer = new CountingSerializer();
         await using var client = CreateClient(serializer);
         ReadOnlyMemory<byte> memory = new byte[] { 0, 1, 254, 255 };
 
-        _ = client.SerializeRawCompatible(memory);
-        await Assert.That(client.SerializeRawCompatible('A').ToString()).IsEqualTo("A");
-        await Assert.That(client.SerializeRawCompatible(float.NaN).ToString()).IsEqualTo("NaN");
-        await Assert.That(client.SerializeRawCompatible(float.PositiveInfinity).ToString()).IsEqualTo("Infinity");
-        await Assert.That(client.SerializeRawCompatible(float.NegativeInfinity).ToString()).IsEqualTo("-Infinity");
-        await Assert.That(client.SerializeRawCompatible(double.NaN).ToString()).IsEqualTo("NaN");
-        await Assert.That(client.SerializeRawCompatible(double.PositiveInfinity).ToString()).IsEqualTo("Infinity");
-        await Assert.That(client.SerializeRawCompatible(double.NegativeInfinity).ToString()).IsEqualTo("-Infinity");
+        _ = client.SerializeCollectionMember(memory);
+        await Assert.That(client.SerializeCollectionMember('A').ToString()).IsEqualTo("A");
+        await Assert.That(client.SerializeCollectionMember(float.NaN).ToString()).IsEqualTo("NaN");
+        await Assert.That(client.SerializeCollectionMember(float.PositiveInfinity).ToString()).IsEqualTo("Infinity");
+        await Assert.That(client.SerializeCollectionMember(float.NegativeInfinity).ToString()).IsEqualTo("-Infinity");
+        await Assert.That(client.SerializeCollectionMember(double.NaN).ToString()).IsEqualTo("NaN");
+        await Assert.That(client.SerializeCollectionMember(double.PositiveInfinity).ToString()).IsEqualTo("Infinity");
+        await Assert.That(client.SerializeCollectionMember(double.NegativeInfinity).ToString()).IsEqualTo("-Infinity");
         await Assert.That(serializer.SerializeCalls).IsEqualTo(0);
     }
 
     [Test]
-    public async Task RawCompatibility_UsesSerializerForErasedTypes()
+    public async Task CollectionMembers_UseSerializerForErasedTypes()
     {
         var serializer = new CountingSerializer();
         await using var client = CreateClient(serializer);
@@ -186,10 +186,10 @@ public class PrimitiveCodecTests
         object single = float.NaN;
         object number = double.PositiveInfinity;
 
-        _ = client.SerializeRawCompatible(memory);
-        _ = client.SerializeRawCompatible(character);
-        _ = client.SerializeRawCompatible(single);
-        _ = client.SerializeRawCompatible(number);
+        _ = client.SerializeCollectionMember(memory);
+        _ = client.SerializeCollectionMember(character);
+        _ = client.SerializeCollectionMember(single);
+        _ = client.SerializeCollectionMember(number);
 
         await Assert.That(serializer.SerializeCalls).IsEqualTo(4);
     }

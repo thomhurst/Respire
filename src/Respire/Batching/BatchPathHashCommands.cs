@@ -166,7 +166,7 @@ internal sealed partial class BatchPathHashCommands(IPendingSink sink) : IRespir
     [OverloadResolutionPriority(-1)]
     public RespirePending<bool> Set<T>(RespireKey key, RespireKey path, RespireKey field, T value, RespireSetWhen when = RespireSetWhen.Always)
         => sink.Add<Cmd1N, bool>("PHSET",
-            Command(RespireCommands.PathHash.PHSET, key, PathHashCodec.Set(path, [(field, sink.Client.SerializeRawCompatible(value))], when)),
+            Command(RespireCommands.PathHash.PHSET, key, PathHashCodec.Set(path, [(field, sink.Client.SerializeTypedScalar(value))], when)),
             static (client, reply) => PathHashCodec.Applied(in reply));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
