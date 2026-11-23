@@ -65,7 +65,15 @@ public sealed partial class RespireFakeServer
             return get ? FakeReply.Bulk(previous) : FakeReply.Null;
         }
 
-        SetEntry(args[1], new Entry(args[2], keepTtl ? old?.ExpiresAt : expiresAt));
+        if (expiresAt <= Now)
+        {
+            DeleteEntry(args[1]);
+        }
+        else
+        {
+            SetEntry(args[1], new Entry(args[2], keepTtl ? old?.ExpiresAt : expiresAt));
+        }
+
         return get ? FakeReply.Bulk(previous) : FakeReply.Ok;
     }
 

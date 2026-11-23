@@ -176,6 +176,36 @@ public class IncrementExtendedTests
     }
 
     [Test]
+    [Arguments(2, true)]
+    [Arguments(2, false)]
+    [Arguments(3, true)]
+    [Arguments(3, false)]
+    public async Task FakeFloatRejectsAnInwardInfiniteBoundWithTheOtherBoundOmitted(int protocol, bool lowerBound)
+    {
+        await using var server = new RespireFakeServer();
+        var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol };
+#pragma warning disable RESP010 // This increment scenario owns its client and isolated fake-server values and protocol state.
+        await using var client = await RespireClient.ConnectAsync(options);
+#pragma warning restore RESP010
+        await client.SetAsync("float", "1.5");
+
+        await Assert.That(async () => await client.Strings.IncrementExtendedAsync("float", 0.0, new()
+        {
+            LowerBound = lowerBound ? double.PositiveInfinity : null,
+            UpperBound = lowerBound ? null : double.NegativeInfinity
+        }))
+            .Throws<RespireServerException>().WithMessage("ERR LBOUND can't be greater than UBOUND");
+        await Assert.That(await client.GetStringAsync("float")).IsEqualTo("1.5");
+
+        var result = await client.Strings.IncrementExtendedAsync("float", 0.5, new()
+        {
+            LowerBound = lowerBound ? double.NegativeInfinity : null,
+            UpperBound = lowerBound ? null : double.PositiveInfinity
+        });
+        await Assert.That(result).IsEqualTo(new RespireIncrementResult<double>(2.0, 0.5));
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task FakeFloatReportsActualClampDeltaAndRejectsInvalidInput(int protocol)

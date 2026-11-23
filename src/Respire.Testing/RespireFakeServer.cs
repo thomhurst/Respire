@@ -341,26 +341,32 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             {
                 return FakeReply.Error($"ERR Can't execute '{command.ToLowerInvariant()}': only SUBSCRIBE / UNSUBSCRIBE / PING are supported in this context");
             }
-            // Redis resolves CLIENT subcommands and their arity before queueing.
-            if (command == "CLIENT")
+            // Redis resolves subcommands and their command-table arity before queueing.
+            if (command is "CLIENT" or "SCRIPT")
             {
-                var subcommand = Token(args[1]);
-                var arity = subcommand switch
+                string subcommand = Token(args[1]);
+                int arity = (command, subcommand) switch
                 {
-                    "ID" or "GETNAME" => 2,
-                    "SETNAME" => 3,
-                    "KILL" => -4,
+                    ("CLIENT", "ID" or "GETNAME") => 2,
+                    ("CLIENT", "SETNAME") => 3,
+                    ("CLIENT", "KILL") => -4,
+                    ("SCRIPT", "LOAD") => 3,
+                    ("SCRIPT", "EXISTS") => -3,
+                    ("SCRIPT", "FLUSH") => -2,
                     _ => 0
                 };
 
                 if (arity == 0)
                 {
-                    return RejectCommand(connection, command, FakeReply.Error($"ERR Respire.Testing does not support CLIENT {subcommand}"));
+                    FakeReply error = command == "CLIENT"
+                        ? FakeReply.Error($"ERR Respire.Testing does not support CLIENT {subcommand}")
+                        : Syntax(command);
+                    return RejectCommand(connection, command, error);
                 }
 
                 if (arity > 0 && args.Length != arity || arity < 0 && args.Length < -arity)
                 {
-                    return RejectCommand(connection, command, WrongArity($"CLIENT|{subcommand}"));
+                    return RejectCommand(connection, command, WrongArity($"{command}|{subcommand}"));
                 }
             }
 
