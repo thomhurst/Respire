@@ -485,28 +485,26 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
-            ":42\r\n"u8.ToArray());
+            "$6\r\nembstr\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server);
         var key = "key";
 
-        using (var first = await client.ExecuteAsync($"MEMORY USAGE {key} SAMPLES {0}"))
+        using (var first = await client.ExecuteAsync($"OBJECT ENCODING {key}"))
         {
-            await Assert.That(first.AsInteger()).IsEqualTo(42);
+            await Assert.That(first.AsString()).IsEqualTo("embstr");
         }
 
-        using (var second = await client.ExecuteAsync("MEMORY USAGE", key, "SAMPLES", 0))
+        using (var second = await client.ExecuteAsync("OBJECT ENCODING", key))
         {
-            await Assert.That(second.AsInteger()).IsEqualTo(42);
+            await Assert.That(second.AsString()).IsEqualTo("embstr");
         }
 
-        using (var third = await client.ExecuteAsync(
-            RespireCommands.Server.MEMORY_USAGE, key, "SAMPLES", 0))
+        using (var third = await client.ExecuteAsync(RespireCommands.Key.OBJECT_ENCODING, key))
         {
-            await Assert.That(third.AsInteger()).IsEqualTo(42);
+            await Assert.That(third.AsString()).IsEqualTo("embstr");
         }
 
-        await Assert.That(server.ReceivedCommands.Count(static command =>
-            command == "MEMORY USAGE key SAMPLES 0"))
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "OBJECT ENCODING key"))
             .IsEqualTo(1);
     }
 
@@ -539,27 +537,23 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    public async Task SampledMemoryUsage_BypassesClientCache()
+    [Arguments(null)]
+    [Arguments(0)]
+    [Arguments(5)]
+    public async Task MemoryUsage_BypassesClientCache(int? samples)
     {
         await using var server = new FakeRespServer(
             HelloReply,
             FakeRespServer.OkReply,
             ":41\r\n"u8.ToArray(),
-            ":42\r\n"u8.ToArray(),
-            ":43\r\n"u8.ToArray(),
-            ":44\r\n"u8.ToArray());
+            ":42\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server);
 
-        await Assert.That(await client.Server.MemoryUsageAsync("key")).IsEqualTo(41);
-        await Assert.That(await client.Server.MemoryUsageAsync("key")).IsEqualTo(42);
-        await Assert.That(await client.Server.MemoryUsageAsync("key", samples: 5)).IsEqualTo(43);
-        await Assert.That(await client.Server.MemoryUsageAsync("key", samples: 5)).IsEqualTo(44);
+        await Assert.That(await client.Server.MemoryUsageAsync("key", samples)).IsEqualTo(41);
+        await Assert.That(await client.Server.MemoryUsageAsync("key", samples)).IsEqualTo(42);
 
-        await Assert.That(server.ReceivedCommands.Count(static command => command == "MEMORY USAGE key"))
-            .IsEqualTo(2);
-        await Assert.That(server.ReceivedCommands.Count(static command =>
-            command == "MEMORY USAGE key SAMPLES 5"))
-            .IsEqualTo(2);
+        var expected = samples is null ? "MEMORY USAGE key" : $"MEMORY USAGE key SAMPLES {samples}";
+        await Assert.That(server.ReceivedCommands.Count(command => command == expected)).IsEqualTo(2);
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
     }
 
