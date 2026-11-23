@@ -20,25 +20,25 @@ public class SetSortedSetCoverageTests
         var lexRange = new RespireLexRange("alpha", RespireLexBound.Exclusive("omega"));
 
         _ = await client.SortedSets.RangeByScoreAsync(
-            "scores", scoreRange, offset: 2, count: 3, descending: true);
+            "scores", scoreRange, offset: 2, count: -3, descending: true);
         _ = await client.SortedSets.RangeByScoreWithScoresAsync(
             "scores", scoreRange, count: 2);
         _ = await client.SortedSets.CountByScoreAsync("scores", scoreRange);
         _ = await client.SortedSets.RemoveRangeByScoreAsync("scores", scoreRange);
-        _ = await client.SortedSets.RangeByLexAsync("scores", lexRange, offset: 1, count: 4);
+        _ = await client.SortedSets.RangeByLexAsync("scores", lexRange, offset: 1, count: -1);
         _ = await client.SortedSets.StoreRangeAsync("dest", "scores", 0, 9, descending: true);
-        _ = await client.SortedSets.StoreRangeByScoreAsync("dest", "scores", scoreRange, count: 2);
+        _ = await client.SortedSets.StoreRangeByScoreAsync("dest", "scores", scoreRange, count: -2);
         _ = await client.SortedSets.StoreRangeByLexAsync("dest", "scores", lexRange, count: 2);
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
-            "ZRANGE scores +inf (1.5 BYSCORE REV LIMIT 2 3",
+            "ZRANGE scores +inf (1.5 BYSCORE REV LIMIT 2 -3",
             "ZRANGE scores (1.5 +inf BYSCORE LIMIT 0 2 WITHSCORES",
             "ZCOUNT scores (1.5 +inf",
             "ZREMRANGEBYSCORE scores (1.5 +inf",
-            "ZRANGE scores [alpha (omega BYLEX LIMIT 1 4",
+            "ZRANGE scores [alpha (omega BYLEX LIMIT 1 -1",
             "ZRANGESTORE dest scores 0 9 REV",
-            "ZRANGESTORE dest scores (1.5 +inf BYSCORE LIMIT 0 2",
+            "ZRANGESTORE dest scores (1.5 +inf BYSCORE LIMIT 0 -2",
             "ZRANGESTORE dest scores [alpha (omega BYLEX LIMIT 0 2",
         });
     }
@@ -54,30 +54,30 @@ public class SetSortedSetCoverageTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var batch = client.CreateBatch();
         var scoreRange = new RespireScoreRange(
-            RespireScoreBound.Exclusive(1.5), RespireScoreBound.Max);
+            RespireScoreBound.Exclusive(double.NegativeInfinity), RespireScoreBound.Exclusive(double.PositiveInfinity));
         var lexRange = new RespireLexRange("alpha", RespireLexBound.Exclusive("omega"));
 
         _ = batch.SortedSets.RangeByScore("scores", scoreRange, offset: 2, count: 3, descending: true);
-        _ = batch.SortedSets.RangeByScoreWithScores("scores", scoreRange, count: 2);
+        _ = batch.SortedSets.RangeByScoreWithScores("scores", scoreRange, count: -2);
         _ = batch.SortedSets.CountByScore("scores", scoreRange);
         _ = batch.SortedSets.RemoveRangeByScore("scores", scoreRange);
         _ = batch.SortedSets.RangeByLex("scores", lexRange, offset: 1, count: 4);
         _ = batch.SortedSets.StoreRange("dest", "scores", 0, 9, descending: true);
         _ = batch.SortedSets.StoreRangeByScore("dest", "scores", scoreRange, count: 2);
-        _ = batch.SortedSets.StoreRangeByLex("dest", "scores", lexRange, count: 2);
+        _ = batch.SortedSets.StoreRangeByLex("dest", "scores", lexRange, count: -1);
 
         await batch.ExecuteAsync();
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
-            "ZRANGE scores +inf (1.5 BYSCORE REV LIMIT 2 3",
-            "ZRANGE scores (1.5 +inf BYSCORE LIMIT 0 2 WITHSCORES",
-            "ZCOUNT scores (1.5 +inf",
-            "ZREMRANGEBYSCORE scores (1.5 +inf",
+            "ZRANGE scores (+inf (-inf BYSCORE REV LIMIT 2 3",
+            "ZRANGE scores (-inf (+inf BYSCORE LIMIT 0 -2 WITHSCORES",
+            "ZCOUNT scores (-inf (+inf",
+            "ZREMRANGEBYSCORE scores (-inf (+inf",
             "ZRANGE scores [alpha (omega BYLEX LIMIT 1 4",
             "ZRANGESTORE dest scores 0 9 REV",
-            "ZRANGESTORE dest scores (1.5 +inf BYSCORE LIMIT 0 2",
-            "ZRANGESTORE dest scores [alpha (omega BYLEX LIMIT 0 2",
+            "ZRANGESTORE dest scores (-inf (+inf BYSCORE LIMIT 0 2",
+            "ZRANGESTORE dest scores [alpha (omega BYLEX LIMIT 0 -1",
         });
     }
 
@@ -90,13 +90,11 @@ public class SetSortedSetCoverageTests
 
         await Assert.That(async () => await client.SortedSets.RangeByScoreAsync("scores", range, offset: -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.SortedSets.RangeByScoreAsync("scores", range, count: -1))
-            .ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.SortedSets.RangeByScoreAsync("scores", range, offset: 1))
             .ThrowsExactly<ArgumentException>();
         await Assert.That(() => RespireScoreBound.Inclusive(double.NaN))
             .ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(() => RespireScoreBound.Exclusive(double.PositiveInfinity))
+        await Assert.That(() => RespireScoreBound.Exclusive(double.NaN))
             .ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(() => RespireLexBound.Inclusive(null!))
             .ThrowsExactly<ArgumentNullException>();

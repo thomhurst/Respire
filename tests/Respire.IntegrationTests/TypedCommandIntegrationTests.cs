@@ -319,9 +319,13 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    public async Task SortedSetAdvancedRanges_RoundTripAgainstRedis()
+    [Category(TestCategories.ProtocolIndependent)]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task SortedSetAdvancedRanges_RoundTripAgainstRedis(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
         var prefix = $"ranges:{Guid.NewGuid():N}:";
         var scores = prefix + "scores";
         var lex = prefix + "lex";
@@ -343,25 +347,50 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
             ("zulu", 0));
 
         var aboveOne = new RespireScoreRange(RespireScoreBound.Exclusive(1), RespireScoreBound.Max);
-        (await client.SortedSets.RangeByScoreAsync(scores, aboveOne, offset: 1, count: 2))
+        (await client.SortedSets.RangeByScoreAsync(scores, aboveOne, offset: 1, count: -1))
             .Should().Equal("three", "four");
         (await client.SortedSets.RangeByScoreWithScoresAsync(
-            scores, new RespireScoreRange(2, double.PositiveInfinity), count: 2, descending: true))
-            .Should().Equal(new RespireSortedSetEntry("four", 4), new RespireSortedSetEntry("three", 3));
+            scores, aboveOne, offset: 1, count: -2, descending: true))
+            .Should().Equal(new RespireSortedSetEntry("three", 3), new RespireSortedSetEntry("two", 2));
+        (await client.SortedSets.RangeByScoreAsync(scores, aboveOne, offset: 1, count: 0)).Should().BeEmpty();
         (await client.SortedSets.CountByScoreAsync(scores, aboveOne)).Should().Be(3);
 
         var middle = new RespireLexRange("beta", RespireLexBound.Exclusive("zulu"));
         (await client.SortedSets.RangeByLexAsync(lex, middle)).Should().Equal("beta", "omega");
+        (await client.SortedSets.RangeByLexAsync(lex, middle, offset: 1, count: -1)).Should().Equal("omega");
 
         (await client.SortedSets.StoreRangeAsync(rankStore, scores, 0, 1, descending: true)).Should().Be(2);
         (await client.SortedSets.RangeAsync(rankStore, descending: true)).Should().Equal("four", "three");
-        (await client.SortedSets.StoreRangeByScoreAsync(scoreStore, scores, aboveOne, count: 2)).Should().Be(2);
-        (await client.SortedSets.RangeAsync(scoreStore)).Should().Equal("two", "three");
-        (await client.SortedSets.StoreRangeByLexAsync(lexStore, lex, middle)).Should().Be(2);
-        (await client.SortedSets.RangeAsync(lexStore)).Should().Equal("beta", "omega");
+        (await client.SortedSets.StoreRangeByScoreAsync(scoreStore, scores, aboveOne, offset: 1, count: -2))
+            .Should().Be(2);
+        (await client.SortedSets.RangeAsync(scoreStore)).Should().Equal("three", "four");
+        (await client.SortedSets.StoreRangeByLexAsync(lexStore, lex, middle, offset: 1, count: -1)).Should().Be(1);
+        (await client.SortedSets.RangeAsync(lexStore)).Should().Equal("omega");
 
         (await client.SortedSets.RemoveRangeByScoreAsync(scores, aboveOne)).Should().Be(3);
         await client.DeleteAsync(scores, lex, rankStore, scoreStore, lexStore);
+    }
+
+    [Test]
+    [Category(TestCategories.ProtocolIndependent)]
+    [SkipOnGarnet("Garnet 2.2.12 treats exclusive infinity bounds as inclusive (microsoft/garnet#2421).")]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task SortedSetAdvancedRanges_ExcludeInfiniteScores(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        var key = $"ranges:infinity:{Guid.NewGuid():N}";
+        await client.SortedSets.AddAsync(key, ("negative", double.NegativeInfinity), ("one", 1),
+            ("positive", double.PositiveInfinity));
+
+        var finite = new RespireScoreRange(
+            RespireScoreBound.Exclusive(double.NegativeInfinity), RespireScoreBound.Exclusive(double.PositiveInfinity));
+        (await client.SortedSets.RangeByScoreAsync(key, finite)).Should().Equal("one");
+        (await client.SortedSets.CountByScoreAsync(key, finite)).Should().Be(1);
+        (await client.SortedSets.RemoveRangeByScoreAsync(key, finite)).Should().Be(1);
+        (await client.SortedSets.RangeByScoreAsync(key, RespireScoreRange.All)).Should().Equal("negative", "positive");
+        await client.DeleteAsync(key);
     }
 
     [Test]

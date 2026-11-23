@@ -89,6 +89,8 @@ RespireExpiryTimeResult[] secondResolution = await redis.Hashes.ExpiryTimeAsync(
 
 `ExpiryTimeAsync` (Redis 7.4+) uses `HPEXPIRETIME`. Pass `RespireExpiryTimePrecision.Seconds` for `HEXPIRETIME`, which rounds fractional seconds up. Results follow input order, including repeated fields.
 
+Redis accepts absolute hash-field deadlines up to Unix millisecond `70_368_744_177_663`. A later deadline returns an error. Valkey 9.1 supports later deadlines, including timestamps beyond `DateTimeOffset.MaxValue`.
+
 For a single field's remaining lifetime, `Hashes.ExpiryAsync(key, field, cancellationToken)` returns one `RespireTtlResult`; a string field and a `RespireKey` field both select the scalar result. Pass a `string[]` or `ReadOnlySpan<string>` for the array result, even when the collection contains one field. Other collection commands such as `GetManyAsync` retain their array result when called with a single item and a cancellation token.
 
 | `RespireExpiryTimeResult` member | Meaning |
@@ -290,6 +292,10 @@ long removed = await redis.SortedSets.RemoveRangeByLexAsync("names", range);
 ```
 
 ### Ranges, pops, and stores
+
+Score and lexicographical range queries and stores accept a negative `count` to select every match after `offset`. For example, `offset: 10, count: -1` skips the first ten matches. An explicit `count` is required when `offset` is nonzero.
+
+`RespireScoreBound.Min` and `RespireScoreBound.Max` include infinite scores. On Redis and Valkey, use `RespireScoreBound.Exclusive(double.NegativeInfinity)` or `RespireScoreBound.Exclusive(double.PositiveInfinity)` to exclude the corresponding infinite score. Garnet 2.2.12 treats exclusive infinity bounds as inclusive, including when removing members by score.
 
 ```csharp
 await redis.SortedSets.AddAsync("scores", "ada", 98.5);

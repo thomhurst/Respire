@@ -24,11 +24,6 @@ public readonly record struct RespireScoreBound
             throw new ArgumentOutOfRangeException(nameof(value), "A score boundary cannot be NaN.");
         }
 
-        if (exclusive && double.IsInfinity(value))
-        {
-            throw new ArgumentOutOfRangeException(nameof(value), "An infinite score boundary cannot be exclusive.");
-        }
-
         Value = value;
         IsExclusive = exclusive;
     }
@@ -54,7 +49,7 @@ public readonly record struct RespireScoreBound
     /// <summary>Creates an inclusive score boundary.</summary>
     public static RespireScoreBound Inclusive(double value) => new(value, exclusive: false);
 
-    /// <summary>Creates an exclusive, finite score boundary.</summary>
+    /// <summary>Creates an exclusive score boundary, including at infinity.</summary>
     public static RespireScoreBound Exclusive(double value) => new(value, exclusive: true);
 
     /// <summary>Creates an inclusive score boundary.</summary>
@@ -64,12 +59,12 @@ public readonly record struct RespireScoreBound
     {
         if (double.IsNegativeInfinity(Value))
         {
-            return "-inf";
+            return IsExclusive ? "(-inf" : "-inf";
         }
 
         if (double.IsPositiveInfinity(Value))
         {
-            return "+inf";
+            return IsExclusive ? "(+inf" : "+inf";
         }
 
         return string.Concat(
@@ -877,11 +872,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
 
-        if (count is { } value)
-        {
-            ArgumentOutOfRangeException.ThrowIfNegative(value);
-        }
-        else if (offset != 0)
+        if (count is null && offset != 0)
         {
             throw new ArgumentException("A count is required when offset is non-zero.", nameof(count));
         }
