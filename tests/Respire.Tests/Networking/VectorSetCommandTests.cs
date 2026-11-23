@@ -212,9 +212,19 @@ public class VectorSetCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
+        var zeroEpsilon = new RespireVectorSearchOptions { Epsilon = 0 };
+
         await Assert.That(async () => await client.VectorSets.AddAsync("k", Array.Empty<float>(), "m")).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.VectorSets.AddAsync("k", new[] { float.NaN }, "m")).Throws<ArgumentException>();
         await Assert.That(async () => await client.VectorSets.SearchAsync("k", new[] { 1f }, new() { Epsilon = double.NaN })).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.VectorSets.SearchAsync("k", new[] { 1f }, zeroEpsilon))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.VectorSets.SearchByMemberAsync("k", "m", zeroEpsilon))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(() => batch.VectorSets.Search("k", new[] { 1f }, zeroEpsilon))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(() => transaction.VectorSets.SearchByMember("k", "m", zeroEpsilon))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.VectorSets.SearchAsync("k", new[] { 1f }, new() { Count = 0 })).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => batch.VectorSets.Add("k", new[] { 1f }, "m", new() { Links = 3 })).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => transaction.VectorSets.Add("k", new[] { 1f }, "m", encoding: (RespireVectorEncoding)99)).Throws<ArgumentOutOfRangeException>();

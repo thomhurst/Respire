@@ -12,6 +12,7 @@ not depend on StackExchange.Redis.
 
 ```bash
 dotnet add package Respire.HealthChecks
+dotnet add package Respire.DependencyInjection
 ```
 
 ```csharp
@@ -29,7 +30,11 @@ builder.Services.AddHealthChecks().AddRespire(new RespireHealthCheckOptions
 
 var app = builder.Build();
 app.MapHealthChecks("/health/ready");
+app.Run();
 ```
+
+Set `ConnectionStrings__redis` to your Redis connection string, then run `dotnet run`.
+Request `/health/ready` on the URL printed by ASP.NET Core.
 
 `AddRespire` checks the registered `IRespireClient` under the name `respire`. It also accepts
 `name`, `failureStatus`, `tags`, and a `clientFactory`.

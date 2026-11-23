@@ -256,9 +256,9 @@ internal sealed class VectorSetCommands(RespireClient client) : IRespireVectorSe
             throw new ArgumentOutOfRangeException(nameof(options), "FilterExplorationFactor must be positive.");
         }
 
-        if (options.Epsilon is { } epsilon && (!double.IsFinite(epsilon) || epsilon is < 0 or > 1))
+        if (options.Epsilon is { } epsilon && (!double.IsFinite(epsilon) || epsilon is <= 0 or > 1))
         {
-            throw new ArgumentOutOfRangeException(nameof(options), "Epsilon must be finite and between 0 and 1.");
+            throw new ArgumentOutOfRangeException(nameof(options), "Epsilon must be finite, greater than 0, and at most 1.");
         }
 
         List<RespireValue> args = [];
