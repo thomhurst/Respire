@@ -46,6 +46,88 @@ public class RegistrationTests
         await Assert.That(client.Core.Options.GatheredWriteStallTimeout).IsEqualTo(TimeSpan.FromMilliseconds(milliseconds));
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NamedJsonCacheNullDisablesInheritedCache(bool deferConfiguration)
+    {
+        var builder = Builder(new()
+        {
+            ["ConnectionStrings:jobs"] = "localhost:6379",
+            ["ConnectionStrings:inherited"] = "localhost:6379",
+            ["ConnectionStrings:overridden"] = "localhost:6379",
+            ["ConnectionStrings:empty"] = "localhost:6379",
+        });
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes("""
+            {
+              "Aspire": {
+                "Respire": {
+                  "Options": { "ClientSideCache": { "MaxEntries": 100, "MaxSizeBytes": 8192 } },
+                  "jobs": { "Options": { "clientsidecache": null } },
+                  "inherited": { "Options": { "ClientName": "inherited" } },
+                  "overridden": { "Options": { "ClientSideCache": { "MaxEntries": 50 } } },
+                  "empty": { "Options": { "ClientSideCache": {} } }
+                }
+              }
+            }
+            """));
+        builder.Configuration.AddJsonStream(stream);
+
+        builder.AddKeyedRespireClient("jobs", settings => settings.DeferConfiguration = deferConfiguration);
+        builder.AddKeyedRespireClient("inherited");
+        builder.AddKeyedRespireClient("overridden");
+        builder.AddKeyedRespireClient("empty");
+        using var host = builder.Build();
+        var disabled = host.Services.GetRequiredKeyedService<RespireClient>("jobs");
+        var inherited = host.Services.GetRequiredKeyedService<RespireClient>("inherited");
+        var overridden = host.Services.GetRequiredKeyedService<RespireClient>("overridden");
+        var empty = host.Services.GetRequiredKeyedService<RespireClient>("empty");
+
+        await Assert.That(disabled.ClientSideCache).IsNull();
+        await Assert.That(inherited.Core.Options.ClientSideCache!.MaxEntries).IsEqualTo(100);
+        await Assert.That(overridden.Core.Options.ClientSideCache!.MaxEntries).IsEqualTo(50);
+        await Assert.That(overridden.Core.Options.ClientSideCache.MaxSizeBytes).IsEqualTo(8192L);
+        await Assert.That(empty.ClientSideCache).IsNull();
+    }
+
+    [Test]
+    [Arguments("Endpoints")]
+    [Arguments("ReplicaEndpoints")]
+    [Arguments("ClientSideCache:KeyPrefixes")]
+    public async Task NamedJsonScalarArrayReportsConfigurationPath(string path)
+    {
+        var json = JsonNode.Parse("""
+            {
+              "Aspire": {
+                "Respire": {
+                  "Options": {
+                    "Endpoints": ["global:6379"],
+                    "ReplicaEndpoints": ["global-replica:6379"],
+                    "ClientSideCache": { "KeyPrefixes": ["global:"] }
+                  },
+                  "jobs": { "Options": { "ClientSideCache": {} } }
+                }
+              }
+            }
+            """)!;
+        var named = json["Aspire"]!["Respire"]!["jobs"]!["Options"]!;
+        var segments = path.Split(':');
+
+        if (segments.Length == 2)
+        {
+            named = named[segments[0]]!;
+        }
+
+        named[segments[^1]] = "localhost:6380";
+        var builder = Builder(new());
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json.ToJsonString()));
+        builder.Configuration.AddJsonStream(stream);
+
+        var exception = await Assert.That(() => builder.AddKeyedRespireClient("jobs")).Throws<InvalidOperationException>();
+        await Assert.That(exception!.Message).Contains($"Aspire:Respire:jobs:Options:{path}");
+        await Assert.That(exception.Message).Contains("must be an array");
+    }
+
     /// <summary>Verifies empty named JSON arrays replace globals while absent arrays inherit them.</summary>
     [Test]
     [Arguments("Endpoints", "empty")]

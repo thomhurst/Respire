@@ -18,7 +18,7 @@ Each package uses one name for its NuGet package, assembly, and root namespace: 
 | --- | --- |
 | A console app, worker, or library | `Respire` |
 | An ASP.NET Core app | `Respire.DependencyInjection` (includes `Respire`) |
-| A .NET Aspire app | `Respire.Aspire` (not on NuGet yet; see [Aspire](integrations/aspire.md)) |
+| A .NET Aspire app | [`Respire.Aspire`](integrations/aspire.md) |
 | `IDistributedCache` or `HybridCache` | `Respire.Caching` or `Respire.Caching.Hybrid` |
 | HTTP output caching, rate limiting, or idempotency keys | `Respire.OutputCaching`, `Respire.RateLimiting`, `Respire.Idempotency` |
 | Rate limiters, semaphores, leader election, or Redlock | `Respire.Coordination` |
