@@ -74,6 +74,8 @@ public class StreamReadTests
         await Assert.That(async () => await client.Streams.ReadAsync("key", waitFor: TimeSpan.FromSeconds(-2)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Streams.ReadAsync("key", ">")).Throws<ArgumentException>();
+        await Assert.That(async () => await client.Streams.ReadAsync("key", RespireStreamId.Min)).Throws<ArgumentException>();
+        await Assert.That(() => client.Streams.ReadAllAsync("key", RespireStreamId.Max)).Throws<ArgumentException>();
         await Assert.That(async () => await client.Streams.ReadAsync([("a", "0"), ("a", "0")])).Throws<ArgumentException>();
         await Assert.That(async () => await client.Streams.ReadAsync([("{a}:one", "0"), ("{b}:two", "0")]))
             .ThrowsExactly<RespireCrossSlotException>();
@@ -81,6 +83,7 @@ public class StreamReadTests
         foreach (var streams in new[] { batch.Streams, transaction.Streams })
         {
             await Assert.That(() => streams.Read([])).Throws<ArgumentException>();
+            await Assert.That(() => streams.ReadGroup([("key", RespireStreamId.Max)], "group", "consumer")).Throws<ArgumentException>();
             await Assert.That(() => streams.Read([("{a}:one", "0"), ("{b}:two", "0")])).ThrowsExactly<RespireCrossSlotException>();
         }
 

@@ -142,7 +142,7 @@ internal sealed partial class StreamCommands
     }
 
     private static (RespireKey Key, RespireStreamId After)[] SnapshotStreams(RespireClient client,
-        ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, bool group = false)
+        ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams, bool group = false, bool continuous = false)
     {
         if (streams.IsEmpty)
         {
@@ -152,6 +152,12 @@ internal sealed partial class StreamCommands
         var snapshot = streams.ToArray();
         var seen = new HashSet<RespireKey>();
         int? slot = null;
+        string invalidIdMessage = (group, continuous) switch
+        {
+            (true, _) => "XREADGROUP requires a numeric start id or >.",
+            (_, true) => "XREAD requires a numeric start id or $.",
+            _ => "XREAD requires a numeric start id, $, or +."
+        };
 
         for (var i = 0; i < snapshot.Length; i++)
         {
@@ -163,12 +169,14 @@ internal sealed partial class StreamCommands
             }
 
             var id = snapshot[i].After;
+            bool specialId = group ? id.Value == ">"
+                : id == RespireStreamId.New || (!continuous && id == RespireStreamId.Max);
 
-            if (group ? id.Value != ">" : id != RespireStreamId.New)
+            if (!specialId)
             {
                 if (id == RespireStreamId.Min || id == RespireStreamId.Max || (group && id == RespireStreamId.New))
                 {
-                    throw new ArgumentException(group ? "XREADGROUP requires a numeric start id or >." : "XREAD requires a numeric start id or $.", nameof(streams));
+                    throw new ArgumentException(invalidIdMessage, nameof(streams));
                 }
 
                 try
@@ -177,7 +185,7 @@ internal sealed partial class StreamCommands
                 }
                 catch (FormatException error)
                 {
-                    throw new ArgumentException(group ? "XREADGROUP requires a numeric start id or >." : "XREAD requires a numeric start id or $.", nameof(streams), error);
+                    throw new ArgumentException(invalidIdMessage, nameof(streams), error);
                 }
             }
 
@@ -265,7 +273,7 @@ internal sealed partial class StreamCommands
         try
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
-            var snapshot = SnapshotStreams(client, streams);
+            var snapshot = SnapshotStreams(client, streams, continuous: true);
             return client.Core.Options.CommandHook is { } hook
                 ? ReadContinuouslyHookedAsync(snapshot, batchSize, hook, cancellationToken)
                 : ReadContinuouslyAsync(snapshot, batchSize, cancellationToken);

@@ -358,9 +358,13 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
 
                 if (arity == 0)
                 {
-                    FakeReply error = command == "CLIENT"
-                        ? FakeReply.Error($"ERR Respire.Testing does not support CLIENT {subcommand}")
-                        : Syntax(command);
+                    FakeReply error = (command, subcommand) switch
+                    {
+                        ("CLIENT", _) => FakeReply.Error($"ERR Respire.Testing does not support CLIENT {subcommand}"),
+                        (_, "DEBUG" or "HELP" or "KILL" or "SHOW") => Syntax(command),
+                        _ => UnknownScriptSubcommand(args[1])
+                    };
+
                     return RejectCommand(connection, command, error);
                 }
 
@@ -385,6 +389,20 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         catch (WrongTypeException) { return FakeReply.Error("WRONGTYPE Operation against a key holding the wrong kind of value"); }
         catch (FormatException) { return FakeReply.Error("ERR value is not an integer or out of range"); }
         catch (OverflowException) { return FakeReply.Error("ERR increment or expiry would overflow"); }
+    }
+
+    private static FakeReply UnknownScriptSubcommand(ReadOnlySpan<byte> argument)
+    {
+        // Redis includes at most 128 bytes and stops at a NUL.
+        var name = argument[..Math.Min(argument.Length, 128)];
+        int terminator = name.IndexOf((byte)0);
+
+        if (terminator >= 0)
+        {
+            name = name[..terminator];
+        }
+
+        return FakeReply.Error($"ERR unknown subcommand '{Encoding.UTF8.GetString(name)}'. Try SCRIPT HELP.");
     }
 
     private static FakeReply Hello(Connection connection, byte[][] args)

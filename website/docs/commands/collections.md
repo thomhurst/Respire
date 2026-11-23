@@ -579,6 +579,7 @@ await foreach (var item in redis.Streams.ReadAllAsync(
 `ReadAsync` runs [XREAD](https://redis.io/docs/latest/commands/xread/) (Redis 5.0+).
 
 - The default start ID is `0`. Only entries newer than each ID are returned. `count` limits entries **per stream**.
+- On Redis 7.4+, pass `RespireStreamId.Max` (`+`) to `ReadAsync` or queued `Streams.Read` to fetch the latest available entry for each stream using that cursor. Redis ignores `count` for those streams. Use numeric IDs or `$` with `ReadAllAsync`.
 - Missing or empty streams are left out of multi-stream results. An empty or timed-out read returns an empty array.
 - Returned keys have the client prefix removed.
 - Omit `waitFor` for a nonblocking read. A finite wait rounds up to milliseconds (zero becomes one millisecond). Explicit `waitFor: null` sends `BLOCK 0`; `Timeout.InfiniteTimeSpan` remains a compatibility alias.
