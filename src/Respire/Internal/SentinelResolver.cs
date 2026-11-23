@@ -30,8 +30,8 @@ internal static class SentinelResolver
         foreach (var sentinel in sentinels)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(options.CommandTimeout ?? options.ConnectTimeout);
+            var timeout = options.CommandTimeout ?? options.ConnectTimeout;
+            using var deadline = CommandTimeoutCancellation.CreateForTimeout(cancellationToken, timeout);
 
             try
             {
@@ -56,10 +56,9 @@ internal static class SentinelResolver
                 catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error)) { }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (OperationCanceledException error) when (deadline.IsCancellationRequested)
+            catch (OperationCanceledException error) when (deadline.Token.IsCancellationRequested)
             {
-                failures = ConnectionFailures.Combine(failures, new RespireTimeoutException("SENTINEL REPLICAS",
-                    options.CommandTimeout ?? options.ConnectTimeout, error)
+                failures = ConnectionFailures.Combine(failures, new RespireTimeoutException("SENTINEL REPLICAS", timeout, error)
                 { Endpoint = sentinel });
             }
             catch (Exception error) when (SentinelExceptionPolicy.IsRecoverable(error))
@@ -234,7 +233,9 @@ internal static class SentinelResolver
             }
 
             var discoveryTimeout = options.CommandTimeout ?? options.ConnectTimeout;
-            using var discoveryTimeoutSource = (createDiscoveryTimeout ?? CommandTimeoutCancellation.Create)(cancellationToken, discoveryTimeout);
+            using var discoveryTimeoutSource = createDiscoveryTimeout is null
+                ? CommandTimeoutCancellation.CreateForTimeout(cancellationToken, discoveryTimeout)
+                : new CommandTimeoutCancellation.TimeoutScope(createDiscoveryTimeout(cancellationToken, discoveryTimeout));
             var discoveryCompleted = false;
             var candidateEndpoint = endpoint;
 
@@ -269,7 +270,7 @@ internal static class SentinelResolver
                         })
                     .ConfigureAwait(false);
                 discoveryCompleted = true;
-                discoveryTimeoutSource.CancelAfter(Timeout.InfiniteTimeSpan);
+                discoveryTimeoutSource.Disarm();
                 // Advisory alias resolution has its own bound. It must not spend the
                 // candidate's DNS/connection/ROLE deadline or discard another report's proof.
                 var reconciliationPrimary = !discoveryState.IsNewerConfiguration(observation.Epoch)
@@ -395,7 +396,7 @@ internal static class SentinelResolver
                 cancellationToken.ThrowIfCancellationRequested();
                 // The discovery deadline usually equals the caller's command timeout. When it
                 // fires first, report the same timeout the caller's deadline would have raised.
-                lastErrorIsDiscoveryTimeout = !discoveryCompleted && discoveryTimeoutSource.IsCancellationRequested
+                lastErrorIsDiscoveryTimeout = !discoveryCompleted && discoveryTimeoutSource.Token.IsCancellationRequested
                     && (ex is RespireTimeoutException || ContainsCancellation(ex, discoveryTimeoutSource.Token));
                 lastError = lastErrorIsDiscoveryTimeout
                     ? new RespireTimeoutException(

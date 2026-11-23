@@ -3163,7 +3163,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             discoveryGeneration = ++_nextDiscoveryGeneration;
         }
 
-        using var timeoutSource = CommandTimeoutCancellation.Create(
+        using var timeoutSource = CommandTimeoutCancellation.CreateForTimeout(
             cancellationToken,
             _options.CommandTimeout ?? _options.ConnectTimeout);
 
