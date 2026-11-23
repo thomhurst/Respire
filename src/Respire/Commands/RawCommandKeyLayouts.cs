@@ -243,9 +243,12 @@ internal static class RawCommandKeyLayouts
     internal static bool HasPrefixableLayout(string operation)
         => Layouts.TryGetValue(operation, out var definition) && definition.Prefixable;
 
-    internal static bool TryGetLayout(string operation, ReadOnlySpan<RespireValue> args, out KeyLayout layout)
+    internal static bool TryGetLayout(
+        string operation, ReadOnlySpan<RespireValue> args, out KeyLayout layout, bool requireCompleteKeySet = false)
     {
-        if (Layouts.TryGetValue(operation, out var definition))
+        if (Layouts.TryGetValue(operation, out var definition)
+            && (!requireCompleteKeySet
+                || (definition.Kind != LayoutKind.CountedAfterName && definition.Mutation != MutationKind.IndirectKeys)))
         {
             layout = Parse(definition.Kind, args);
             return true;

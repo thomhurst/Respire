@@ -227,7 +227,8 @@ profiling registration, library-name suffixes, events, non-null `asyncState`, an
 ### Command rules
 
 - Database commands require native `Connections = 1` (the default). A multi-connection configuration is rejected before sending, because separate connections can reorder a hash write and its expiry.
-- With native command retries, Cluster routing, or replica redirects enabled, direct database commands wait for the preceding command to finish before dispatching. This keeps a write ahead of its expiry when the write has to move to another connection. A standalone database with these options disabled can pipeline direct commands.
+- In Cluster, direct key commands that use different hash slots can run concurrently. Commands that share a slot run in order through retries and redirects, keeping a write ahead of its expiry. A command with keys in several slots waits for each of those slots. Scripts and other commands whose slots cannot be determined wait for all earlier queued commands and hold back later ones.
+- On standalone Redis, native command retries or replica redirects make direct database commands wait for the preceding queued command to finish. With these options disabled, direct commands can pipeline.
 - Direct database commands use one `CommandTimeout` budget for the dispatch queue and execution. A command that expires in the dispatch queue is never sent.
 - Arguments are copied at call time; later buffer changes do not affect the command. Null keys and arguments are rejected.
 - Automatic write retries require proof that the failed attempt did not send the command. Native reconnect, failover, and Redis redirects still apply.
