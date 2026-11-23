@@ -60,6 +60,55 @@ public class BackplaneLifetimeTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task UnsubscribeFromAnEarlierCallbackWaitsForTheCurrentCallback()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var backplane = new RespireFusionCacheBackplane(client);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var startUnsubscribe = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unsubscribeStarted = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var transportStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishCallback = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await backplane.SubscribeAsync(Options(async message =>
+        {
+            if (message.CacheKey == "first")
+            {
+                _ = Task.Run(async () =>
+                {
+                    await startUnsubscribe.Task;
+                    unsubscribeStarted.TrySetResult(backplane.UnsubscribeAsync().AsTask());
+                });
+                return;
+            }
+
+            // Complete transport teardown first so the later caller's only remaining wait is this callback.
+            await backplane.UnsubscribeAsync();
+            transportStopped.TrySetResult();
+            await finishCallback.Task;
+        }));
+
+        Task unsubscribe;
+
+        try
+        {
+            await backplane.PublishAsync(BackplaneMessage.CreateForEntrySet("source", "first", DateTime.UtcNow.Ticks), new());
+            await backplane.PublishAsync(Message(), new());
+            await transportStopped.Task.WaitAsync(deadline.Token);
+            startUnsubscribe.TrySetResult();
+            unsubscribe = await unsubscribeStarted.Task.WaitAsync(deadline.Token);
+            await Assert.That(unsubscribe.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            startUnsubscribe.TrySetResult();
+            finishCallback.TrySetResult();
+        }
+
+        await unsubscribe.WaitAsync(deadline.Token);
+    }
+
+    [Test]
     public async Task ClientDisposalEndsConsumerAndLaterBackplaneDisposalRemainsSafe()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
