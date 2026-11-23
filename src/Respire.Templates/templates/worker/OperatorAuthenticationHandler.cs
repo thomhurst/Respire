@@ -7,7 +7,7 @@ using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 
-namespace RespireWorker;
+namespace RespireStarter.Worker;
 
 // A small, explicit operator login for this starter. Replace with your identity provider
 // before deployment, retaining the QueueOperators policy and dashboard antiforgery checks.
