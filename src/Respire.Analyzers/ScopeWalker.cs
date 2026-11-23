@@ -357,9 +357,26 @@ internal static partial class ScopeWalker
             readBlock = block;
         }
 
-        return readBlock is not null && !new ReachabilityWalker(graph, model, graph.Blocks[0], int.MinValue,
-            readBlock, read.Syntax.SpanStart, [], BarrierStartPolicy.Exclude, cancellationToken, origin: null,
-            completionLocal: local).Search();
+        if (readBlock is null)
+        {
+            return false;
+        }
+
+        ReachabilityResult result = Search(readBlock, completionOnly: false);
+
+        if (result == ReachabilityResult.BudgetExhausted)
+        {
+            result = Search(readBlock, completionOnly: true);
+        }
+
+        return result == ReachabilityResult.NoPath;
+
+        ReachabilityResult Search(BasicBlock target, bool completionOnly)
+        {
+            return new ReachabilityWalker(graph, model, graph.Blocks[0], int.MinValue,
+                target, read.Syntax.SpanStart, [], BarrierStartPolicy.Exclude, cancellationToken, origin: null,
+                completionLocal: local).Search(completionOnly);
+        }
 
         bool ContainsRead(IOperation? operation)
         {
@@ -380,7 +397,7 @@ internal static partial class ScopeWalker
         CancellationToken cancellationToken = default,
         SyntaxNode? origin = null)
         => new ReachabilityWalker(graph, semanticModel, startBlock, startPosition, targetBlock,
-            targetPosition, barriers, startPolicy, cancellationToken, origin).Search();
+            targetPosition, barriers, startPolicy, cancellationToken, origin).Search() != ReachabilityResult.NoPath;
 
     private static bool IsUnconditionalTopLevelSequence(
         SyntaxNode scope, SyntaxNode before, SyntaxNode after, bool requireExitCoverage)

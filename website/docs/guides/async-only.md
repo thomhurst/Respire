@@ -63,6 +63,8 @@ helper methods, or reassignment, so it will not catch every blocking call.
 RESP009 allows a synchronous read when every path to it establishes
 `IsCompletedSuccessfully` for the same operation. This includes an early return
 on unsuccessful completion or a loop body entered through a successful check.
+Check `IsCompletedSuccessfully` in the condition itself. Saving the check in a
+Boolean local and branching on that local can still trigger RESP009.
 
 The fix preserves `ConfigureAwait` and `WaitAsync` arguments. It can add `async`
 to an existing task-returning method or local function when the edited document

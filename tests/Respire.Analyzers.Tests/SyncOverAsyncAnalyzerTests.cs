@@ -43,6 +43,7 @@ public class SyncOverAsyncAnalyzerTests
     [Arguments("if (!command.IsCompletedSuccessfully) { return await command; } return command.Result;")]
     [Arguments("if (!command.IsCompletedSuccessfully || skip) { throw new System.InvalidOperationException(); } return command.Result;")]
     [Arguments("if (skip) { if (!command.IsCompletedSuccessfully) { return await command; } } else { if (!command.IsCompletedSuccessfully) { return await command; } } return command.Result;")]
+    [Arguments("if (skip && !command.IsCompletedSuccessfully) { return await command; } if (skip) { return command.Result; } return await command;")]
     [Arguments("while (command.IsCompletedSuccessfully) { return command.Result; } return await command;")]
     [Arguments("for (; command.IsCompletedSuccessfully && !skip;) { return command.ConfigureAwait(false).GetAwaiter().GetResult(); } return await command;")]
     [Arguments("do { if (skip) { continue; } } while (!command.IsCompletedSuccessfully); return command.Result;")]
@@ -97,9 +98,12 @@ public class SyncOverAsyncAnalyzerTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public Task LaterBranchesDoNotInvalidateACompletionGuard(bool inTry)
+    [Arguments(false, false, false)]
+    [Arguments(true, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, true, true)]
+    public Task UnrelatedBranchesDoNotInvalidateACompletionGuard(bool inTry, bool branchesBeforeRead, bool bypassGuard)
     {
         const int BranchCount = 16;
         string parameters = string.Join(", ", Enumerable.Range(0, BranchCount).Select(index => $"bool flag{index}"));
@@ -111,14 +115,17 @@ public class SyncOverAsyncAnalyzerTests
             }
             """));
 
+        string condition = bypassGuard ? "command.IsCompletedSuccessfully || flag0" : "command.IsCompletedSuccessfully";
+        string result = bypassGuard ? "{|RESP009:command.Result|}" : "command.Result";
         string statements = $$"""
             var command = client.ExecuteAsync("PING");
-            if (command.IsCompletedSuccessfully)
+            {{(branchesBeforeRead ? branches : "")}}
+            if ({{condition}})
             {
-                _ = command.Result;
+                _ = {{result}};
             }
 
-            {{branches}}
+            {{(branchesBeforeRead ? "" : branches)}}
             await Task.Yield();
             """;
 

@@ -8,6 +8,13 @@ namespace Respire.Analyzers;
 
 internal static partial class ScopeWalker
 {
+    private enum ReachabilityResult
+    {
+        NoPath,
+        PossiblePath,
+        BudgetExhausted,
+    }
+
     private sealed class ReachabilityWalker(
         ControlFlowGraph graph,
         SemanticModel semanticModel,
@@ -100,7 +107,7 @@ internal static partial class ScopeWalker
             }
         }
 
-        internal bool Search()
+        internal ReachabilityResult Search(bool completionOnly = false)
         {
             bool[]? blocksReachingTarget = null;
 
@@ -109,6 +116,10 @@ internal static partial class ScopeWalker
                 _completionFlag = _conditions.ReserveCompletionFlag(completionLocal);
                 blocksReachingTarget = FindBlocksReachingTarget();
             }
+
+            // The retry forgets other facts at block entries so independent branches merge.
+            // Unknown predicates can admit extra paths, so the retry still needs every path to be guarded.
+            ulong retainedFacts = completionOnly ? _completionFlag : ulong.MaxValue;
 
             foreach (var barrier in barriers)
             {
@@ -162,17 +173,16 @@ internal static partial class ScopeWalker
                     continue;
                 }
 
-                // Exhaustion is a possible path, never a proof of safety.
                 if (--remaining == 0)
                 {
-                    return true;
+                    return ReachabilityResult.BudgetExhausted;
                 }
 
                 var entryPosition = int.MinValue;
                 var continuation = pending.Continuation;
                 var started = pending.Started;
-                var known = pending.Known;
-                var values = pending.Values;
+                ulong known = pending.Known & retainedFacts;
+                ulong values = pending.Values & retainedFacts;
                 var dispatch = pending.Dispatch;
 
                 if (!started && block.Ordinal == startBlock.Ordinal)
@@ -201,7 +211,7 @@ internal static partial class ScopeWalker
                 {
                     if ((known & values & _completionFlag) == 0)
                     {
-                        return true;
+                        return ReachabilityResult.PossiblePath;
                     }
 
                     reachedGuardedRead = true;
@@ -227,7 +237,9 @@ internal static partial class ScopeWalker
             }
 
             // A completion proof needs a reachable guarded read.
-            return completionLocal is not null && !reachedGuardedRead;
+            return completionLocal is not null && !reachedGuardedRead
+                ? ReachabilityResult.PossiblePath
+                : ReachabilityResult.NoPath;
         }
 
         private bool[] FindBlocksReachingTarget()
