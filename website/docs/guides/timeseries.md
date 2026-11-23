@@ -87,7 +87,8 @@ With client-side caching enabled, each `AddAsync`, `IncrementByAsync`, `Decremen
 
 ## Reads
 
-- `GetAsync` returns the latest sample, or `null` for an empty series.
+- `GetAsync` returns the latest sample, or `null` for an empty series. It follows the client's
+  [replica read policy](../fundamentals/connections.md#read-from-replicas).
 - `RangeAsync` and `ReverseRangeAsync` read one series, with exact timestamp and value filters, `COUNT`, `LATEST`, and aggregation with `ALIGN`, `BUCKETTIMESTAMP` and `EMPTY`.
 - In range queries with aggregation, `Align = RespireTimeSeriesTimestamp.Minimum` aligns buckets to the start and requires an explicit millisecond start bound. `Maximum` aligns buckets to the end and requires an explicit millisecond end bound. Set `Align` to a millisecond timestamp to align buckets independently of the bounds.
 - `MultiGetAsync`, `MultiRangeAsync` and `MultiReverseRangeAsync` select series by label filters such as `sensor=temperature`, and accept `WITHLABELS` or `SELECTED_LABELS`. Multi-series ranges also accept `GROUPBY`/`REDUCE`; single-series ranges reject these locally.

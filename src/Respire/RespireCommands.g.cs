@@ -737,7 +737,8 @@ public static class RespireCommands
         public static readonly RespireCommand JSON_FORGET = new("JSON.FORGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>JSON.GET</c>.</summary>
-        public static readonly RespireCommand JSON_GET = new("JSON.GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
+        [RespireCommandCatalogName("JSON.GET")]
+        public static readonly RespireCommand JSON_GET = new("JSON.GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>JSON.MERGE</c>.</summary>
         public static readonly RespireCommand JSON_MERGE = new("JSON.MERGE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
@@ -2219,7 +2220,8 @@ public static class RespireCommands
         public static readonly RespireCommand TS_DELETERULE = new("TS.DELETERULE", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.Never);
 
         /// <summary><c>TS.GET</c>.</summary>
-        public static readonly RespireCommand TS_GET = new("TS.GET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, retryCategory: RespireCommandRetryCategory.ReadOnly);
+        [RespireCommandCatalogName("TS.GET")]
+        public static readonly RespireCommand TS_GET = new("TS.GET", RespireCommandSource.Redis, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
         /// <summary><c>TS.INCRBY</c>.</summary>
         public static readonly RespireCommand TS_INCRBY = new("TS.INCRBY", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
@@ -3919,6 +3921,7 @@ internal static class CommandReadMetadata
             ["HSTRLEN"] = (ReadCommandKind.Read, -1),
             ["HTTL"] = (ReadCommandKind.Read, -1),
             ["HVALS"] = (ReadCommandKind.Read, -1),
+            ["JSON.GET"] = (ReadCommandKind.Read, -1),
             ["KEYS"] = (ReadCommandKind.Read, -1),
             ["LCS"] = (ReadCommandKind.Read, -1),
             ["LINDEX"] = (ReadCommandKind.Read, -1),
@@ -3960,6 +3963,7 @@ internal static class CommandReadMetadata
             ["SUBSTR"] = (ReadCommandKind.Read, -1),
             ["SUNION"] = (ReadCommandKind.Read, -1),
             ["SUNIONCARD"] = (ReadCommandKind.Read, -1),
+            ["TS.GET"] = (ReadCommandKind.Read, -1),
             ["TTL"] = (ReadCommandKind.Read, -1),
             ["TYPE"] = (ReadCommandKind.Read, -1),
             ["XINFO CONSUMERS"] = (ReadCommandKind.Read, -1),

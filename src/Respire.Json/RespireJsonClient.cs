@@ -122,14 +122,7 @@ public sealed class RespireJsonClient
     {
         ArgumentNullException.ThrowIfNull(jsonTypeInfo);
         using var result = await DispatchAsync(GetCommand, [key, path.Value], cancellationToken).ConfigureAwait(false);
-        var values = DeserializeValues(result, path, jsonTypeInfo);
-
-        if (values.Length > 1)
-        {
-            throw new InvalidOperationException("The JSONPath matched multiple values; use GetManyAsync.");
-        }
-
-        return values.Length == 0 ? default : values[0];
+        return result.IsNull ? default : DeserializeSingleValue(result.AsSpan(), path, jsonTypeInfo);
     }
 
     /// <summary>Gets every value matched by one path.</summary>
@@ -647,7 +640,7 @@ public sealed class RespireJsonClient
     }
 
     // These descriptors match the generated commands, including their mutation metadata.
-    private static readonly RespireCommand GetCommand = RespireCommand.Create("JSON.GET", RespireCacheMutation.ReadOnly);
+    private static readonly RespireCommand GetCommand = RespireCommands.Json.JSON_GET;
     private static readonly RespireCommand MultiGetCommand = RespireCommand.Create("JSON.MGET", RespireCacheMutation.ReadOnly);
     private static readonly RespireCommand SetCommand = RespireCommand.Create("JSON.SET", RespireCacheMutation.SingleKey);
     private static readonly RespireCommand MultiSetCommand = RespireCommand.Create("JSON.MSET", RespireCacheMutation.MultiKey);
@@ -709,6 +702,43 @@ public sealed class RespireJsonClient
     // System.Text.Json uses this depth when JsonSerializerOptions.MaxDepth is left at 0.
     private const int DefaultMaxDepth = 64;
 
+    private static RespireJsonGetResult<T> DeserializeSingleValue<T>(
+        ReadOnlySpan<byte> json, RespireJsonPath path, JsonTypeInfo<T> jsonTypeInfo)
+    {
+        if (!path.UsesJsonPath)
+        {
+            return new(true, JsonSerializer.Deserialize(json, jsonTypeInfo));
+        }
+
+        Utf8JsonReader reader = ReadMatchArray(json, jsonTypeInfo.Options.MaxDepth);
+
+        if (!reader.Read())
+        {
+            throw new JsonException("RedisJSON returned an incomplete JSONPath array.");
+        }
+
+        if (reader.TokenType == JsonTokenType.EndArray)
+        {
+            return default;
+        }
+
+        // Look past the first value before invoking its converter.
+        Utf8JsonReader lookahead = reader;
+        lookahead.Skip();
+
+        if (!lookahead.Read())
+        {
+            throw new JsonException("RedisJSON returned an incomplete JSONPath array.");
+        }
+
+        if (lookahead.TokenType != JsonTokenType.EndArray)
+        {
+            throw new InvalidOperationException("The JSONPath matched multiple values; use GetManyAsync.");
+        }
+
+        return new(true, JsonSerializer.Deserialize(ref reader, jsonTypeInfo));
+    }
+
     // Reads the borrowed reply bytes in one pass: no byte[] copy and no intermediate JsonDocument.
     private static RespireJsonGetResult<T>[] DeserializeJsonText<T>(
         ReadOnlySpan<byte> json, RespireJsonPath path, JsonTypeInfo<T> jsonTypeInfo)
@@ -718,17 +748,7 @@ public sealed class RespireJsonClient
             return [new RespireJsonGetResult<T>(true, JsonSerializer.Deserialize(json, jsonTypeInfo))];
         }
 
-        // The reply wraps the matches in an array, which uses one depth level on top of the caller's limit.
-        var maxDepth = jsonTypeInfo.Options.MaxDepth;
-        var reader = new Utf8JsonReader(json, new JsonReaderOptions
-        {
-            MaxDepth = (int)Math.Min((long)(maxDepth == 0 ? DefaultMaxDepth : maxDepth) + 1, int.MaxValue),
-        });
-
-        if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray)
-        {
-            throw new JsonException("RedisJSON returned a non-array response for a JSONPath request.");
-        }
+        Utf8JsonReader reader = ReadMatchArray(json, jsonTypeInfo.Options.MaxDepth);
 
         // The match count is unknown until the end of the array, so matches are collected in a pooled buffer
         // and copied once into an exactly sized result.
@@ -762,6 +782,22 @@ public sealed class RespireJsonClient
         {
             ReturnBuffer(pool, buffer);
         }
+    }
+
+    private static Utf8JsonReader ReadMatchArray(ReadOnlySpan<byte> json, int maxDepth)
+    {
+        // The outer match array adds one level to the caller's depth limit.
+        var reader = new Utf8JsonReader(json, new JsonReaderOptions
+        {
+            MaxDepth = (int)Math.Min((long)(maxDepth == 0 ? DefaultMaxDepth : maxDepth) + 1, int.MaxValue),
+        });
+
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartArray)
+        {
+            throw new JsonException("RedisJSON returned a non-array response for a JSONPath request.");
+        }
+
+        return reader;
     }
 
     private static void ReturnBuffer<T>(ArrayPool<RespireJsonGetResult<T>> pool, RespireJsonGetResult<T>[] buffer)

@@ -1,5 +1,10 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
+using Respire.Json;
+using Respire.TimeSeries;
 using Respire.Internal;
 using Respire.Networking;
 using TUnit.Assertions;
@@ -82,6 +87,49 @@ public class StandaloneReplicaReadyTests
         }
 
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("GET", StringComparison.Ordinal))).IsFalse();
+    }
+
+    [Test]
+    [Arguments(RespireReadFrom.Primary, 11)]
+    [Arguments(RespireReadFrom.Replica, 22)]
+    public async Task ModuleReadsHonorTheViewPolicy(RespireReadFrom policy, int expected)
+    {
+        await using var primary = Server();
+        await using var replica = Server();
+        var replicaReply = replica.ReplyOverride;
+        primary.ReplyOverride = (_, command) => command switch
+        {
+            "GET prefix:key" or "JSON.GET prefix:key ." => "$2\r\n11\r\n"u8.ToArray(),
+            "TS.GET prefix:key" => "*2\r\n:100\r\n$2\r\n11\r\n"u8.ToArray(),
+            _ => null,
+        };
+        replica.ReplyOverride = (connection, command) => command switch
+        {
+            "GET prefix:key" or "JSON.GET prefix:key ." => "$2\r\n22\r\n"u8.ToArray(),
+            "TS.GET prefix:key" => "*2\r\n:100\r\n$2\r\n22\r\n"u8.ToArray(),
+            _ => replicaReply?.Invoke(connection, command),
+        };
+
+        await using var client = await RespireClient.ConnectAsync(Options(primary, replica));
+        var view = client.WithKeyPrefix("prefix:").WithReadFrom(policy);
+        var intType = (JsonTypeInfo<int>)JsonSerializerOptions.Default.GetTypeInfo(typeof(int));
+        string expectedText = expected.ToString(CultureInfo.InvariantCulture);
+        await Assert.That(await view.GetStringAsync("key")).IsEqualTo(expectedText);
+
+        var json = await view.Json.GetAsync("key", intType);
+        await Assert.That(json.Value).IsEqualTo(expected);
+        using var generated = await view.Json.Commands.GetPathAsync("key", ".");
+        await Assert.That(generated.AsString()).IsEqualTo(expectedText);
+        using var catalogJson = await view.ExecuteAsync(RespireCommands.Json.JSON_GET, ["key", "."]);
+        await Assert.That(catalogJson.AsString()).IsEqualTo(expectedText);
+
+        var sample = await view.TimeSeries.GetAsync("key");
+        await Assert.That(sample!.Value).IsEqualTo(new RespireTimeSeriesSample(100, expected));
+        using var catalogSample = await view.ExecuteAsync(RespireCommands.TimeSeries.TS_GET, ["key"]);
+        await Assert.That(catalogSample[1].AsString()).IsEqualTo(expectedText);
+
+        using var callerSupplied = await view.ExecuteAsync(RespireCommand.Create("JSON.GET"), ["key", "."]);
+        await Assert.That(callerSupplied.AsString()).IsEqualTo("11");
     }
 
     [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_replicas")]

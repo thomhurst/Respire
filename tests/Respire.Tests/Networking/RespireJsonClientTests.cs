@@ -1,5 +1,7 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Respire;
 using Respire.Commands;
 using Respire.Json;
@@ -293,6 +295,22 @@ public partial class RespireJsonClientTests
     }
 
     [Test]
+    [Arguments("""[1,"two",null]""")]
+    [Arguments("""[{"nested":[1,2]},1]""")]
+    public async Task SingleJsonPathReadRejectsMultipleMatchesBeforeDeserialization(string matches)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "JSON.GET key $[*]" ? Bulk(matches) : null,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var intType = (JsonTypeInfo<int>)JsonSerializerOptions.Default.GetTypeInfo(typeof(int));
+
+        await Assert.That(async () => await client.Json.GetAsync("key", intType, "$[*]"))
+            .Throws<InvalidOperationException>();
+    }
+
+    [Test]
     public async Task MultiGetReturnsNullForMissingKeys()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply)
@@ -457,14 +475,15 @@ public partial class RespireJsonClientTests
     }
 
     /// <summary>
-    /// RedisJSON commands declare cache mutation beside their generated command metadata.
+    /// RedisJSON commands declare cache mutation on the catalog descriptor or command attribute.
     /// This fails when a command has no key layout or leaves its mutation behavior unspecified.
     /// </summary>
     [Test]
     public async Task EveryJsonCommandHasAKeyLayoutAndACacheClassification()
     {
         var operations = new SortedSet<string>(StringComparer.Ordinal);
-        var commandAttributes = new List<RespireCommandAttribute>();
+        var catalogMutations = new Dictionary<string, RespireCacheMutation>(StringComparer.Ordinal);
+        var unclassified = new SortedSet<string>(StringComparer.Ordinal);
 
         foreach (var type in new[] { typeof(RespireCommands.Json), typeof(RespireCommands.Dragonfly) })
         {
@@ -473,6 +492,7 @@ public partial class RespireJsonClientTests
                 if (field.GetValue(null) is RespireCommand command && command.Name.StartsWith("JSON.", StringComparison.Ordinal))
                 {
                     operations.Add(command.Name);
+                    catalogMutations.Add(command.Name, command.CacheMutation);
                 }
             }
         }
@@ -487,14 +507,19 @@ public partial class RespireJsonClientTests
                 {
                     var commandAttribute = (RespireCommandAttribute)attribute;
                     operations.Add(commandAttribute.Name);
-                    commandAttributes.Add(commandAttribute);
+                    RespireCacheMutation mutation = method.IsDefined(typeof(RespireUseCatalogCommandAttribute), false)
+                        ? catalogMutations[commandAttribute.Name]
+                        : commandAttribute.Mutation;
+
+                    if (mutation == RespireCacheMutation.Unknown)
+                    {
+                        unclassified.Add(commandAttribute.Name);
+                    }
                 }
             }
         }
 
         var missingLayout = operations.Where(operation => !RawCommandKeyLayouts.HasLayout(operation)).ToArray();
-        var unclassified = commandAttributes.Where(attribute => attribute.Mutation == RespireCacheMutation.Unknown)
-            .Select(attribute => attribute.Name).Distinct(StringComparer.Ordinal).ToArray();
 
         await Assert.That(operations.Count).IsGreaterThan(20);
         await Assert.That(missingLayout).IsEmpty();

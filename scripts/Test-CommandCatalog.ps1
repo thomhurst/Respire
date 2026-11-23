@@ -30,9 +30,8 @@ try {
     Write-CommandFixture $redisPath 'duplicate-write' 'DUPLICATE' @('WRITE')
     Write-CommandFixture $redisPath 'invented-ro' 'INVENTED_RO' @('FAST')
     Write-CommandFixture $redisPath 'subcommand' 'GET' @('READONLY') 'CUSTOM'
-    # The manual list repeats VCARD for Redis, but adds a second, unaudited provider for JSON.GET.
+    # The manual list repeats VCARD for Redis. The module audits cover commands absent from core metadata.
     Write-CommandFixture $redisPath 'vcard' 'VCARD' @('READONLY')
-    Write-CommandFixture $redisPath 'json-get' 'JSON.GET' @('READONLY')
     Write-CommandFixture $redisPath 'slot-stats' 'SLOT-STATS' @('WRITE') 'CLUSTER'
     Write-CommandFixture $redisPath 'touch' 'TOUCH' @('READONLY')
     Write-CommandFixture $redisPath 'incr' 'INCR' @('WRITE')
@@ -60,7 +59,8 @@ try {
     $expected = @{
         GET = $true; SET = $false; CONFLICT = $false; MISSING = $false; EMPTY = $false
         CONTRADICTION = $false; DUPLICATE = $false; INVENTED_RO = $false
-        'CUSTOM GET' = $true; VCARD = $true; 'JSON.GET' = $false
+        'CUSTOM GET' = $true; VCARD = $true; 'JSON.GET' = $true; 'TS.GET' = $true
+        'JSON.MGET' = $false; 'TS.MGET' = $false
         'BF.EXISTS' = $false; 'KEYDB.NHGET' = $false
     }
     foreach ($entry in $expected.GetEnumerator()) {
@@ -156,11 +156,17 @@ try {
         }
     }
     # A manual module read audit must not override contradictory authoritative WRITE metadata.
-    Write-CommandFixture $valkeyPath 'json-get-write' 'JSON.GET' @('READONLY', 'WRITE')
+    Write-CommandFixture $valkeyPath 'json-get-write' 'JSON.GET' @('READONLY', 'WRITE') '' 'json'
+    Write-CommandFixture $valkeyPath 'ts-get-unknown' 'TS.GET' $null '' 'timeseries'
     & $generator -RedisCommandPath $redisPath -ValkeyCommandPath $valkeyPath -OutputPath $outputPath
     $conflictingModule = [System.IO.File]::ReadAllText($outputPath)
     if (-not $conflictingModule.Contains('["JSON.GET"] = RespireCommandRetryCategory.Never,')) {
         throw 'Manual retry read audit overrides authoritative WRITE metadata.'
+    }
+    foreach ($command in @('JSON.GET', 'TS.GET')) {
+        if ($conflictingModule.Contains('["' + $command + '"] = (ReadCommandKind.Read, -1),')) {
+            throw "Replica read audit overrides conflicting or missing metadata for $command."
+        }
     }
     Write-Host 'Command catalog generation, retry audit and fixed-frame checks passed.'
 }

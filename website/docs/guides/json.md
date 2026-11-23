@@ -53,6 +53,8 @@ internal sealed record Customer(string Name, string Email);
   `Found = true` with the deserialized value. With the default converters, nullable value types
   and reference types return a null value. Non-nullable value types such as `int` throw
   `JsonException`.
+- Reads backed by `JSON.GET` follow the client's [replica read policy](../fundamentals/connections.md#read-from-replicas).
+  This includes typed reads and `Json.Commands.GetPathAsync`.
 - In `GetAsync`, a missing legacy path inside an existing document is a server error. A `$` path
   with no matches returns `Found = false`.
 
