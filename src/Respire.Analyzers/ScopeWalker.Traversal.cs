@@ -8,6 +8,13 @@ namespace Respire.Analyzers;
 
 internal static partial class ScopeWalker
 {
+    private enum ReachabilityResult
+    {
+        NoPath,
+        PossiblePath,
+        BudgetExhausted,
+    }
+
     private sealed class ReachabilityWalker(
         ControlFlowGraph graph,
         SemanticModel semanticModel,
@@ -18,11 +25,13 @@ internal static partial class ScopeWalker
         IEnumerable<SyntaxNode> barriers,
         BarrierStartPolicy startPolicy,
         CancellationToken cancellationToken,
-        SyntaxNode? origin)
+        SyntaxNode? origin,
+        ILocalSymbol? completionLocal = null)
     {
         private const int MaxProcessedStates = 16384;
         private readonly INamedTypeSymbol? _systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
         private readonly FlowConditions _conditions = new(graph, startBlock, cancellationToken);
+        private ulong _completionFlag;
         private readonly Dictionary<int, List<int>> _barrierPositions = new();
         private HashSet<int>? _asyncLoopCompletions;
         private readonly Dictionary<(int Block, int Position), List<(int TriggerBlock, ulong Flag)>> _transferGuards = new();
@@ -98,8 +107,20 @@ internal static partial class ScopeWalker
             }
         }
 
-        internal bool Search()
+        internal ReachabilityResult Search(bool completionOnly = false)
         {
+            bool[]? blocksReachingTarget = null;
+
+            if (completionLocal is not null)
+            {
+                _completionFlag = _conditions.ReserveCompletionFlag(completionLocal);
+                blocksReachingTarget = FindBlocksReachingTarget();
+            }
+
+            // The retry forgets other facts at block entries so independent branches merge.
+            // Unknown predicates can admit extra paths, so the retry still needs every path to be guarded.
+            ulong retainedFacts = completionOnly ? _completionFlag : ulong.MaxValue;
+
             foreach (var barrier in barriers)
             {
                 if (barrier is ForEachStatementSyntax loop)
@@ -139,23 +160,29 @@ internal static partial class ScopeWalker
             // Start at entry so reaching an origin retains the branch that selected it.
             _pending.Push(new(graph.Blocks[0], continuation: 0, started: false, known: 0, values: 0, dispatch: 0));
             var remaining = MaxProcessedStates;
+            bool reachedGuardedRead = false;
 
             while (_pending.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                // Exhaustion is a possible path, never a proof of safety.
-                if (--remaining == 0)
-                {
-                    return true;
-                }
-
                 var pending = _pending.Pop();
                 var block = pending.Block;
+
+                if (blocksReachingTarget is not null && !blocksReachingTarget[block.Ordinal])
+                {
+                    continue;
+                }
+
+                if (--remaining == 0)
+                {
+                    return ReachabilityResult.BudgetExhausted;
+                }
+
                 var entryPosition = int.MinValue;
                 var continuation = pending.Continuation;
                 var started = pending.Started;
-                var known = pending.Known;
-                var values = pending.Values;
+                ulong known = pending.Known & retainedFacts;
+                ulong values = pending.Values & retainedFacts;
                 var dispatch = pending.Dispatch;
 
                 if (!started && block.Ordinal == startBlock.Ordinal)
@@ -182,7 +209,12 @@ internal static partial class ScopeWalker
                     && ComparePositions(block, targetPosition, entryPosition) > 0
                     && ComparePositions(block, targetPosition, firstBarrier) <= 0)
                 {
-                    return true;
+                    if ((known & values & _completionFlag) == 0)
+                    {
+                        return ReachabilityResult.PossiblePath;
+                    }
+
+                    reachedGuardedRead = true;
                 }
 
                 EnqueueIteratorDisposal(block, entryPosition, firstBarrier, started, known, values);
@@ -204,7 +236,59 @@ internal static partial class ScopeWalker
                 Follow(block.ConditionalSuccessor, continuation, started, known, values, dispatch);
             }
 
-            return false;
+            // A completion proof needs a reachable guarded read.
+            return completionLocal is not null && !reachedGuardedRead
+                ? ReachabilityResult.PossiblePath
+                : ReachabilityResult.NoPath;
+        }
+
+        private bool[] FindBlocksReachingTarget()
+        {
+            var reachable = new bool[graph.Blocks.Length];
+            var pending = new Stack<BasicBlock>();
+            var expandedRegions = new HashSet<ControlFlowRegion>();
+            Mark(targetBlock);
+
+            while (pending.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                BasicBlock block = pending.Pop();
+
+                foreach (ControlFlowBranch predecessor in block.Predecessors)
+                {
+                    Mark(predecessor.Source);
+
+                    foreach (ControlFlowRegion finalizer in predecessor.FinallyRegions)
+                    {
+                        Mark(graph.Blocks[finalizer.FirstBlockOrdinal]);
+                    }
+                }
+
+                // CFG predecessors omit exception dispatch. If a handler, filter or finalizer
+                // can reach the read, retain its enclosing exception region as a conservative bound.
+                ControlFlowRegion? region = FlowConditions.EnumerateRegionsWithin(graph, block.EnclosingRegion)
+                    .LastOrDefault(static enclosing => enclosing.Kind is ControlFlowRegionKind.Catch
+                        or ControlFlowRegionKind.FilterAndHandler or ControlFlowRegionKind.Finally)?.EnclosingRegion;
+
+                if (region is not null && expandedRegions.Add(region))
+                {
+                    for (int ordinal = region.FirstBlockOrdinal; ordinal <= region.LastBlockOrdinal; ordinal++)
+                    {
+                        Mark(graph.Blocks[ordinal]);
+                    }
+                }
+            }
+
+            return reachable;
+
+            void Mark(BasicBlock block)
+            {
+                if (!reachable[block.Ordinal])
+                {
+                    reachable[block.Ordinal] = true;
+                    pending.Push(block);
+                }
+            }
         }
 
         private (BasicBlock? Block, int Position) FindBarrierLocation(SyntaxNode barrier)
@@ -1287,6 +1371,13 @@ internal static partial class ScopeWalker
                     || !_conditions.Constrain(branch.Source.BranchValue, expected, ref known, ref values))
                 {
                     return;
+                }
+
+                if (completionLocal is not null
+                    && CompletionGuards.ProvesSuccessfulCompletion(branch.Source.BranchValue, expected, completionLocal))
+                {
+                    known |= _completionFlag;
+                    values |= _completionFlag;
                 }
             }
 
