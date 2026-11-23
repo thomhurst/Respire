@@ -1,4 +1,5 @@
 using System.Net;
+using System.Threading.Channels;
 using StackExchange.Redis;
 using TUnit.Core;
 using Assert = Xunit.Assert;
@@ -219,5 +220,48 @@ public class ServerLockTests(RedisTestContainer fixture)
         Assert.True(native.IsConnected);
         Assert.Throws<ObjectDisposedException>(() => subscriber.Subscribe(channel, Handler));
         Assert.Throws<NotSupportedException>(() => connection.GetSubscriber(new object()));
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task MutatingCallbackChannelDoesNotAffectOtherCallbacksOrUnsubscribe(int protocol)
+    {
+        await using var connection = RespireConnectionMultiplexer.Create(Options(protocol));
+        await using var publisher = await ConnectionMultiplexer.ConnectAsync(fixture.StackExchangeConnectionString);
+        var subscriber = connection.GetSubscriber();
+        var nativePublisher = publisher.GetSubscriber();
+        byte[] channelBytes = [0xfa, 0, 0x86, .. Guid.NewGuid().ToByteArray()];
+        RedisChannel channel = RedisChannel.Literal(channelBytes);
+        var mutatingHandlerChannels = Channel.CreateUnbounded<byte[]>();
+        var observingHandlerChannels = Channel.CreateUnbounded<byte[]>();
+
+        await subscriber.SubscribeAsync(channel, (received, _) =>
+        {
+            byte[] bytes = ((byte[]?)received)!;
+            byte[] original = bytes.ToArray();
+            bytes[0] = 0xcc;
+            mutatingHandlerChannels.Writer.TryWrite(original);
+        });
+        await subscriber.SubscribeAsync(channel, (received, _) =>
+        {
+            observingHandlerChannels.Writer.TryWrite(((byte[]?)received)!.ToArray());
+        });
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var deliveredChannels = new List<byte[]>();
+
+        for (int i = 0; i < 2; i++)
+        {
+            Assert.Equal(1, await nativePublisher.PublishAsync(channel, "message"));
+            deliveredChannels.Add(await mutatingHandlerChannels.Reader.ReadAsync(deadline.Token));
+            deliveredChannels.Add(await observingHandlerChannels.Reader.ReadAsync(deadline.Token));
+        }
+
+        await subscriber.UnsubscribeAsync(channel);
+        long remainingReceivers = await nativePublisher.PublishAsync(channel, "after unsubscribe");
+
+        Assert.All(deliveredChannels, bytes => Assert.Equal(channelBytes, bytes));
+        Assert.Equal(0, remainingReceivers);
     }
 }
