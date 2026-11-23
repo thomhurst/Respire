@@ -354,7 +354,9 @@ public class StandaloneCommandRetryTests
     }
 
     [Test]
-    public async Task CancellationAfterWriteKeepsCallerTokenAndStopsResend()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CancellationAfterWriteKeepsCallerTokenAndStopsResend(bool redirects)
     {
         using var cancellation = new CancellationTokenSource();
         await using var server = Server();
@@ -370,11 +372,18 @@ public class StandaloneCommandRetryTests
         };
 #pragma warning disable RESP010 // Each wire case owns an isolated fake server and client retry state; sharing would leak fault and policy state.
         await using var client = await RespireClient.ConnectAsync(Options(server) with
-        { RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(1), Jitter = 0 } });
+        {
+            Protocol = redirects ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
+            EnableReplicaRedirects = redirects,
+            RetryPolicy = new() { InitialBackoff = TimeSpan.FromSeconds(1), Jitter = 0 },
+            CircuitBreaker = new() { MinimumFailureCount = 1 },
+        });
 #pragma warning restore RESP010
         var error = await Failure(async () => await client.GetStringAsync("key", cancellation.Token));
         await Assert.That(error).IsTypeOf<OperationCanceledException>();
         await Assert.That(((OperationCanceledException)error).CancellationToken).IsEqualTo(cancellation.Token);
+        using var probe = await client.ExecuteAsync(RespireCommands.Connection.PING);
+        await Assert.That(probe.AsString()).IsEqualTo("OK");
         await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
     }
 
@@ -638,6 +647,77 @@ public class StandaloneCommandRetryTests
         await Assert.That(await second.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(6L);
         await Assert.That(client.Core.ClientCache!.InspectForTests().ActiveMutationCount).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands.Count(command => command == "SET key first")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "RESP010", Justification = "Each wire case owns its server, circuit and retry policy.")]
+    public async Task SentCommandTimeoutOpensCircuit(bool retries, bool redirects)
+    {
+        await using var server = Server();
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.GateCommand("GET slow", releaseReply.Task, () => received.TrySetResult());
+        server.ReplyOverride = (_, command) => command.StartsWith("GET ", StringComparison.Ordinal)
+            ? "$5\r\nvalue\r\n"u8.ToArray()
+            : Setup(command);
+        RespireOptions options = Options(server);
+        await using var client = await RespireClient.ConnectAsync(options with
+        {
+            Protocol = redirects ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
+            CommandTimeout = TimeSpan.FromMilliseconds(500),
+            EnableReplicaRedirects = redirects,
+            RetryPolicy = retries ? options.RetryPolicy : null,
+            CircuitBreaker = new() { MinimumFailureCount = 1, OpenDuration = TimeSpan.FromMinutes(1) },
+        });
+
+        try
+        {
+            Task<string?> pending = client.GetStringAsync("slow").AsTask();
+            await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(async () => await pending).ThrowsExactly<RespireTimeoutException>();
+        }
+        finally
+        {
+            releaseReply.TrySetResult();
+        }
+
+        await Assert.That(async () => await client.GetStringAsync("next")).ThrowsExactly<RespireCircuitOpenException>();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("GET ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "RESP010", Justification = "Each wire case negotiates maintenance and owns its retry policy.")]
+    public async Task SentCommandUsesMaintenanceRelaxedTimeout(bool retries, bool redirects)
+    {
+        await using var server = Server();
+        server.ReplyOverride = (_, command) => command == "GET slow" ? "$5\r\nvalue\r\n"u8.ToArray() : Setup(command);
+        server.DelayCommand("GET slow", 800);
+        RespireOptions options = Options(server);
+        await using var client = await RespireClient.ConnectAsync(options with
+        {
+            Protocol = RespireProtocol.Resp3,
+            CommandTimeout = TimeSpan.FromMilliseconds(500),
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+            MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(5),
+            MaintenanceWindowTimeout = TimeSpan.FromSeconds(10),
+            EnableReplicaRedirects = redirects,
+            RetryPolicy = retries ? options.RetryPolicy : null,
+            CircuitBreaker = new() { MinimumFailureCount = 1 },
+        });
+
+        await server.SendRawAsync(">3\r\n+MIGRATING\r\n:1\r\n:1\r\n"u8.ToArray());
+        // The PING reply follows the push on the same connection.
+        using var barrier = await client.ExecuteAsync(RespireCommands.Connection.PING);
+
+        await Assert.That(await client.GetStringAsync("slow")).IsEqualTo("value");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET slow")).IsEqualTo(1);
     }
 
     [Test]

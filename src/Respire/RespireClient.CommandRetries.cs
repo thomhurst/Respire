@@ -155,7 +155,9 @@ public sealed partial class RespireClient
 
                     ThrowIfRetryStopped(operation, token, deadline);
                     state.IsRetry = attempt > 1;
-                    var result = await connection.SendAttemptAsync(command, token, operation, deadline,
+                    // The transport owns the deadline once it starts handling the send,
+                    // including any allowance for maintenance.
+                    var result = await connection.SendAttemptAsync(command, callerToken, operation, deadline,
                         repliesBeforeFinal: track ? 1 : 0, errorObservation: observation).ConfigureAwait(false);
 
                     if (state.IsRetry && state.AcceptedAttempt)
@@ -186,7 +188,11 @@ public sealed partial class RespireClient
                 }
                 catch (Exception error)
                 {
-                    admission.Failed(error, token);
+                    if (error is not RespireTimeoutException || outcome != CommandWriteOutcome.DefinitelyUnwritten)
+                    {
+                        admission.Failed(error, callerToken);
+                    }
+
                     var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
 
                     if (!_core.CommandRetries!.TryGetDelay(error, outcome, state.Category, attempt, remaining, token, out var delay))
@@ -328,7 +334,7 @@ public sealed partial class RespireClient
                         }
 
                         var result = await connection.SendAttemptAsync(useTracking ? command : command.WithoutTracking(),
-                            connection.ReplicaRedirectsEnabled ? callerToken : token, operation, deadline,
+                            callerToken, operation, deadline,
                             repliesBeforeFinal: useTracking && track ? 1 : 0,
                             errorObservation: observation).ConfigureAwait(false);
 
@@ -496,7 +502,11 @@ public sealed partial class RespireClient
                         _core.ClientCache?.FlushForContinuityLoss();
                     }
 
-                    admission.Failed(error, token);
+                    if (error is not RespireTimeoutException || outcome != CommandWriteOutcome.DefinitelyUnwritten)
+                    {
+                        admission.Failed(error, callerToken);
+                    }
+
                     var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
 
                     if (!_core.CommandRetries!.TryGetDelay(error, outcome, state.Category, attempt, remaining, token, out var delay))
