@@ -2660,6 +2660,8 @@ public class ExceptionAwareFlowTests
     [Arguments("holder.Field = choice ? result : result;", "InvalidOperationException", false)]
     [Arguments("holder.Value = (RespireResult)result;", "InvalidOperationException", false)]
     [Arguments("buffer[0] = (RespireResult)result;", "IndexOutOfRangeException", true)]
+    [Arguments("holder.Value = ((RespireResult?)result).Value;", "NullReferenceException", true)]
+    [Arguments("buffer[0] = ((RespireResult?)result).GetValueOrDefault();", "IndexOutOfRangeException", true)]
     public async Task WrappedAssignmentWaitsForTargetChecks(string transfer, string catchType, bool warning) => await Disposal.VerifyAsync($$"""
         using System;
         using System.Threading.Tasks;

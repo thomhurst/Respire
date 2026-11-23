@@ -148,8 +148,17 @@ public class UndisposedPooledResultAnalyzerTests
     [Arguments("var {|RESP001:result|} = (RespireResult?)await client.ExecuteLeaseAsync(\"PING\");", "_ = result;")]
     [Arguments("var {|RESP001:result|} = ((RespireResult?)await client.ExecuteLeaseAsync(\"PING\")).GetValueOrDefault();", "_ = result;")]
     [Arguments("var {|RESP001:result|} = (RespireResult?)await client.ExecuteLeaseAsync(\"PING\");", "_ = result.Value.AsString();")]
+    [Arguments("var {|RESP001:result|} = (RespireResult?)await client.ExecuteLeaseAsync(\"PING\");", "_ = result.GetValueOrDefault();")]
+    [Arguments("var {|RESP001:result|} = (RespireResult?)await client.ExecuteLeaseAsync(\"PING\");", "result.GetValueOrDefault();")]
+    [Arguments("var {|RESP001:result|} = (RespireResult?)await client.ExecuteLeaseAsync(\"PING\");", "for (result.GetValueOrDefault(); ; ) { break; }")]
     [Arguments("var result = ((RespireResult?)await client.ExecuteLeaseAsync(\"PING\")).GetValueOrDefault();", "result.Dispose();")]
+    [Arguments("var result = (RespireResult?)await client.ExecuteLeaseAsync(\"PING\");", "result.Value.Dispose();")]
+    [Arguments("var result = (RespireResult?)await client.ExecuteLeaseAsync(\"PING\");", "result.GetValueOrDefault().Dispose();")]
+    [Arguments("var result = (RespireLease?)await client.GetLeaseAsync(\"app:entry\");", "((RespireLease)result).Dispose();")]
+    [Arguments("var result = (RespireResult?)await client.ExecuteLeaseAsync(\"PING\");", "result.GetValueOrDefault().Consume();")]
     [Arguments("RespireResult? result = await client.ExecuteLeaseAsync(\"PING\");", "result?.Consume();")]
+    [Arguments("RespireResult? result;", "(result = await client.ExecuteLeaseAsync(\"PING\")).GetValueOrDefault().Dispose();")]
+    [Arguments("RespireResult result;", "_ = ((RespireResult?)({|RESP001:result|} = await client.ExecuteLeaseAsync(\"PING\"))).GetValueOrDefault();")]
     public async Task LocalLease_WrappersPreserveOwnership(string declaration, string use) => await Verify.VerifyAsync(
         $$"""
         using System.Threading.Tasks;

@@ -193,52 +193,15 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         while (true)
         {
             expression = ScopeWalker.GetOutermostTransparentExpression(expression);
-            var wrapper = expression.Parent as ExpressionSyntax;
+            var wrapper = ScopeWalker.GetValuePreservingWrapper(
+                expression, context.SemanticModel, context.CancellationToken);
 
-            if (wrapper is MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax invocation } member
-                && ScopeWalker.IsSame(invocation.Expression, member))
-            {
-                wrapper = invocation;
-            }
-
-            if (wrapper is null || GetLeaseValueOperand(context, wrapper) is not { } operand
-                                || !ScopeWalker.IsSame(operand, expression))
+            if (wrapper is null)
             {
                 return expression;
             }
 
             expression = wrapper;
-        }
-    }
-
-    private static ExpressionSyntax? GetLeaseValueOperand(
-        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
-    {
-        SemanticModel semanticModel = context.SemanticModel;
-        CancellationToken cancellationToken = context.CancellationToken;
-
-        switch (expression)
-        {
-            case CastExpressionSyntax cast when semanticModel.GetTypeInfo(cast.Type, cancellationToken).Type is { } target:
-                Conversion conversion = semanticModel.ClassifyConversion(cast.Expression, target, isExplicitInSource: true);
-                return conversion.IsIdentity || conversion.IsNullable && !conversion.IsUserDefined
-                    ? cast.Expression
-                    : null;
-
-            case MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Value" } member when semanticModel.GetSymbolInfo(member, cancellationToken).Symbol
-                    is IPropertySymbol { ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }:
-                return member.Expression;
-
-            case InvocationExpressionSyntax
-            {
-                Expression: MemberAccessExpressionSyntax { Name.Identifier.ValueText: "GetValueOrDefault" } member,
-                ArgumentList.Arguments.Count: 0,
-            } invocation when semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol
-                    is IMethodSymbol { ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }:
-                return member.Expression;
-
-            default:
-                return null;
         }
     }
 
@@ -251,7 +214,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     {
         expression = ScopeWalker.Unwrap(expression);
 
-        while (GetLeaseValueOperand(context, expression) is { } operand)
+        while (ScopeWalker.GetPreservedValueOperand(expression, context.SemanticModel, context.CancellationToken) is { } operand)
         {
             expression = ScopeWalker.Unwrap(operand);
         }
@@ -367,7 +330,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         var releases = new List<SyntaxNode>();
 
         if (acquisitionAssignment is not null
-            && IsImmediatelyReleasedOrTransferred(context, ScopeWalker.GetOutermostTransparentExpression(acquisitionAssignment)))
+            && IsImmediatelyReleasedOrTransferred(context, GetOutermostLeaseValue(context, acquisitionAssignment)))
         {
             return true;
         }
@@ -387,7 +350,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            var use = ScopeWalker.GetOutermostTransparentExpression(reference);
+            var use = GetOutermostLeaseValue(context, reference);
 
             if (use.Parent is AssignmentExpressionSyntax discard && ScopeWalker.IsSame(discard.Right, use)
                 && IsDiscardTarget(context, discard))
@@ -440,13 +403,16 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                     releases.Add(usingStatement);
                     break;
 
-                // result = … drops the acquired owner; it does not transfer ownership elsewhere.
+                // Overwriting the local or ignoring a wrapper's result leaves the acquired lease unreleased.
                 case AssignmentExpressionSyntax assignment when ScopeWalker.IsSame(assignment.Left, use):
+                case ExpressionStatementSyntax:
+                case ForStatementSyntax:
                     break;
 
                 // Anything else — an argument, a return, or an assignment source — hands ownership away.
                 default:
-                    releases.Add(use);
+                    // Retain the local reference so flow analysis can locate where transfer actually completes.
+                    releases.Add(reference);
                     break;
             }
         }

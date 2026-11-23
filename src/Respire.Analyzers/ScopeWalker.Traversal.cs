@@ -281,6 +281,7 @@ internal static partial class ScopeWalker
                     ArrayCreationExpressionSyntax array when array.Initializer == expression => array,
                     ImplicitArrayCreationExpressionSyntax array when array.Initializer == expression => array,
                     CastExpressionSyntax cast when cast.Expression == expression => cast,
+                    MemberAccessExpressionSyntax => GetValuePreservingWrapper(expression, semanticModel, cancellationToken),
                     CheckedExpressionSyntax checkedExpression => checkedExpression,
                     ConditionalExpressionSyntax conditional when conditional.Condition != expression => conditional,
                     BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression) => coalesce,
