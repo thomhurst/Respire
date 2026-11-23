@@ -122,6 +122,26 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task TrackedCacheOperations_AcceptLongCommandTimeout()
+    {
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(Server.IsolatedConnectionString) with { CommandTimeout = TimeSpan.FromDays(50) });
+        await using var cache = new RespireDistributedCache(client);
+        var options = new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromMinutes(5) };
+        byte[] value = [42];
+
+        await Cache.SetAsync("long-timeout-read", value, options);
+        await cache.SetAsync("long-timeout-write", value, options);
+        await Assert.That(await Cache.GetAsync("long-timeout-write")).IsEquivalentTo(value);
+        await Assert.That(await cache.GetAsync("long-timeout-read")).IsEquivalentTo(value);
+
+        // Age only the Redis TTL so Refresh must restore it from the sliding metadata.
+        await Client.Keys.ExpireAsync("long-timeout-read", TimeSpan.FromMinutes(1));
+        await cache.RefreshAsync("long-timeout-read");
+        await Assert.That(await PttlAsync("long-timeout-read")).IsGreaterThan(60_000);
+    }
+
+    [Test]
     public async Task Get_MissingKey_ReturnsNull()
     {
         var fetched = await Cache.GetAsync("does-not-exist");

@@ -6104,7 +6104,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         }
 
         var timeout = core.Options.CommandTimeout;
-        using var timeoutSource = timeout is { } duration ? CommandTimeoutCancellation.Create(cancellationToken, duration) : null;
+        using CommandTimeoutCancellation.TimeoutScope? timeoutSource = timeout is { } duration
+            ? CommandTimeoutCancellation.CreateForTimeout(cancellationToken, duration)
+            : null;
         var token = timeoutSource?.Token ?? cancellationToken;
         Infrastructure.RespireConnectionMultiplexer? selected = null;
 
@@ -6738,7 +6740,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             return await multiplexer.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.CreateForTimeout(cancellationToken, timeout);
 
         try
         {
@@ -6779,7 +6781,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 .ConfigureAwait(false);
         }
 
-        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.CreateForTimeout(cancellationToken, timeout);
 
         try
         {
@@ -6812,7 +6814,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 .ConfigureAwait(false);
         }
 
-        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.CreateForTimeout(cancellationToken, timeout);
 
         try
         {
