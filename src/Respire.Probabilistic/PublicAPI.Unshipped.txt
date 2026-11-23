@@ -1,3 +1,7 @@
 #nullable enable
+Respire.Probabilistic.RespireBloomBatchException
+Respire.Probabilistic.RespireBloomBatchException.ItemErrors.get -> System.Collections.Generic.IReadOnlyDictionary<int, string!>!
+Respire.Probabilistic.RespireBloomBatchException.ItemResults.get -> System.Collections.Generic.IReadOnlyList<bool?>!
+Respire.Probabilistic.RespireBloomBatchException.SkippedCount.get -> int
 Respire.Probabilistic.RespireProbabilisticClient.CountMinMergeAsync(Respire.RespireKey destination, Respire.RespireKey source, Respire.Probabilistic.RespireCountMinMergeOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 Respire.Probabilistic.RespireProbabilisticClient.TDigestMergeAsync(Respire.RespireKey destination, Respire.RespireKey source, Respire.Probabilistic.RespireTDigestOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask

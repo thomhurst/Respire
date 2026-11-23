@@ -73,6 +73,62 @@ public class ProbabilisticIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task BloomBatchesReportPartialWritesWhenTheFilterFills(int protocol, bool insert)
+    {
+        await using var client = await ConnectAsync(protocol);
+        string key = $"probabilistic:{Guid.NewGuid():N}:bloom";
+        var probabilistic = new RespireProbabilisticClient(client);
+        const double errorRate = 0.00000001;
+        RespireValue[] items = ["first", "first", "second", "third", "fourth"];
+        Func<Task> write;
+
+        if (insert)
+        {
+            write = () => probabilistic.BloomInsertAsync(key, items,
+                new() { Capacity = 2, NonScaling = true, ErrorRate = errorRate }).AsTask();
+        }
+        else
+        {
+            await probabilistic.BloomReserveAsync(key, errorRate, 2, new() { NonScaling = true });
+            write = () => probabilistic.BloomMultiAddAsync(key, items).AsTask();
+        }
+
+        var failure = await write.Should().ThrowAsync<RespireBloomBatchException>();
+        failure.Which.Message.Should().Be("ERR non scaling filter is full");
+        failure.Which.ItemResults.Should().Equal(true, false, true, null);
+        failure.Which.ItemErrors.Should().ContainSingle().Which.Should()
+            .Be(new KeyValuePair<int, string>(3, "ERR non scaling filter is full"));
+        failure.Which.SkippedCount.Should().Be(1);
+        (await probabilistic.BloomMultiExistsAsync(key, items)).Should().Equal(true, true, true, false, false);
+        (await probabilistic.BloomCardinalityAsync(key)).Should().Be(2);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task TopKIncrementRejectsAnOversizedDeltaBeforeApplyingTheBatch(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        string key = $"probabilistic:{Guid.NewGuid():N}:topk";
+        var probabilistic = new RespireProbabilisticClient(client);
+        await probabilistic.TopKReserveAsync(key, 2, new() { Width = 50, Depth = 4, Decay = 0.9 });
+
+        await probabilistic.Awaiting(p => p.TopKIncrementAsync(key,
+                new Dictionary<RespireValue, long> { ["first"] = 1, ["second"] = 100_001 }).AsTask())
+            .Should().ThrowAsync<ArgumentOutOfRangeException>().WithParameterName("increments");
+        (await probabilistic.TopKCountAsync(key, ["first", "second"])).Should().Equal(0, 0);
+
+        var evictions = await probabilistic.TopKIncrementAsync(key,
+            new Dictionary<RespireValue, long> { ["first"] = 0, ["second"] = 100_000 });
+        evictions.Should().HaveCount(2).And.OnlyContain(evicted => evicted == null);
+        (await probabilistic.TopKCountAsync(key, ["first", "second"])).Should().Equal(0, 100_000);
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task SketchesAndDigestsRoundTripThroughAKeyPrefixedView(int protocol)

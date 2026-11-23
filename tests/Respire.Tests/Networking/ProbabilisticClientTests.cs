@@ -1,6 +1,7 @@
 using System.Text;
 using Respire.Probabilistic;
 using TUnit.Assertions;
+using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
@@ -245,7 +246,10 @@ public class ProbabilisticClientTests
 
         var results = await probabilistic.CuckooInsertIfAbsentAsync("filter", ["a", "b", "c"]);
 
-        await Assert.That(results.SequenceEqual([RespireCuckooInsertResult.Inserted, RespireCuckooInsertResult.AlreadyExists, RespireCuckooInsertResult.FilterFull])).IsTrue();
+        await Assert.That(server.ReceivedCommands).Contains("CF.INSERTNX filter ITEMS a b c");
+        await Assert.That(results).IsEquivalentTo(
+            [RespireCuckooInsertResult.Inserted, RespireCuckooInsertResult.AlreadyExists, RespireCuckooInsertResult.FilterFull],
+            CollectionOrdering.Matching);
     }
 
     [Test]
