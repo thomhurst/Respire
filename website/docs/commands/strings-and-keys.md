@@ -371,7 +371,16 @@ References: [EXPIRETIME](https://redis.io/docs/latest/commands/expiretime/), [OB
 
 ## Longest common subsequence
 
-Redis 7.0+ `LCS` compares the values at two keys. `Strings.LcsAsync` returns the subsequence text, `Strings.LcsLengthAsync` its total byte length, and `Strings.LcsIndexAsync` typed match ranges:
+Redis 7.0+ `LCS` matches bytes in the values at two keys. `Strings.LcsAsync` decodes the matched bytes as UTF-8, replacing invalid sequences with U+FFFD. Even two valid UTF-8 inputs can share an invalid byte sequence. The values `é` and `è` share the byte `0xC3`, so `LcsAsync` returns one replacement character.
+
+Read the raw reply to keep the exact matched bytes.
+
+```csharp
+using var reply = await redis.ExecuteAsync(RespireCommands.String.LCS, "before", "after");
+byte[] subsequence = reply.AsBytes();
+```
+
+`Strings.LcsLengthAsync` returns the total byte length. `Strings.LcsIndexAsync` returns match ranges in byte offsets.
 
 ```csharp
 RespireLcsIndexResult result = await redis.Strings.LcsIndexAsync(

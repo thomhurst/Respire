@@ -200,6 +200,9 @@ public class FunctionIntegrationTests
         txFailed.Should().Throw<RespireServerException>();
         txFollowing.Result.Should().Be(26);
         (await client.Functions.ListAsync()).Should().BeEmpty();
+
+        var caseVariant = library.Function("ECHO", readOnly: true);
+        (await client.Functions.ExecuteStringAsync(caseVariant, args: ["ok"])).Should().Be("ok");
     }
 
     public sealed record Record(int Value);
