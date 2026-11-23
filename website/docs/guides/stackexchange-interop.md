@@ -227,6 +227,7 @@ profiling registration, library-name suffixes, events, non-null `asyncState`, an
 ### Command rules
 
 - Database commands require native `Connections = 1` (the default). A multi-connection configuration is rejected before sending, because separate connections can reorder a hash write and its expiry.
+- With native command retries, Cluster routing, or replica redirects enabled, direct database commands wait for the preceding command to finish before dispatching. This keeps a write ahead of its expiry when the write has to move to another connection. A standalone database with these options disabled can pipeline direct commands.
 - Arguments are copied at call time; later buffer changes do not affect the command. Null keys and arguments are rejected.
 - The adapter never replays a failed write. Native reconnect and failover still apply.
 - Increments of 1 send `INCR`/`DECR`; other values send `INCRBY`/`DECRBY`, matching StackExchange.Redis for ACLs. A zero increment in fire-and-forget mode is a no-op.

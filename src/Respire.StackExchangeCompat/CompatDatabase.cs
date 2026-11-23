@@ -72,41 +72,46 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
         {
             Task<RespireResult>? pending = null;
             var discardReply = (flags & CommandFlags.FireAndForget) != 0;
-            // Initialize and enqueue in caller order, then release before awaiting replies.
-            // This preserves pipelining while preventing cold connection establishment from reordering commands.
+            // Serialize initial connection establishment and dispatch in caller order.
             await _dispatch.WaitAsync(cancellationToken).ConfigureAwait(false);
 
             try
             {
                 await _client.Core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                var nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
 
                 if (discardReply)
                 {
-                    var nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
                     await client.ExecuteFireAndForgetAsync(command, nativeArguments, cancellationToken).ConfigureAwait(false);
+                }
+                else if (command.Name == "EVALSHA" || client.Core.Options.EnableReplicaRedirects && client.Core.Cluster is null)
+                {
+                    // Stored procedures do not expose admission. Replica redirects can move
+                    // an admitted command onto a different FIFO, including during retries.
+                    pending = client.ExecuteLeaseAsync(command, nativeArguments, nativeFlags, cancellationToken).AsTask();
+                    await pending.ConfigureAwait(false);
                 }
                 else
                 {
-                    var nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
+                    var admission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    pending = client.ExecuteWithAdmissionAsync(command, nativeArguments, nativeFlags, cancellationToken, admission).AsTask();
 
-                    if (command.Name == "EVALSHA" || client.Core.Options.EnableReplicaRedirects && client.Core.Cluster is null)
+                    if (client.Core.CommandRetries is not null || client.Core.Cluster is not null)
                     {
-                        // Stored procedures do not expose admission. Replica redirects can move
-                        // an admitted command onto a different FIFO, including during retries.
-                        // Hold the gate through the logical reply to preserve caller order.
-                        pending = client.ExecuteLeaseAsync(command, nativeArguments, nativeFlags, cancellationToken).AsTask();
+                        // A retry or Cluster redirect can move an accepted command to a different FIFO.
                         await pending.ConfigureAwait(false);
                     }
                     else
                     {
-                        var admission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                        pending = client.ExecuteWithAdmissionAsync(command, nativeArguments, nativeFlags, cancellationToken, admission).AsTask();
-                        // Cache hits and pre-admission failures may settle the response without publishing a command.
+                        // Keep pipelining on one FIFO. Cache hits and pre-admission failures may settle without admission.
                         await Task.WhenAny(admission.Task, pending).ConfigureAwait(false);
                     }
                 }
             }
-            finally { _dispatch.Release(); }
+            finally
+            {
+                _dispatch.Release();
+            }
 
             if (discardReply)
             {
