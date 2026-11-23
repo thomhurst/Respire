@@ -714,6 +714,26 @@ public class TimeSeriesClientTests
     }
 
     [Test]
+    [Arguments("02000")]
+    [Arguments("2000\0")]
+    public async Task Timestamps_RejectNoncanonicalNumbersBeforeSending(string value)
+    {
+        await using var server = new FakeRespServer(Frame("*1\r\n:1000\r\n"), Frame("*1\r\n:2000\r\n"), Frame("*0\r\n"));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var timeSeries = new RespireTimeSeriesClient(client);
+        var timestamp = new RespireTimeSeriesTimestamp(value);
+
+        await Assert.That(async () => await timeSeries.MultiAddAsync(
+                [new("series", 1000, 1.0), new("series", timestamp, 2.0)], maxBatchSize: 1))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+
+        await Assert.That(async () => await timeSeries.RangeAsync("series", new(timestamp, 3000)))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task Timestamps_AreValidatedForWritesAndRangesBeforeSending()
     {
         await using var server = new FakeRespServer(Ok);

@@ -129,7 +129,12 @@ public sealed record RespireTimeSeriesKeyRangeOptions
         get; init;
     }
 
-    /// <summary>Bucket alignment. Requires aggregation.</summary>
+    /// <summary>
+    /// Bucket alignment. <see cref="RespireTimeSeriesTimestamp.Minimum"/> aligns to the range start and requires
+    /// an explicit millisecond start bound. <see cref="RespireTimeSeriesTimestamp.Maximum"/> aligns to the range
+    /// end and requires an explicit millisecond end bound. A millisecond timestamp aligns to that timestamp.
+    /// Requires aggregation.
+    /// </summary>
     public RespireTimeSeriesTimestamp? Align
     {
         get; init;
