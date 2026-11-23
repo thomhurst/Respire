@@ -46,11 +46,6 @@ internal sealed class BatchHyperLogLogCommands(IPendingSink sink) : IRespireBatc
 
     public RespirePending<bool> Merge(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
     {
-        if (sourceKeys.IsEmpty)
-        {
-            throw new ArgumentException("At least one source key is required.", nameof(sourceKeys));
-        }
-
         return sink.Add<Cmd1N, bool>(
             "PFMERGE",
             new Cmd1N(

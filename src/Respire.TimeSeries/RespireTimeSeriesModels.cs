@@ -262,7 +262,7 @@ public sealed record RespireTimeSeriesOptions
 
         foreach (var label in labels)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(label.Key, nameof(Labels));
+            ArgumentException.ThrowIfNullOrEmpty(label.Key, nameof(Labels));
             ArgumentNullException.ThrowIfNull(label.Value, nameof(Labels));
             args.Add(label.Key);
             args.Add(label.Value);
@@ -748,7 +748,7 @@ public sealed record RespireTimeSeriesRangeOptions
 
             if (GroupBy is { } group)
             {
-                ArgumentException.ThrowIfNullOrWhiteSpace(group.Label, nameof(GroupBy));
+                ArgumentException.ThrowIfNullOrEmpty(group.Label, nameof(GroupBy));
                 ArgumentException.ThrowIfNullOrWhiteSpace(group.Reducer, nameof(GroupBy));
                 args.Add("GROUPBY");
                 args.Add(group.Label);
@@ -782,7 +782,7 @@ public sealed record RespireTimeSeriesRangeOptions
 
         foreach (var label in selectedLabels)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(label, nameof(selectedLabels));
+            ArgumentException.ThrowIfNullOrEmpty(label, nameof(selectedLabels));
             args.Add(label);
         }
     }

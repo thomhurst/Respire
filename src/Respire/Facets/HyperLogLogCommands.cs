@@ -88,11 +88,6 @@ internal sealed class HyperLogLogCommands(RespireClient client) : IRespireHyperL
     public ValueTask<bool> MergeAsync(
         RespireKey destination, ReadOnlySpan<RespireKey> sourceKeys, CancellationToken cancellationToken)
     {
-        if (sourceKeys.IsEmpty)
-        {
-            throw new ArgumentException("At least one source key is required.", nameof(sourceKeys));
-        }
-
         return client.OkResultAsync(
             "PFMERGE",
             new Cmd1N(RespireCommands.HyperLogLog.PFMERGE.Verb, client.Key(in destination), client.MapKeys(sourceKeys)),

@@ -107,6 +107,49 @@ public class TimeSeriesReadIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task WhitespaceLabelNameRoundTripsThroughTypedCommands(int protocol)
+    {
+        const string Label = " ";
+        const string Value = "indoor";
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        var key = $"whitespace-label-{Guid.NewGuid():N}";
+        string[] filters = [$"run={key}"];
+        await client.TimeSeries.CreateAsync(key, new()
+        {
+            Labels = new Dictionary<string, string> { ["run"] = key, [Label] = Value },
+        });
+        await client.TimeSeries.AddAsync(key, 100, 12);
+
+        var all = await client.TimeSeries.MultiReverseRangeAsync(new(0, 200), new()
+        {
+            Filters = filters,
+            WithLabels = true,
+        });
+        var label = all.Single().Labels.Single(pair => pair.Value == Value).Key;
+        await Assert.That(label).IsEqualTo(Label);
+        await Assert.That(await client.TimeSeries.QueryLabelsAsync(filters)).Contains(Label);
+        await Assert.That(await client.TimeSeries.QueryLabelValuesAsync(label, filters)).IsEquivalentTo([Value]);
+
+        var selected = await client.TimeSeries.MultiReverseRangeAsync(new(0, 200), new()
+        {
+            Filters = filters,
+            SelectedLabels = [label],
+        });
+        var labels = selected.Single().Labels;
+        await Assert.That(labels.Count).IsEqualTo(1);
+        await Assert.That(labels[Label]).IsEqualTo(Value);
+
+        var grouped = await client.TimeSeries.MultiRangeAsync(new(0, 200), new()
+        {
+            Filters = filters,
+            GroupBy = (label, "max"),
+        });
+        await Assert.That(grouped.Single().Key).IsEqualTo($"{Label}={Value}");
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task FollowingKeepsOrdinaryTrafficResponsiveAndCancellationReleasesConnection(int protocol)
     {
         var name = $"ts-follow-{Guid.NewGuid():N}";

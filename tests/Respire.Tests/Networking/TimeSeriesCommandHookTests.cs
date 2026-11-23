@@ -14,7 +14,6 @@ public class TimeSeriesCommandHookTests
     [Test]
     [Arguments("null-label")]
     [Arguments("empty-label")]
-    [Arguments("blank-label")]
     [Arguments("zero-duration")]
     [Arguments("negative-duration")]
     [Arguments("fractional-duration")]
@@ -50,12 +49,8 @@ public class TimeSeriesCommandHookTests
             {
                 if (input.EndsWith("label", StringComparison.Ordinal))
                 {
-                    await series.QueryLabelValuesAsync(input switch
-                    {
-                        "null-label" => null!,
-                        "empty-label" => "",
-                        _ => " ",
-                    }, cancellationToken: caller.Token);
+                    await series.QueryLabelValuesAsync(input == "null-label" ? null! : "",
+                        cancellationToken: caller.Token);
                 }
                 else
                 {
@@ -99,7 +94,9 @@ public class TimeSeriesCommandHookTests
     }
 
     [Test]
-    public async Task ValidOverloadsHaveOneOwnerAndPreserveArguments()
+    [Arguments("region")]
+    [Arguments(" ")]
+    public async Task ValidOverloadsHaveOneOwnerAndPreserveArguments(string label)
     {
         await using var server = new FakeRespServer("*1\r\n+west\r\n"u8.ToArray(), FakeRespServer.OkReply);
         var hook = new RecordingHook();
@@ -107,7 +104,7 @@ public class TimeSeriesCommandHookTests
         var series = new RespireTimeSeriesClient(client);
         var admissions = 0;
         hook.Before = _ => admissions++;
-        var labels = await series.QueryLabelValuesAsync("region");
+        var labels = await series.QueryLabelValuesAsync(label);
         await series.CreateRuleAsync("source", "destination", RespireTimeSeriesAggregation.Avg, TimeSpan.FromSeconds(1));
         await Assert.That(labels.Single()).IsEqualTo("west");
         await Assert.That(admissions).IsEqualTo(2);
@@ -115,7 +112,7 @@ public class TimeSeriesCommandHookTests
         await Assert.That(hook.Completed.All(c => c.Outcome == RespireCommandOutcome.Succeeded)).IsTrue();
         await Assert.That(server.ReceivedCommands.ToArray()).IsEquivalentTo(new[]
         {
-            "TS.QUERYLABELS VALUES region", "TS.CREATERULE source destination AGGREGATION AVG 1000",
+            $"TS.QUERYLABELS VALUES {label}", "TS.CREATERULE source destination AGGREGATION AVG 1000",
         });
     }
 

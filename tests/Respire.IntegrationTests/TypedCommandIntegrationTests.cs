@@ -238,6 +238,38 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    [SkipOnGarnet("Garnet 2.2.12 returns OK without creating a key for destination-only PFMERGE (microsoft/garnet#2422).")]
+    public async Task HyperLogLogMergeWithoutSourcesCreatesEmptySketches(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        var prefix = $"hll:empty:{Guid.NewGuid():N}";
+        var immediateKey = $"{prefix}:immediate";
+        var batchKey = $"{prefix}:batch";
+        var transactionKey = $"{prefix}:transaction";
+
+        (await client.HyperLogLog.MergeAsync(immediateKey)).Should().BeTrue();
+
+        using var batch = client.CreateBatch();
+        var batched = batch.HyperLogLog.Merge(batchKey);
+        await batch.ExecuteAsync();
+        batched.Result.Should().BeTrue();
+
+        await using var transaction = client.CreateTransaction();
+        var transactional = transaction.HyperLogLog.Merge(transactionKey);
+        await transaction.CommitAsync();
+        transactional.Result.Should().BeTrue();
+
+        foreach (var key in new[] { immediateKey, batchKey, transactionKey })
+        {
+            (await client.Keys.ExistsAsync(key)).Should().BeTrue();
+            (await client.HyperLogLog.CountAsync(key)).Should().Be(0);
+        }
+    }
+
+    [Test]
     public async Task CollectionScanCommands_RoundTripAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
