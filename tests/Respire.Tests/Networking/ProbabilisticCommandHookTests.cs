@@ -173,6 +173,26 @@ public class ProbabilisticCommandHookTests
     }
 
     [Test]
+    [Arguments("BF.INSERT", "*2\r\n:1\r\n+unexpected\r\n")]
+    [Arguments("BF.MADD", "*2\r\n:1\r\n+unexpected\r\n")]
+    [Arguments("BF.INSERT", "*2\r\n-ERR item failure\r\n+unexpected\r\n")]
+    [Arguments("BF.MADD", "*2\r\n-ERR item failure\r\n+unexpected\r\n")]
+    public async Task BloomBatchesRejectMalformedItemReplies(string command, string reply)
+    {
+        await using var server = Server(command, reply);
+        var hook = new RecordingHook();
+        await using var client = await Connect(server, hook);
+        RespireProbabilisticClient module = client.Probabilistic;
+
+        Exception error = await Failure(() => command == "BF.INSERT"
+            ? module.BloomInsertAsync("key", ["a", "b"]).AsTask()
+            : module.BloomMultiAddAsync("key", ["a", "b"]).AsTask());
+
+        await Assert.That(error is RespireProtocolException).IsTrue();
+        await Check(hook, command, RespireCommandOutcome.Failed, error);
+    }
+
+    [Test]
     public async Task BloomNestedErrorsFailTheHookAndPreserveLaterReplies()
     {
         await using var server = Server("BF.MADD", "*4\r\n:1\r\n-ERR first failure\r\n:0\r\n-ERR second failure\r\n");
