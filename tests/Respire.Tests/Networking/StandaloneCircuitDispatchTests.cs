@@ -1178,46 +1178,76 @@ public partial class StandaloneCircuitDispatchTests
         }
         // Complete the discarded frame before later replies: the same connection keeps FIFO.
         await server.SendRawAsync(Encoding.UTF8.GetBytes(new string('x', 99) + "\r\n"));
-        server.SuppressReply = null;
         await Send(client, "string", "full-1");
         await Send(client, "string", "full-2");
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
     }
 
     [Test]
-    public async Task StreamFrameCompletionRacesCancellationAndDisposalWithoutCompletingReplacementProbes()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StreamFrameCompletionRacesCancellationAndDisposalWithoutCompletingReplacementProbes(
+        bool finishFrameBeforeCancellation)
     {
         await using var server = Server();
 #pragma warning disable RESP010 // Test-owned client isolates stream completion races and replacement circuit probe generations.
-        await using var client = await RespireClient.ConnectAsync(Options(server));
+        await using var client = await RespireClient.ConnectAsync(
+            Options(server) with { CommandTimeout = TimeSpan.FromSeconds(10) });
 #pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
+        server.SuppressReply = command => command.StartsWith("GET stream-", StringComparison.Ordinal);
 
         for (var i = 0; i < 8; i++)
         {
-            await Trip(client, server);
+            Open(client, server);
             clock.Advance(TimeSpan.FromMinutes(1));
             var key = $"stream-{i}";
             var streamCommand = $"GET {key}";
             var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
             server.GateCommand(streamCommand, Task.CompletedTask, id => received.TrySetResult(id));
-            server.SuppressReply = command => command == streamCommand;
             using var cancellation = new CancellationTokenSource();
             var pending = client.Strings.GetStreamAsync(key, cancellation.Token).AsTask();
             int connectionId = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await server.SendRawAsync("$2\r\nx"u8.ToArray(), connectionId);
             await using var stream = await pending;
-            await Task.WhenAll(server.SendRawAsync("y\r\n"u8.ToArray(), connectionId), Task.Run(async () =>
+            await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(1);
+
+            // Fail the other probe while the stream still owns a permit in this generation.
+            Open(client, server);
+            clock.Advance(TimeSpan.FromMinutes(1));
+            var firstKey = $"race-full-1-{i}";
+            var firstReceived = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseFirstReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            server.GateCommand($"GET {firstKey}", releaseFirstReply.Task, id => firstReceived.TrySetResult(id));
+            var first = client.GetStringAsync(firstKey).AsTask();
+            await Assert.That(await firstReceived.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(connectionId);
+            await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(1);
+
+            var sendTail = server.SendRawAsync("y\r\n"u8.ToArray(), connectionId);
+
+            if (finishFrameBeforeCancellation)
+            {
+                await sendTail;
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await stream!.CopyToAsync(Stream.Null, deadline.Token);
+            }
+
+            await Task.WhenAll(sendTail, Task.Run(async () =>
             {
                 cancellation.Cancel();
                 await stream!.DisposeAsync();
             }));
-            await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
-            server.SuppressReply = null;
-            // If frame completion wins, it has already satisfied one probe. At most
-            // one more concurrent admission is allowed until the circuit closes.
-            await Send(client, "string", "race-full-1");
-            await Send(client, "raw", "race-full-2");
+
+            // FIFO makes the first replacement reply a fence for the old frame's completion.
+            releaseFirstReply.SetResult();
+            await Assert.That(await first).IsEqualTo(firstKey);
+            var snapshot = circuit.Snapshot();
+            await Assert.That(snapshot.State).IsEqualTo(EndpointCircuitState.HalfOpen);
+            await Assert.That(snapshot.ActiveProbes).IsEqualTo(0);
+            await Assert.That(snapshot.SuccessfulProbes).IsEqualTo(1);
+
+            using var reply = await client.ExecuteAsync("GET", "race-full-2");
+            await Assert.That(reply.AsString()).IsEqualTo("race-full-2");
             await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
         }
     }
@@ -1280,10 +1310,17 @@ public partial class StandaloneCircuitDispatchTests
     // need an open circuit use the synthetic Open helper instead of paying that wait.
     private static async Task Trip(RespireClient client, FakeRespServer server)
     {
-        server.SuppressReply = command => command == "GET fail";
-        await Assert.That(await Failure(() => Send(client, "raw", "fail"))).IsTypeOf<RespireTimeoutException>();
-        await server.SendRawAsync("$4\r\nlate\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
-        server.SuppressReply = null;
+        var releaseReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.GateCommand("GET fail", releaseReply.Task);
+
+        try
+        {
+            await Assert.That(await Failure(() => Send(client, "raw", "fail"))).IsTypeOf<RespireTimeoutException>();
+        }
+        finally
+        {
+            releaseReply.SetResult();
+        }
     }
 
     private static async Task Send(IRespireClient client, string shape, string key, CancellationToken cancellationToken = default)

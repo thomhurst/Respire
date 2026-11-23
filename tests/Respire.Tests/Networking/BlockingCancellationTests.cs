@@ -83,6 +83,7 @@ public class BlockingCancellationTests
     [Arguments(RespireProtocol.Resp3)]
     public async Task ExpiredUnblockAcknowledgementDiscardsDrainedConnection(RespireProtocol protocol)
     {
+        var clock = new ClusterRecoveryTestClock();
         await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
         var received = NewSignal();
         var controlReceived = NewSignal();
@@ -125,7 +126,7 @@ public class BlockingCancellationTests
             Protocol = protocol,
             Connections = 1,
             Endpoints = [new("127.0.0.1", server.Port)],
-            DedicatedPool = new() { UnblockOnCancel = true },
+            DedicatedPool = new() { UnblockOnCancel = true, TimeProvider = clock },
         });
 #pragma warning restore RESP010
         using var cancellation = new CancellationTokenSource();
@@ -137,8 +138,10 @@ public class BlockingCancellationTests
             cancellation.Cancel();
             await controlReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await server.SendRawAsync("*-1\r\n"u8.ToArray(), blockedId);
-            // Keep acknowledgement gated until cleanup expires. Draining alone cannot
-            // authorize reuse: a late UNBLOCK could cancel the next renter's command.
+            // Expire cleanup while the acknowledgement is still gated. A late UNBLOCK
+            // could cancel the next renter's command if the connection were reused.
+            await Assert.That(clock.ActiveTimers).IsEqualTo(1);
+            clock.Advance(TimeSpan.FromSeconds(1));
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
                 .Throws<OperationCanceledException>();
             await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
@@ -436,7 +439,9 @@ public class BlockingCancellationTests
     public async Task CancellationRacingWithValueDrainsReplyBeforeReusingLease(bool successfulUnblock)
     {
         const string BlockedPopPrefix = "BLPOP jobs ";
-        await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+        var clock = new ClusterRecoveryTestClock();
+        // Let a replacement finish its handshake so the socket identity assertion diagnoses failed reuse.
+        await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
         var received = NewSignal();
         var releaseBlockedReply = NewSignal();
         var controlReceived = NewSignal();
@@ -456,7 +461,7 @@ public class BlockingCancellationTests
             "BLPOP next-jobs 0.001" => "*-1\r\n"u8.ToArray(),
             _ => null,
         };
-        await using var client = await ConnectAsync(server.Port, enabled: true);
+        await using var client = await ConnectAsync(server.Port, enabled: true, clock);
         using var cancellation = new CancellationTokenSource();
         var pending = client.Lists.LeftPopAsync("jobs", waitFor: null, cancellation.Token).AsTask();
 
@@ -470,7 +475,9 @@ public class BlockingCancellationTests
             await server.SendRawAsync("*2\r\n$4\r\njobs\r\n$5\r\nvalue\r\n"u8.ToArray(), blockedId);
             await Assert.That(pending.IsCompleted).IsFalse(); // Acknowledgement still owns the lease.
             releaseControl.TrySetResult();
-            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10))).Throws<OperationCanceledException>();
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
             // Resume normal reply handling only after the client has drained the injected reply.
             releaseBlockedReply.TrySetResult();
             using var next = await client.ExecuteAsync("BLPOP", ["next-jobs", "0.001"]);
@@ -484,12 +491,12 @@ public class BlockingCancellationTests
         }
     }
 
-    private static ValueTask<RespireClient> ConnectAsync(int port, bool enabled)
+    private static ValueTask<RespireClient> ConnectAsync(int port, bool enabled, TimeProvider? clock = null)
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Protocol = RespireProtocol.Resp2,
             Connections = 1,
             Endpoints = { new("127.0.0.1", port) },
-            DedicatedPool = new() { UnblockOnCancel = enabled },
+            DedicatedPool = new() { UnblockOnCancel = enabled, TimeProvider = clock ?? TimeProvider.System },
         });
 }
