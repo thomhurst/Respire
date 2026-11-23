@@ -1,3 +1,5 @@
+using Respire.Internal;
+using Respire.Networking;
 using StackExchange.Redis;
 using RedisSortedSetEntry = StackExchange.Redis.SortedSetEntry;
 using RedisExpireWhen = StackExchange.Redis.ExpireWhen;
@@ -68,32 +70,44 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
             _ => RespireReadFrom.Primary,
         });
         var nativeFlags = (flags & CommandFlags.NoRedirect) != 0 ? RespireCommandFlags.NoRedirect : RespireCommandFlags.None;
-        return Owner.Run(async cancellationToken =>
+        return Owner.Run(async shutdownToken =>
         {
+            var timeout = client.Core.Options.CommandTimeout;
+            var deadline = timeout is { } budget ? CommandDeadline.After((long)budget.TotalMilliseconds) : default;
+            using var timeoutCancellation = CommandTimeoutCancellation.CreateForDeadline(shutdownToken, deadline, out var cancellationToken);
+            var stage = RespireCommandStage.WaitingForCapacity;
             Task<RespireResult>? pending = null;
             var discardReply = (flags & CommandFlags.FireAndForget) != 0;
-            // Initialize and enqueue in caller order, then release before awaiting replies.
-            // This preserves pipelining while preventing cold connection establishment from reordering commands.
-            await _dispatch.WaitAsync(cancellationToken).ConfigureAwait(false);
 
             try
             {
-                await _client.Core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                // Keep the same budget through queueing, connection establishment, and dispatch.
+                await _dispatch.WaitAsync(cancellationToken).ConfigureAwait(false);
 
-                if (discardReply)
+                try
                 {
-                    var nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
-                    await client.ExecuteFireAndForgetAsync(command, nativeArguments, cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
+                    stage = RespireCommandStage.Connecting;
+                    await client.Core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                     var nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
 
-                    if (command.Name == "EVALSHA" || client.Core.Options.EnableReplicaRedirects && client.Core.Cluster is null)
+                    // A waiter can acquire the gate after its deadline but before its timer fires.
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (deadline.RemainingMilliseconds == 0)
                     {
-                        // Stored procedures do not expose admission. Replica redirects can move
-                        // an admitted command onto a different FIFO, including during retries.
-                        // Hold the gate through the logical reply to preserve caller order.
+                        shutdownToken.ThrowIfCancellationRequested();
+                        throw new RespireTimeoutException(command.Name, timeout!.Value, null, RespireTimeoutDiagnostics.Capture(stage));
+                    }
+
+                    stage = RespireCommandStage.Unknown;
+
+                    if (discardReply)
+                    {
+                        await client.ExecuteFireAndForgetAsync(command, nativeArguments, cancellationToken).ConfigureAwait(false);
+                    }
+                    else if (command.Name == "EVALSHA" || (client.Core.Options.EnableReplicaRedirects && client.Core.Cluster is null))
+                    {
+                        // Stored procedures do not expose admission. Replica redirects can move an admitted command to another FIFO.
                         pending = client.ExecuteLeaseAsync(command, nativeArguments, nativeFlags, cancellationToken).AsTask();
                         await pending.ConfigureAwait(false);
                     }
@@ -101,35 +115,52 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
                     {
                         var admission = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                         pending = client.ExecuteWithAdmissionAsync(command, nativeArguments, nativeFlags, cancellationToken, admission).AsTask();
-                        // Cache hits and pre-admission failures may settle the response without publishing a command.
-                        await Task.WhenAny(admission.Task, pending).ConfigureAwait(false);
+
+                        if (client.Core.CommandRetries is not null || client.Core.Cluster is not null)
+                        {
+                            // A retry or Cluster redirect can move an accepted command to a different FIFO.
+                            await pending.ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            // Keep pipelining on one FIFO. Cache hits and pre-admission failures may settle without admission.
+                            await Task.WhenAny(admission.Task, pending).ConfigureAwait(false);
+                        }
                     }
                 }
-            }
-            finally { _dispatch.Release(); }
+                finally
+                {
+                    _dispatch.Release();
+                }
 
-            if (discardReply)
+                if (discardReply)
+                {
+                    if (typeof(T) == typeof(RedisValue[]))
+                    {
+                        return (T)(object)Array.Empty<RedisValue>();
+                    }
+
+                    if (typeof(T) == typeof(HashEntry[]))
+                    {
+                        return (T)(object)Array.Empty<HashEntry>();
+                    }
+
+                    if (typeof(T) == typeof(RedisSortedSetEntry[]))
+                    {
+                        return (T)(object)Array.Empty<RedisSortedSetEntry>();
+                    }
+
+                    return default(T)!;
+                }
+
+                using var result = await pending!.ConfigureAwait(false);
+                return convert(result.ToStackExchangeResult());
+            }
+            catch (OperationCanceledException error) when (deadline.IsSet
+                && RespireConnection.IsDeadlineCancellation(error, cancellationToken, shutdownToken))
             {
-                if (typeof(T) == typeof(RedisValue[]))
-                {
-                    return (T)(object)Array.Empty<RedisValue>();
-                }
-
-                if (typeof(T) == typeof(HashEntry[]))
-                {
-                    return (T)(object)Array.Empty<HashEntry>();
-                }
-
-                if (typeof(T) == typeof(RedisSortedSetEntry[]))
-                {
-                    return (T)(object)Array.Empty<RedisSortedSetEntry>();
-                }
-
-                return default(T)!;
+                throw new RespireTimeoutException(command.Name, timeout!.Value, error, RespireTimeoutDiagnostics.Capture(stage));
             }
-
-            using var result = await pending!.ConfigureAwait(false);
-            return convert(result.ToStackExchangeResult());
         });
     }
 
