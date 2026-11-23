@@ -6,6 +6,8 @@ using Respire.DependencyInjection;
 using Respire.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
+string cacheKeyPrefix = Uri.EscapeDataString(typeof(Program).Assembly.GetName().Name!);
+
 builder.Services.AddRespire(_ => RespireOptions.Parse(
     builder.Configuration.GetConnectionString("Redis")
     ?? throw new InvalidOperationException("ConnectionStrings:Redis is required.")) with
@@ -27,7 +29,7 @@ app.MapHealthChecks("/health/ready");
 app.MapGet("/", () => "Try GET /values/hello, then repeat it to reuse the cached value.");
 app.MapGet("/values/{key}", async (string key, IRespireClient redis, CancellationToken ct) =>
 {
-    var value = await redis.GetOrSetAsync<string>($"RespireApi:value:{key}",
+    var value = await redis.GetOrSetAsync<string>($"{cacheKeyPrefix}:value:{key}",
         _ => ValueTask.FromResult<string?>(Guid.NewGuid().ToString("N")),
         expiry: TimeSpan.FromMinutes(5), cancellationToken: ct);
     return Results.Ok(new { key, value });

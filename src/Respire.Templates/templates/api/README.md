@@ -22,6 +22,9 @@ Use `ConnectionStrings__Redis` to override the Redis URL, or edit `appsettings.j
 Keep credentials in environment variables or a secret store. To use a different
 HTTP port: `dotnet run --no-launch-profile -- --urls http://localhost:5081`.
 An existing Redis server can replace the local container entirely.
+The cache keys start with the percent-encoded assembly name, which defaults to
+the project name. Instances with the same assembly name share cached values when
+they use the same Redis database.
 
 To export Respire traces and metrics, set `OTEL_EXPORTER_OTLP_ENDPOINT` to your
 collector URL before starting the app. Without it, no exporter is configured.

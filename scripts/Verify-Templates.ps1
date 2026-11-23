@@ -38,9 +38,21 @@ New-Item -ItemType Directory -Path $scratch, $evidence | Out-Null
 # the repository requires rather than whichever one the workstation resolves.
 $sdk = (Get-Content (Join-Path $repositoryRoot 'global.json') -Raw | ConvertFrom-Json).sdk
 @{ sdk = $sdk } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $scratch 'global.json')
+# Aspire can rebuild the API in a child MSBuild process. Give that build the same local feed.
+@"
+<configuration>
+  <packageSources>
+    <add key="respire-template-smoke" value="$([Security.SecurityElement]::Escape($packages))" />
+  </packageSources>
+  <config>
+    <add key="globalPackagesFolder" value="packages" />
+  </config>
+</configuration>
+"@ | Set-Content -LiteralPath (Join-Path $scratch 'NuGet.Config')
 $hive = Join-Path $scratch 'hive'
-$generated = Join-Path $scratch 'Renamed.Api'
-$appName = 'Renamed.Api'
+$apiName = 'Catalog-Api'
+$workerName = 'Shop-Workers'
+$appName = $apiName
 $operatorPassword = [guid]::NewGuid().ToString('N')
 $guard = Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1'
 $container = 'respire-template-' + [guid]::NewGuid().ToString('N')
@@ -85,8 +97,7 @@ function Test-AspireTemplate {
     foreach ($reference in $hostProject.SelectNodes('/Project/ItemGroup/PackageReference[starts-with(@Include, "Aspire.Hosting.")]')) {
         if ($reference.Version -cne $aspireVersion) { throw 'Aspire hosting package versions differ.' }
     }
-    $restore = @("-p:RestoreAdditionalProjectSources=$packages", "-p:RestorePackagesPath=$scratch/packages")
-    Invoke-DotNet (@('build', (Join-Path $aspireApp 'Renamed.Aspire-Store.slnx'), '-c', 'Release', '-warnaserror') + $restore)
+    Invoke-DotNet @('build', (Join-Path $aspireApp 'Renamed.Aspire-Store.slnx'), '-c', 'Release', '-warnaserror')
 
     # A fixture outside the checkout tests the generated AppHost, not the repository sample.
     # Aspire testing assigns ports and disposes only the resources it starts, including Redis.
@@ -96,8 +107,7 @@ function Test-AspireTemplate {
     $smokeProject = Join-Path $smoke 'AspireSmoke.csproj'
     (Get-Content (Join-Path $PSScriptRoot 'template-smoke/AspireSmoke.csproj.template') -Raw).
         Replace('__ASPIRE_VERSION__', $aspireVersion) | Set-Content -LiteralPath $smokeProject
-    Invoke-DotNet (@('build', $smokeProject, '-c', 'Release', '-warnaserror') + $restore)
-    # DCP launches the already-built API; --no-build keeps restores out of the runtime check.
+    Invoke-DotNet @('build', $smokeProject, '-c', 'Release', '-warnaserror')
     Invoke-DotNet @('run', '--project', $smokeProject, '-c', 'Release', '--no-build') *> (Join-Path $evidence 'aspire-smoke.log')
     Write-Output 'PASS: Aspire template install, rename, version stamping, standalone solution build and AppHost smoke.'
 }
@@ -114,6 +124,7 @@ function Stop-App {
 
 function Start-App([string]$Environment = 'Development') {
     $script:run++
+    $generated = Join-Path $scratch $appName
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $listener.Start()
     $port = $listener.LocalEndpoint.Port
@@ -180,8 +191,7 @@ function New-TemplateApp([string]$Template, [string]$Name, [int]$ReferenceCount)
     foreach ($pattern in @('bin/', 'obj/', '.vs/', '*.user', '.env')) {
         if ($pattern -cnotin $ignore) { throw "Generated $Template is missing ignore rule $pattern." }
     }
-    Invoke-DotNet @('build', $project, '-c', 'Release', '-warnaserror',
-        "-p:RestoreAdditionalProjectSources=$packages", "-p:RestorePackagesPath=$scratch/packages")
+    Invoke-DotNet @('build', $project, '-c', 'Release', '-warnaserror')
 }
 
 function Assert-HttpStatus([string]$Uri, [int]$Expected, [hashtable]$Headers = @{}, [string]$Method = 'GET', [string]$Body = '') {
@@ -193,13 +203,28 @@ function Assert-HttpStatus([string]$Uri, [int]$Expected, [hashtable]$Headers = @
     }
 }
 
+function Assert-ProcessedJob([string]$Url, [hashtable]$Headers, [string]$QueueName, [string]$Expected) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $result = Invoke-WebRequest "$Url/jobs/smoke" -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 5
+        $pending = @(docker exec $container redis-cli --raw XPENDING "{respire-job:${QueueName}}:ready" respire-jobs)
+        if ($LASTEXITCODE -ne 0) { throw 'Could not inspect worker acknowledgements.' }
+        if ($result.StatusCode -eq 200 -and ($result.Content | ConvertFrom-Json).result -ceq $Expected -and
+            $pending.Count -gt 0 -and $pending[0] -eq '0') { return }
+        if ([DateTime]::UtcNow -ge $deadline) { throw "$QueueName did not process and acknowledge the job." }
+        Start-Sleep -Milliseconds 100
+    } while ($true)
+}
+
 try {
     Push-Location $scratch
     try {
         # Install the artifact, not a source directory. Private hive leaves user templates untouched.
         Invoke-DotNet @('new', 'install', $package, '--debug:custom-hive', $hive)
-        New-TemplateApp 'respire-api' 'Renamed.Api' 2
-        New-TemplateApp 'respire-worker' 'Renamed.Worker' 4
+        New-TemplateApp 'respire-api' $apiName 2
+        New-TemplateApp 'respire-api' 'Catalog_Api' 2
+        New-TemplateApp 'respire-worker' $workerName 4
+        New-TemplateApp 'respire-worker' 'Shop_Workers' 4
 
         docker run --detach --rm --name $container --memory 128m --cpus 1 --publish 127.0.0.1::6379 redis:7-alpine | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'Could not start template Redis.' }
@@ -218,19 +243,24 @@ try {
         $first = Invoke-RestMethod "$url/values/smoke" -TimeoutSec 10
         $hit = Invoke-RestMethod "$url/values/smoke" -TimeoutSec 10
         if ($first.key -ne 'smoke' -or -not $first.value -or $hit.value -ne $first.value) { throw 'Cache-aside hit failed.' }
-        $ttl = docker exec $container redis-cli ttl Renamed.Api:value:smoke
-        if ($LASTEXITCODE -ne 0 -or [int]$ttl -le 0 -or [int]$ttl -gt 300) { throw 'Cached Redis key has no bounded expiry.' }
         Stop-App
+        $appName = 'Catalog_Api'
+        $url = Start-App
+        $otherApp = Invoke-RestMethod "$url/values/smoke" -TimeoutSec 10
+        if (-not $otherApp.value -or $otherApp.value -eq $first.value) { throw 'Distinct API projects shared a cache entry.' }
+        Stop-App
+        $appName = $apiName
+        $ttl = docker exec $container redis-cli ttl "${apiName}:value:smoke"
+        if ($LASTEXITCODE -ne 0 -or [int]$ttl -le 0 -or [int]$ttl -gt 300) { throw 'Cached Redis key has no bounded expiry.' }
         $url = Start-App
         $persisted = Invoke-RestMethod "$url/values/smoke" -TimeoutSec 10
         if ($persisted.value -ne $first.value) { throw 'Cached value did not survive an app restart.' }
         $other = Invoke-RestMethod "$url/values/other" -TimeoutSec 10
         if (-not $other.value -or $other.value -eq $first.value) { throw 'Distinct cache keys reused the same value.' }
-        Write-Output 'PASS: package install, rename, standalone build, readiness, cache hit, Redis expiry and app restart.'
+        Write-Output 'PASS: package install, rename, standalone build, readiness, cache hit, project isolation, Redis expiry and app restart.'
         Stop-App
 
-        $appName = 'Renamed.Worker'
-        $generated = Join-Path $scratch $appName
+        $appName = $workerName
         $headers = @{ Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("operator:$operatorPassword")) }
         $url = Start-App
         Assert-HttpStatus "$url/workers/" 401
@@ -263,16 +293,7 @@ try {
         if (-not $submitted.enqueued -or $duplicate.enqueued -or $submitted.entryId -ne $duplicate.entryId) {
             throw 'Job enqueue/deduplication failed.'
         }
-        $deadline = [DateTime]::UtcNow.AddSeconds(30)
-        do {
-            $result = Invoke-WebRequest "$url/jobs/smoke" -Headers $headers -SkipHttpErrorCheck -TimeoutSec 5
-            $pending = @(docker exec $container redis-cli --raw XPENDING '{respire-job:Renamed.Worker}:ready' respire-jobs)
-            if ($LASTEXITCODE -ne 0) { throw 'Could not inspect worker acknowledgements.' }
-            if ($result.StatusCode -eq 200 -and ($result.Content | ConvertFrom-Json).result -eq 'HELLO WORKER' -and
-                $pending.Count -gt 0 -and $pending[0] -eq '0') { break }
-            if ([DateTime]::UtcNow -ge $deadline) { throw 'Worker did not process and acknowledge the job.' }
-            Start-Sleep -Milliseconds 100
-        } while ($true)
+        Assert-ProcessedJob $url $headers $workerName 'HELLO WORKER'
         Stop-App
         $url = Start-App
         $persisted = Invoke-RestMethod "$url/jobs/smoke" -Headers $headers -TimeoutSec 10
@@ -288,8 +309,15 @@ try {
         if ($insecure.StatusCode -ne 403 -or $insecure.Headers.ContainsKey('WWW-Authenticate')) {
             throw 'Production HTTP must reject access without prompting for plaintext credentials.'
         }
-        Write-Output 'PASS: worker enqueue, deduplication, processing, acknowledgement, restart, dashboard authentication and antiforgery.'
         Stop-App
+        $appName = 'Shop_Workers'
+        $url = Start-App
+        Assert-HttpStatus "$url/jobs/smoke" 404 $headers
+        $submitted = Invoke-RestMethod "$url/jobs/smoke" -Method Post -Headers $headers -ContentType 'application/json' -Body '{"message":"other worker"}' -TimeoutSec 10
+        if (-not $submitted.enqueued) { throw 'Distinct worker projects shared job deduplication.' }
+        Assert-ProcessedJob $url $headers $appName 'OTHER WORKER'
+        Stop-App
+        Write-Output 'PASS: worker enqueue, deduplication, processing, acknowledgement, restart, project isolation, dashboard authentication and antiforgery.'
         Test-AspireTemplate
     }
     finally { Pop-Location }
