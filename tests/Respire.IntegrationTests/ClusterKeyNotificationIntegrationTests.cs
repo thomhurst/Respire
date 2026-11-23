@@ -20,7 +20,7 @@ public sealed class ClusterKeyNotificationIntegrationTests(ClusterKeyNotificatio
     [Arguments(3)]
     public async Task PatternSubkeyAndExactKeyRoutesCoverRequiredPrimaries(int protocol)
     {
-        var options = cluster.Options(protocol);
+        var options = cluster.Options(protocol) with { CommandTimeout = TimeSpan.FromDays(50) };
         await using var client = await RespireClient.ConnectAsync(options);
         var prefix = $"cluster-notifications:{Guid.NewGuid():N}:";
         var keys = Enumerable.Range(0, 3).Select(node => cluster.KeyForPrimary(node, prefix)).ToArray();
