@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -12,7 +13,10 @@ namespace Respire.Streaming.Tests;
 public class JobQueueTests
 {
     [Test, NotInParallel]
-    public async Task SubMillisecondReadWaitPacesIdleJobReads()
+    [Arguments(false, 0L)]
+    [Arguments(true, 0L)]
+    [Arguments(false, 1000L)]
+    public async Task SubMillisecondPollDelaysPaceJobReads(bool paused, long retryAfter)
     {
         const int WarmupReads = 16;
         const int SampleReads = 128;
@@ -20,12 +24,27 @@ public class JobQueueTests
         await using var server = new RespireFakeServer();
         var elapsed = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
         var emptyRead = RespireFakeResponse.Array(RespireFakeResponse.Bulk("0-0"),
-            RespireFakeResponse.Array(), RespireFakeResponse.Integer(0), RespireFakeResponse.Integer(0));
+            RespireFakeResponse.Array(), RespireFakeResponse.Integer(paused ? 1 : 0),
+            RespireFakeResponse.Integer(retryAfter));
+        RespireJobQueueOptions? queueOptions = null;
+        string readScript = "Read";
+
+        if (paused || retryAfter > 0)
+        {
+            queueOptions = new() { SchedulingPollInterval = TimeSpan.FromTicks(2_000) };
+            readScript = "ReadGrouped";
+            var promote = (RespireScript)typeof(RespireJobQueue<string>).Assembly
+                .GetType("Respire.Streaming.JobQueueScheduling")!
+                .GetField("Promote", BindingFlags.Static | BindingFlags.NonPublic)!
+                .GetValue(null)!;
+            server.RegisterScript(promote, (_, _, _) => RespireFakeResponse.Integer(0));
+        }
+
         int reads = 0;
         long firstSample = 0;
-        server.RegisterScript(JobQueueControlTests.ControlScript("Read"), (_, _, _) =>
+        server.RegisterScript(JobQueueControlTests.ControlScript(readScript), (_, _, _) =>
         {
-            // Warm the first reads before timing an uninterrupted sample of empty replies.
+            // Warm up the worker and scripts before timing an uninterrupted sample.
             switch (++reads)
             {
                 case WarmupReads:
@@ -46,7 +65,7 @@ public class JobQueueTests
             {
                 ReadWait = TimeSpan.FromTicks(5_000),
                 RecoveryPollInterval = TimeSpan.FromMinutes(1),
-            });
+            }, queueOptions);
         await using ServiceProvider provider = services.BuildServiceProvider();
         IHostedService worker = provider.GetRequiredService<IHostedService>();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
