@@ -89,6 +89,7 @@ public sealed class RespireProbabilisticClient
     }
 
     /// <summary>Checks multiple items against a Bloom filter.</summary>
+    /// <exception cref="RespireProtocolException">The server returned an invalid membership reply.</exception>
     public ValueTask<bool[]> BloomMultiExistsAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "BF.MEXISTS", cancellationToken,
@@ -99,8 +100,10 @@ public sealed class RespireProbabilisticClient
     private async ValueTask<bool[]> BloomMultiExistsUnhookedAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
     {
         ValidateItems(items);
-        using var result = await DispatchAsync(BloomMultiExistsCommand, [key, .. items], cancellationToken).ConfigureAwait(false);
-        return ReadBooleans(result);
+        RespireValue[] arguments = [key, .. items];
+        int itemCount = arguments.Length - 1;
+        using var result = await DispatchAsync(BloomMultiExistsCommand, arguments, cancellationToken).ConfigureAwait(false);
+        return ReadMembershipOutcomes(result, itemCount);
     }
 
     /// <summary>Creates a Bloom filter when needed and inserts multiple items.</summary>
@@ -280,6 +283,7 @@ public sealed class RespireProbabilisticClient
     }
 
     /// <summary>Checks whether a Cuckoo filter may contain each item.</summary>
+    /// <exception cref="RespireProtocolException">The server returned an invalid membership reply.</exception>
     public ValueTask<bool[]> CuckooMultiExistsAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "CF.MEXISTS", cancellationToken,
@@ -290,8 +294,10 @@ public sealed class RespireProbabilisticClient
     private async ValueTask<bool[]> CuckooMultiExistsUnhookedAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
     {
         ValidateItems(items);
-        using var result = await DispatchAsync(CuckooMultiExistsCommand, [key, .. items], cancellationToken).ConfigureAwait(false);
-        return ReadBooleans(result);
+        RespireValue[] arguments = [key, .. items];
+        int itemCount = arguments.Length - 1;
+        using var result = await DispatchAsync(CuckooMultiExistsCommand, arguments, cancellationToken).ConfigureAwait(false);
+        return ReadMembershipOutcomes(result, itemCount);
     }
 
     /// <summary>Counts copies of one item in a Cuckoo filter.</summary>
@@ -491,6 +497,7 @@ public sealed class RespireProbabilisticClient
     }
 
     /// <summary>Checks whether each item is currently in the Top-K list.</summary>
+    /// <exception cref="RespireProtocolException">The server returned an invalid membership reply.</exception>
     public ValueTask<bool[]> TopKQueryAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "TOPK.QUERY", cancellationToken,
@@ -501,8 +508,10 @@ public sealed class RespireProbabilisticClient
     private async ValueTask<bool[]> TopKQueryUnhookedAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
     {
         ValidateItems(items);
-        using var result = await DispatchAsync(TopKQueryCommand, [key, .. items], cancellationToken).ConfigureAwait(false);
-        return ReadBooleans(result);
+        RespireValue[] arguments = [key, .. items];
+        int itemCount = arguments.Length - 1;
+        using var result = await DispatchAsync(TopKQueryCommand, arguments, cancellationToken).ConfigureAwait(false);
+        return ReadMembershipOutcomes(result, itemCount);
     }
 
     /// <summary>Returns estimated Top-K counts for each item.</summary>
@@ -923,13 +932,34 @@ public sealed class RespireProbabilisticClient
     private static bool ReadBoolean(RespireResult result)
         => result.Type == RespireDataType.Boolean ? result.AsBoolean() : result.AsInteger() == 1;
 
-    private static bool[] ReadBooleans(RespireResult result)
+    private static bool[] ReadMembershipOutcomes(RespireResult result, int itemCount)
     {
-        var values = new bool[result.Count];
-
-        for (var i = 0; i < values.Length; i++)
+        if (result.Type != RespireDataType.Array || result.Count != itemCount)
         {
-            values[i] = ReadBoolean(result[i]);
+            throw new RespireProtocolException(
+                $"Unexpected membership reply: expected an array of {itemCount} outcomes, got {result.Type} with {result.Count} elements.");
+        }
+
+        var values = new bool[itemCount];
+
+        for (int index = 0; index < values.Length; index++)
+        {
+            RespireResult item = result[index];
+            long outcome = item.Type switch
+            {
+                RespireDataType.Boolean => item.AsBoolean() ? 1 : 0,
+                RespireDataType.Integer => item.AsInteger(),
+                _ => throw new RespireProtocolException(
+                    $"Unexpected membership reply: outcome at index {index} has type {item.Type}."),
+            };
+
+            values[index] = outcome switch
+            {
+                0 => false,
+                1 => true,
+                _ => throw new RespireProtocolException(
+                    $"Unexpected membership reply: outcome at index {index} has integer value {outcome}."),
+            };
         }
 
         return values;
