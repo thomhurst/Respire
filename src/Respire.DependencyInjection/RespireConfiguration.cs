@@ -12,8 +12,8 @@ internal static class RespireConfiguration
     /// <summary>Overlays configuration-representable options without binding service or certificate objects.</summary>
     internal static RespireOptions Apply(IConfigurationSection section, RespireOptions options) => options with
     {
-        Endpoints = Endpoints(section.GetSection("Endpoints"), options.Endpoints),
-        ReplicaEndpoints = Endpoints(section.GetSection("ReplicaEndpoints"), options.ReplicaEndpoints),
+        Endpoints = Endpoints(GetArraySection(section, "Endpoints"), options.Endpoints),
+        ReplicaEndpoints = Endpoints(GetArraySection(section, "ReplicaEndpoints"), options.ReplicaEndpoints),
         NodeAddressMap = section["NodeAddressMap"] is not null
             ? Parse(section.GetSection("NodeAddressMap"), NodeAddressMapping.Parse) : options.NodeAddressMap,
         UseMappedHostForTls = section.GetValue("UseMappedHostForTls", options.UseMappedHostForTls),
@@ -67,7 +67,7 @@ internal static class RespireConfiguration
         ThreadPoolWarningThreshold = section.GetValue("ThreadPoolWarningThreshold", options.ThreadPoolWarningThreshold),
         Connections = section.GetValue("Connections", options.Connections),
         DedicatedPool = DedicatedPool(section.GetSection("DedicatedPool"), options.DedicatedPool),
-        ClientSideCache = ClientSideCache(section.GetSection("ClientSideCache"), options.ClientSideCache),
+        ClientSideCache = ClientSideCache(section, options.ClientSideCache),
         TcpKeepAliveTime = OptionalTimeSpan(section, "TcpKeepAliveTime", options.TcpKeepAliveTime),
         TcpKeepAliveInterval = OptionalTimeSpan(section, "TcpKeepAliveInterval", options.TcpKeepAliveInterval),
         TcpKeepAliveRetryCount = OptionalInt32(section, "TcpKeepAliveRetryCount", options.TcpKeepAliveRetryCount),
@@ -87,6 +87,19 @@ internal static class RespireConfiguration
         }
 
         return section.GetChildren().Select(ParseEndpoint).ToList();
+    }
+
+    private static IConfigurationSection GetArraySection(IConfigurationSection parent, string key)
+    {
+        var section = parent.GetSection(key);
+
+        // The JSON provider stores an empty array as an empty string.
+        if (section.Value is { Length: > 0 })
+        {
+            throw new InvalidOperationException($"Invalid configuration at '{section.Path}': must be an array.");
+        }
+
+        return section;
     }
 
     /// <summary>Accepts a string endpoint or a host/port object, retaining the failing configuration path.</summary>
@@ -192,16 +205,23 @@ internal static class RespireConfiguration
         };
     }
 
-    /// <summary>Overlays cache settings and replaces configured key-prefix arrays.</summary>
-    private static RespireClientSideCacheOptions? ClientSideCache(IConfigurationSection section, RespireClientSideCacheOptions? options)
+    /// <summary>Clears a null cache section or overlays configured cache settings.</summary>
+    private static RespireClientSideCacheOptions? ClientSideCache(IConfigurationSection parent, RespireClientSideCacheOptions? options)
     {
-        if (!section.Exists())
+        var section = GetConfiguredChild(parent, "ClientSideCache");
+
+        if (section is null)
         {
             return options;
         }
 
+        if (!section.Exists())
+        {
+            return null;
+        }
+
         options ??= new();
-        var prefixes = section.GetSection("KeyPrefixes");
+        var prefixes = GetArraySection(section, "KeyPrefixes");
         return options with
         {
             MaxEntries = section.GetValue("MaxEntries", options.MaxEntries),
@@ -267,7 +287,7 @@ internal static class RespireConfiguration
     /// <summary>Preserves absent values and treats an empty or null configured string as null.</summary>
     private static string? OptionalString(IConfigurationSection section, string key, string? fallback)
     {
-        var configured = section.GetChildren().FirstOrDefault(child => string.Equals(child.Key, key, StringComparison.OrdinalIgnoreCase));
+        var configured = GetConfiguredChild(section, key);
 
         if (configured is null)
         {
@@ -275,6 +295,12 @@ internal static class RespireConfiguration
         }
 
         return string.IsNullOrEmpty(configured.Value) ? null : configured.Value;
+    }
+
+    // GetSection returns a placeholder for missing keys. Enumerating children also finds explicit null entries.
+    private static IConfigurationSection? GetConfiguredChild(IConfigurationSection parent, string key)
+    {
+        return parent.GetChildren().FirstOrDefault(child => string.Equals(child.Key, key, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Preserves absent values and treats an empty configured integer as null.</summary>

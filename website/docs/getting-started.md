@@ -177,16 +177,9 @@ The generated README covers configuration and custom HTTP ports.
 
 ### Aspire starter
 
-:::warning Requires unpublished packages
-
-The `Respire.Aspire` packages this starter uses are not on NuGet yet. Until they are,
-try Aspire with the [repository sample](integrations/aspire-sample.md), which builds the
-integration from source.
-
-:::
-
 After installing the same template package, use `respire-aspire` for an AppHost
-and minimal API with an Aspire-managed Redis container:
+and minimal API with an Aspire-managed Redis container. The generated solution
+restores its Respire packages from NuGet at the installed template version.
 
 ```powershell
 dotnet new respire-aspire -n MyRedisApp

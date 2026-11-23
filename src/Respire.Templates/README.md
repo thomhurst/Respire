@@ -20,14 +20,8 @@ readiness check, and optional OpenTelemetry OTLP export. See the generated READM
 for endpoints, configuration, and cleanup. Requires the .NET 11 SDK and Docker
 (or an existing Redis 7+ server).
 
-For an Aspire AppHost and minimal API with Redis, health checks and dashboard telemetry:
-
-> **Package availability:** As of October 26, 2026, `Respire.Aspire` is not yet
-> published on NuGet. The Aspire starter cannot restore from NuGet alone until a
-> release contains both this template and the matching `Respire.Aspire` version.
-> To try the integration now, use the
-> [repository sample](https://respire.tomlonghurst.dev/docs/integrations/aspire-sample),
-> which uses project references.
+For an Aspire AppHost and minimal API with Redis, health checks and dashboard telemetry,
+use the Aspire starter. It restores the matching `Respire.Aspire` package from NuGet.
 
 ```sh
 dotnet new respire-aspire -n MyRedisApp

@@ -16,14 +16,6 @@ Redis, Valkey, or Azure Managed Redis reference. For a runnable AppHost, see the
 dotnet add package Respire.Aspire
 ```
 
-:::note Coming soon
-
-`Respire.Aspire` and its cache companions are not on NuGet yet; they ship with an upcoming
-release. To try the integration now, run the [Aspire sample](aspire-sample.md), which uses
-project references.
-
-:::
-
 ## Register a client
 
 Register clients on any `IHostApplicationBuilder`:
@@ -134,7 +126,15 @@ and `ClientSideCache` sections. It also binds the scalar settings in `TlsOptions
   `{ "Host": "localhost", "Port": 6379 }`.
 - A named array replaces the global one; an absent one inherits it. An empty array (`[]`)
   clears the global endpoints, replica endpoints, or client-cache prefixes.
+- Use JSON arrays for these settings. A nonempty scalar value throws an error naming the
+  configuration path.
 - If you clear all primary endpoints, an options callback must supply them.
+- Set `"ClientSideCache": null` in the named client's `Options` to disable a globally
+  configured [client-side cache](../fundamentals/client-side-caching.md). Omit
+  `ClientSideCache` to inherit it, or specify individual cache settings to override them.
+  The .NET JSON configuration provider represents an empty object (`{}`) the same way
+  as `null`. Both disable the cache when the named section has no cache fields from
+  other configuration providers.
 - Client-side cache key prefixes are strings. `KeyPrefix` takes a text prefix; see
   [default key namespaces](dependency-injection.md#default-key-namespaces-with-aspire).
 - Time spans use the invariant .NET format. An empty string clears a nullable value:
