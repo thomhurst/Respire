@@ -44,7 +44,7 @@ public partial interface IRespireArrayCommands
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
     ValueTask<ulong> InsertAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
 
-    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    /// <inheritdoc cref="RingAsync(RespireKey, long, ReadOnlySpan{RespireValue})"/>
     ValueTask<ulong> RingAsync(RespireKey key, long size, RespireValue value, CancellationToken cancellationToken);
 
     /// <summary>Matching indexes with default OR options. Redis: ARGREP.</summary>
@@ -150,10 +150,14 @@ public partial interface IRespireArrayCommands
     /// <summary>Writes at the insertion cursor; returns the last written index. Redis: ARINSERT.</summary>
     ValueTask<ulong> InsertAsync(RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken);
 
-    /// <summary>Writes with wrapping and preserves the recent contiguous tail on resize; returns the last written index. Redis: ARRING.</summary>
+    /// <summary>Writes with wrapping and returns the last written index. Redis: ARRING.</summary>
+    /// <remarks>
+    /// Resizing normally preserves the recent contiguous tail. After an explicit <c>SeekAsync(key, 0)</c>,
+    /// growing the ring starts writing at index zero without rearranging existing items and can overwrite a retained item.
+    /// </remarks>
     ValueTask<ulong> RingAsync(RespireKey key, long size, params ReadOnlySpan<RespireValue> values);
 
-    /// <summary>Writes with wrapping and preserves the recent contiguous tail on resize; returns the last written index. Redis: ARRING.</summary>
+    /// <inheritdoc cref="RingAsync(RespireKey, long, ReadOnlySpan{RespireValue})"/>
     ValueTask<ulong> RingAsync(RespireKey key, long size, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken);
 
     /// <summary>Next insertion index; zero before insertion or when missing, null when exhausted. Redis: ARNEXT.</summary>

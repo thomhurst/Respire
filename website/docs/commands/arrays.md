@@ -19,7 +19,6 @@ string?[] values = await redis.Arrays.RangeAsync("samples", 0, 3);
 await redis.Arrays.SetManyAsync("samples",
     new RespireArrayItem(10, "ten"),
     new RespireArrayItem(20, "twenty"));
-await redis.Arrays.DeleteRangeAsync("samples", new RespireArrayRange(2, 3));
 ```
 
 - `SetAsync` and `SetManyAsync` return the number of newly populated slots.
@@ -32,8 +31,16 @@ await redis.Arrays.DeleteRangeAsync("samples", new RespireArrayRange(2, 3));
 
 ```csharp
 RespireGetResult<int> slot = await redis.Arrays.TryGetAsync<int>("samples", 2);
-if (slot.Found) Console.WriteLine(slot.Value); // Stored 0 is still found.
-int?[] values = await redis.Arrays.RangeAsync<int?>("samples", 0, 3);
+
+if (slot.Found)
+{
+    Console.WriteLine(slot.Value); // Prints 0.
+}
+
+int?[] typedValues = await redis.Arrays.RangeAsync<int?>("samples", 0, 3);
+// [null, null, 0, 7]
+
+await redis.Arrays.DeleteRangeAsync("samples", new RespireArrayRange(2, 3));
 ```
 
 Ranges include both endpoints; descending endpoints return values in reverse. [ARGETRANGE](https://redis.io/docs/latest/commands/argetrange/) returns nil for each missing position (even if the key is missing) and rejects ranges over one million positions.
@@ -97,7 +104,8 @@ Insertion cursor:
 
 Ring buffers:
 
-- `RingAsync` wraps writes into a positive size and returns the last written slot. Resizing keeps the latest contiguous tail; a hole ends it.
+- `RingAsync` wraps writes into a positive size and returns the last written slot. A resize normally keeps the latest contiguous tail up to the first hole.
+  If you explicitly call `SeekAsync(key, 0)` before growing the ring, Redis skips rearranging the existing items and starts writing at index 0. This can overwrite a retained item.
 - `LastItemsAsync` returns recent positions, holes included, oldest first unless `reverse: true`. Redis 8.10 caps the count at the number of populated slots; zero or negative counts return an empty array.
 
 `InfoAsync(key, full: true)` returns typed ARINFO metadata and optional slice statistics. Missing keys raise a server error. ARINFO reports insertion position zero when the cursor is exhausted; use `NextIndexAsync` to tell that apart.
