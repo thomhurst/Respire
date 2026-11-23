@@ -248,7 +248,9 @@ Other flags, including retry categories, throw `NotSupportedException`.
 `CreateBatch()` supports the listed async hash, list, key, string, set, and sorted-set methods, string
 `ScriptEvaluateAsync`, and `KeyExpireAsync` with `None`/`DemandMaster`.
 
-- Nothing runs before `Execute()`. Empty argument arrays complete immediately as no-ops.
+- Queued commands run when you call `Execute()`. Some empty argument arrays complete immediately as
+  no-ops. `ListLeftPushAsync` and `ListRightPushAsync` with an empty value array queue a list-length
+  read (`LLEN`). Call `Execute()` before awaiting either task to get the list length.
 - Each `Execute()` sends the current queue only. An empty call does not replay earlier work.
 - Commands for the same key stay in order, even when a wrapped client has multiple connections.
 - Batches are not transactional. Cluster slot groups can run independently.
