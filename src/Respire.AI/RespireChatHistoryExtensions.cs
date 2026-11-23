@@ -1,4 +1,7 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.AI;
 
 namespace Respire.AI;
@@ -41,16 +44,92 @@ public static class RespireChatHistoryExtensions
         {
             var request = Materialize(messages, options);
             var history = await store.ReadAsync(conversationId, maximumMessages, cancellationToken).ConfigureAwait(false);
-            var updates = new List<ChatResponseUpdate>();
+            var snapshots = new List<ChatResponseUpdate>();
+            ExceptionDispatchInfo? snapshotError = null;
 
             await foreach (var update in InnerClient.GetStreamingResponseAsync(history.Concat(request), options, cancellationToken).ConfigureAwait(false))
             {
-                updates.Add(update);
+                if (snapshotError is null)
+                {
+                    try
+                    {
+                        snapshots.Add(SnapshotUpdate(update));
+                    }
+                    catch (Exception error) when (error is JsonException or NotSupportedException or InvalidOperationException)
+                    {
+                        // A history serialization error belongs to the completed turn, not to delivery of a chunk.
+                        snapshotError = ExceptionDispatchInfo.Capture(error);
+                    }
+                }
+
                 yield return update;
             }
+
             // Deliberately save only complete turns; early disposal or failure must not persist partial tool exchanges.
-            var response = updates.ToChatResponse();
+            cancellationToken.ThrowIfCancellationRequested();
+            snapshotError?.Throw();
+            var response = snapshots.ToChatResponse();
             await store.AppendAsync(conversationId, request.Concat(response.Messages), cancellationToken).ConfigureAwait(false);
+        }
+
+        private static ChatResponseUpdate SnapshotUpdate(ChatResponseUpdate update)
+        {
+            var snapshot = new ChatResponseUpdate
+            {
+                Role = update.Role,
+                AuthorName = update.AuthorName,
+                MessageId = update.MessageId,
+                CreatedAt = update.CreatedAt,
+            };
+
+            // Updates without a message ID carry response-level properties, which the store doesn't persist.
+            if (update.MessageId is { Length: > 0 } && update.AdditionalProperties is { } properties)
+            {
+                snapshot.AdditionalProperties = SnapshotJson(properties);
+            }
+
+            foreach (var content in update.Contents)
+            {
+                if (content is null or UsageContent)
+                {
+                    continue;
+                }
+
+                snapshot.Contents.Add(SnapshotContent(content));
+            }
+
+            return snapshot;
+        }
+
+        private static AIContent SnapshotContent(AIContent content)
+        {
+            if (content is TextContent { AdditionalProperties: null, Annotations: null } plainText
+                && content.GetType() == typeof(TextContent))
+            {
+                return new TextContent(plainText.Text);
+            }
+
+            // The store's JSON contract copies nested content such as tool arguments and data buffers.
+            var snapshot = SnapshotJson(content);
+
+            // Adjacent chunks can split a UTF-16 surrogate pair. Keep the original text until aggregation.
+            if (content is TextContent text && snapshot is TextContent copiedText)
+            {
+                copiedText.Text = text.Text;
+            }
+            else if (content is TextReasoningContent reasoning && snapshot is TextReasoningContent copiedReasoning)
+            {
+                copiedReasoning.Text = reasoning.Text;
+            }
+
+            return snapshot;
+        }
+
+        private static T SnapshotJson<T>(T value) where T : class
+        {
+            var typeInfo = (JsonTypeInfo<T>)AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(T));
+            var json = JsonSerializer.SerializeToUtf8Bytes(value, typeInfo);
+            return JsonSerializer.Deserialize(json, typeInfo) ?? throw new JsonException("A chat history snapshot is null.");
         }
 
         private static List<ChatMessage> Materialize(IEnumerable<ChatMessage> messages, ChatOptions? options)

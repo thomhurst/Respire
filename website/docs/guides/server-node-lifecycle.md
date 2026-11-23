@@ -56,6 +56,7 @@ All operations below need `RespireOptions.AllowAdmin = true`. Redis ACL checks s
 | `MigrateAsync` | `MIGRATE` with `KEYS` |
 
 - `FAILOVER` needs Redis 6.2. Forced failover needs both a target and a positive timeout. Aborting failover can leave replication inconsistent.
+- Redis and Valkey send no client tracking invalidation for `SWAPDB`. After the swap, call `ClientSideCache.Clear()` on other clients that cache reads from either database before relying on fresh reads. See [client-side caching](../fundamentals/client-side-caching.md#invalidation-flow).
 - Module paths and configuration refer to the server's filesystem and installed modules. `MODULE LOADEX` needs Redis 7.0; each configuration pair gets its own `CONFIG` token.
 - Backup operations need Redis 8.10.
 

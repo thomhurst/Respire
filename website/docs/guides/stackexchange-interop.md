@@ -335,6 +335,7 @@ Conditions work in trimmed applications.
 - Handlers on one channel share a native subscription; duplicate handlers are ignored. Unsubscribing one handler keeps the others.
 - Callback exceptions do not stop delivery.
 - Native reconnect and resubscribe apply; messages sent during a gap are lost. If the reconnect limit is exhausted, subscribing throws; recreate the client and adapter.
+- Each native subscription buffers up to `RespireOptions.SubscriptionBufferSize` messages (1,024 by default). When a callback falls behind, `RespireOptions.SubscriptionOverflow` drops either the oldest buffered message (`DropOldest`, the default) or the newest incoming message (`DropNewest`). Compatibility callbacks receive no overflow notification. See [Pub/Sub buffering](pub-sub.md#reconnection-and-pressure).
 - `Publish[Async]` works on the subscriber and database with `None` or `DemandMaster`, not in batches.
 - Both apply the native pub/sub prefix.
 - `ChannelMessageQueue`, patterns, and other subscriber members are unsupported.
