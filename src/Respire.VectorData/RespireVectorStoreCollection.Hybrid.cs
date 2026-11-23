@@ -53,7 +53,7 @@ public sealed partial class RespireVectorStoreCollection<TRecord>
         var bytes = RespireVectorDataFloat32.Encode(values.Span);
         ValidateVector(vector, bytes);
         var expression = RespireSearchQueryBuilder.Or(keywords.Select(keyword => RespireSearchQueryBuilder.TextField(text.StorageName, keyword)).ToArray());
-        var filter = options?.Filter is { } predicate ? new RespireVectorDataFilter<TRecord>(_filterFields).Translate(predicate) : (RespireSearchExpression?)null;
+        var filter = options?.Filter is { } predicate ? TranslateFilter(predicate) : (RespireSearchExpression?)null;
 
         if (filter is { } prefilter)
         {

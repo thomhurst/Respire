@@ -29,9 +29,12 @@ public sealed record RespireVectorDataFilterField(string PropertyName, string St
 /// <summary>Lossless TAG storage for ordinal filtering, including empty strings, whitespace and Redis syntax.</summary>
 public static class RespireVectorDataFilterEncoding
 {
+    // Redis Search caps each hash TAG at 4096 bytes. Encoding uses a one-byte prefix and two hex digits per byte.
+    private const int MaxHashTagValueBytes = (4096 - 1) / 2;
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
     /// <summary>Encodes a string as a single safe TAG token. Null values must be omitted from the hash.</summary>
+    /// <remarks>Hash collections accept filter values up to 2047 UTF-8 bytes before encoding.</remarks>
     public static string EncodeTag(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
@@ -43,6 +46,16 @@ public static class RespireVectorDataFilterEncoding
     {
         ArgumentNullException.ThrowIfNull(values);
         return string.Join(',', values.Select(EncodeTag));
+    }
+
+    internal static void ValidateHashTagLength(string token, string fieldName, string parameterName)
+    {
+        if (token.Length > 1 + 2 * MaxHashTagValueBytes)
+        {
+            throw new ArgumentException(
+                $"Hash filter field '{fieldName}' supports at most {MaxHashTagValueBytes} UTF-8 bytes per value before TAG encoding.",
+                parameterName);
+        }
     }
 
     /// <summary>Decodes a token written by <see cref="EncodeTag"/>.</summary>

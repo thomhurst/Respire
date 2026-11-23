@@ -10,7 +10,8 @@ public abstract class RespireVectorDataHashMapper<TRecord> : RespireVectorDataMa
     /// <summary>Explicit CLR property mappings for filters. These declare additional indexed hash fields.</summary>
     /// <remarks>Write strings using <see cref="RespireVectorDataFilterEncoding.EncodeTag"/>, string collections
     /// using <see cref="RespireVectorDataFilterEncoding.EncodeTags"/>, booleans as 0/1, and finite numbers
-    /// using invariant culture. Omit null values. Existing collections require recreation to add these fields.</remarks>
+    /// using invariant culture. Each string or collection element can contain up to 2047 UTF-8 bytes before encoding.
+    /// Omit null values. Existing collections require recreation to add these fields.</remarks>
     public virtual IReadOnlyList<RespireVectorDataFilterField> FilterFields => [];
 
     /// <summary>Maps all present fields. Omitted fields are removed when a record is replaced.</summary>

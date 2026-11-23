@@ -9,8 +9,8 @@ public partial interface IRespireBatchKeyCommands
     RespirePending<byte[]?> Dump(RespireKey key);
 
     /// <summary>Restores a Redis-serialized payload; true on OK. Redis: RESTORE.</summary>
-    /// <remarks>Uses the expiry and option rules of IRespireKeyCommands.RestoreAsync. The payload is borrowed:
-    /// do not modify its bytes until batch/transaction execution completes.</remarks>
+    /// <remarks>Uses the expiry and option rules of IRespireKeyCommands.RestoreAsync. A batch borrows the payload
+    /// until execution completes. A transaction copies the payload into its command buffer before this method returns.</remarks>
     RespirePending<bool> Restore(RespireKey key, ReadOnlyMemory<byte> payload,
         RespireExpiry expiry = default, RespireRestoreOptions options = default);
 }

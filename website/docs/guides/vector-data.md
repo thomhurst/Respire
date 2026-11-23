@@ -150,6 +150,7 @@ The sample `MovieMapper` declares ordinal string filters for `Title` and `Tag`, 
 - Write every nonnullable scalar filter property.
 - For null scalars, omit the field. Explicit null hash bytes are unsupported. Encoded empty strings remain present.
 - String collections hold nonnull elements. An omitted or empty collection has no membership matches.
+- Hash filter strings and each collection element can contain up to 2,047 UTF-8 bytes before encoding. Upserts and expression filters reject larger values before sending a command. Existing records with oversized values remain readable by key. To filter those records, rewrite them with shorter indexed values and keep the original text in a separate field if needed.
 
 ### JSON filter encoding
 
