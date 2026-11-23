@@ -81,8 +81,9 @@ pwsh -NoProfile -File ./Smoke.ps1 -BaseUrl $baseUrl
 ```
 
 - `/distributed/{key}` writes a value and reads it back from Redis.
-- `/hybrid/{key}` returns the same value on repeat. Its `/distributed` variant skips L1 and throws
-  on a miss, proving the value is in Redis.
+- `/hybrid/{key}` returns the same value on repeat. Its `/distributed` variant reads only from
+  Redis and retries misses for up to five seconds while HybridCache writes in the background.
+  It returns HTTP 404 if the value stays missing.
 - Use different keys for distributed and HybridCache requests; their stored formats differ.
 - `/output` returns the cached response until its policy expires.
 - `Smoke.ps1` uses fresh keys and fails on any health, connection, or cache mismatch.

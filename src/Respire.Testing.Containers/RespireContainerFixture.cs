@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 
@@ -135,14 +134,17 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(options), "StartupTimeout must be finite and positive.");
         }
 
-        if (!IsSentinelInterval(options.SentinelDownAfter))
+        if (options.Topology == RespireContainerTopology.Sentinel)
         {
-            throw new ArgumentOutOfRangeException(nameof(options), "SentinelDownAfter must be at least one millisecond and fit in 32 bits.");
-        }
+            if (!IsSentinelInterval(options.SentinelDownAfter))
+            {
+                throw new ArgumentOutOfRangeException(nameof(options), "SentinelDownAfter must be at least one millisecond and fit in 32 bits.");
+            }
 
-        if (!IsSentinelInterval(options.SentinelFailoverTimeout))
-        {
-            throw new ArgumentOutOfRangeException(nameof(options), "SentinelFailoverTimeout must be at least one millisecond and fit in 32 bits.");
+            if (!IsSentinelInterval(options.SentinelFailoverTimeout))
+            {
+                throw new ArgumentOutOfRangeException(nameof(options), "SentinelFailoverTimeout must be at least one millisecond and fit in 32 bits.");
+            }
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -338,7 +340,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private async Task InitializeAsync(CancellationToken cancellationToken)
     {
         // Container startup does not await entrypoint shell commands. Keep directory
-        // creation ordered before configuration copies and report mkdir failures directly.
+        // creation ordered before writing the configurations and report mkdir failures directly.
         await ExecuteAsync(["mkdir", "-p", "/tmp/respire-fixture"], cancellationToken).ConfigureAwait(false);
         var dataCount = _options.Topology switch
         {
@@ -444,7 +446,9 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private async Task StartServerAsync(int index, string config, bool sentinel, CancellationToken cancellationToken)
     {
         var path = $"/tmp/respire-fixture/{index}.conf";
-        await _container.CopyAsync(Encoding.UTF8.GetBytes(config), path, ct: cancellationToken).ConfigureAwait(false);
+        // Create the file as the daemon user so Sentinel can rewrite its configuration.
+        await ExecuteAsync(["/bin/sh", "-c", "printf '%s' \"$2\" > \"$1\"", "write-config", path, config], cancellationToken)
+            .ConfigureAwait(false);
         string[] command = sentinel ? [_server, path, "--sentinel"] : [_server, path];
         await ExecuteAsync(command, cancellationToken).ConfigureAwait(false);
         await WaitForAsync(_ports[index], ["PING"], text => text.Trim() == "PONG", cancellationToken).ConfigureAwait(false);

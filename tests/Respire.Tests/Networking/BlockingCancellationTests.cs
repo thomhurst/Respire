@@ -435,13 +435,15 @@ public class BlockingCancellationTests
     [Arguments(true)]
     public async Task CancellationRacingWithValueDrainsReplyBeforeReusingLease(bool successfulUnblock)
     {
+        const string BlockedPopPrefix = "BLPOP jobs ";
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
         var received = NewSignal();
+        var releaseBlockedReply = NewSignal();
         var controlReceived = NewSignal();
         var releaseControl = NewSignal();
         var blockedId = -1;
-        server.SuppressReply = command => command.StartsWith("BLPOP", StringComparison.Ordinal);
-        server.GateCommand("BLPOP", Task.CompletedTask, id =>
+        server.SuppressReply = command => command.StartsWith(BlockedPopPrefix, StringComparison.Ordinal);
+        server.GateCommand(BlockedPopPrefix, releaseBlockedReply.Task, id =>
         {
             blockedId = id;
             received.TrySetResult();
@@ -451,6 +453,7 @@ public class BlockingCancellationTests
         {
             "CLIENT ID" => ":123\r\n"u8.ToArray(),
             "CLIENT UNBLOCK 123 TIMEOUT" => Encoding.ASCII.GetBytes(successfulUnblock ? ":1\r\n" : ":0\r\n"),
+            "BLPOP next-jobs 0.001" => "*-1\r\n"u8.ToArray(),
             _ => null,
         };
         await using var client = await ConnectAsync(server.Port, enabled: true);
@@ -468,14 +471,17 @@ public class BlockingCancellationTests
             await Assert.That(pending.IsCompleted).IsFalse(); // Acknowledgement still owns the lease.
             releaseControl.TrySetResult();
             await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10))).Throws<OperationCanceledException>();
-            server.SuppressReply = null;
-            server.ReplyOverride = (_, command) => command.StartsWith("BLPOP", StringComparison.Ordinal)
-                ? "*-1\r\n"u8.ToArray() : null;
-            using var next = await client.ExecuteAsync("BLPOP", ["jobs", "0.001"]);
+            // Resume normal reply handling only after the client has drained the injected reply.
+            releaseBlockedReply.TrySetResult();
+            using var next = await client.ExecuteAsync("BLPOP", ["next-jobs", "0.001"]);
             await Assert.That(next.IsNull).IsTrue();
             await Assert.That(server.ReceivedConnectionIds[^1]).IsEqualTo(blockedId);
         }
-        finally { releaseControl.TrySetResult(); }
+        finally
+        {
+            releaseBlockedReply.TrySetResult();
+            releaseControl.TrySetResult();
+        }
     }
 
     private static ValueTask<RespireClient> ConnectAsync(int port, bool enabled)
