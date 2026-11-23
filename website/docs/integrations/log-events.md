@@ -193,6 +193,7 @@ See [observability](observability.md#logging) for logger configuration.
 | `Respire.SignalR` | 16 | `DeliveryGap` | Warning |
 | `Respire.SignalR` | 17 | `SubscriptionEnded` | Error |
 | `Respire.SignalR` | 18 | `RemoteResultExpired` | Debug |
+| `Respire.SignalR` | 19 | `UnsubscribeFailed` | Debug |
 | `Respire.Streaming` | 1 | `HandlerFailed` | Warning |
 | `Respire.Streaming` | 2 | `LogPassFailure` | Error |
 | `Respire.Streaming` | 3 | `StartupFailed` | Warning |
