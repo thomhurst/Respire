@@ -310,6 +310,27 @@ public class StreamIdempotentRetryTests
     }
 
     [Test]
+    public async Task LegacyFallbackSupportsLongCommandTimeout()
+    {
+        await using var server = XAddServer(supportsIdempotency: false);
+#pragma warning disable RESP010 // This test owns the client and legacy-server script to verify fallback with a long deadline.
+        await using var client = await RespireClient.ConnectAsync(Options(server, RespireCommandRetryCategory.WriteChecked) with
+        {
+            CommandTimeout = TimeSpan.FromDays(50),
+        });
+#pragma warning restore RESP010
+
+        RespireStreamId id = await client.Streams.AddAsync("s", ("f", "v")).AsTask().WaitAsync(Limit);
+
+        await Assert.That(id).IsEqualTo((RespireStreamId)"1-0");
+        byte[][][] adds = XAdds(server);
+        await Assert.That(adds.Length).IsEqualTo(2);
+        await Assert.That(adds[0][2].AsSpan().SequenceEqual("IDMP"u8)).IsTrue();
+        await Assert.That(adds[1].Select(Encoding.ASCII.GetString))
+            .IsEquivalentTo(new[] { "XADD", "s", "*", "f", "v" }, CollectionOrdering.Matching);
+    }
+
+    [Test]
     public async Task LegacyFallbackSharesTheProbeCommandTimeout()
     {
         await using var server = XAddServer(supportsIdempotency: false);

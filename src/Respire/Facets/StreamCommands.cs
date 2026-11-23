@@ -784,24 +784,23 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
         }
 
         var commandTimeout = client.Core.Options.CommandTimeout!.Value;
-        var remaining = deadline.RemainingMilliseconds;
 
-        if (remaining == 0)
+        if (deadline.RemainingMilliseconds == 0)
         {
             throw new RespireTimeoutException("XADD", commandTimeout);
         }
 
-        using var timeout = CommandTimeoutCancellation.Create(cancellationToken, TimeSpan.FromMilliseconds(remaining));
+        using IDisposable? timeout = CommandTimeoutCancellation.CreateForDeadline(cancellationToken, deadline, out CancellationToken token);
 
         try
         {
-            return await client.StringOrNullUnhookedAsync("XADD", command, timeout.Token, observation).ConfigureAwait(false);
+            return await client.StringOrNullUnhookedAsync("XADD", command, token, observation).ConfigureAwait(false);
         }
-        catch (OperationCanceledException error) when (RespireConnection.IsDeadlineCancellation(error, timeout.Token, cancellationToken))
+        catch (OperationCanceledException error) when (RespireConnection.IsDeadlineCancellation(error, token, cancellationToken))
         {
             throw new RespireTimeoutException("XADD", commandTimeout, error, RespireTimeoutDiagnostics.Capture());
         }
-        catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(error, cancellationToken, timeout.Token))
+        catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(error, cancellationToken, token))
         {
             throw new OperationCanceledException(error.Message, error, cancellationToken);
         }
