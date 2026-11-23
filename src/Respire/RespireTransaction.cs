@@ -707,7 +707,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             ClusterRouter.DiscoveryRound? discovery = null;
             var discoveryPending = false;
             var sentinelTelemetryStarted = false;
-            var retryUnit = CanRetryUnit(core);
+            var retryUnit = CanRetryUnit();
             var unitAttempts = 0;
             var unitResendPending = false;
             var routingAttempt = 0;
@@ -1124,7 +1124,7 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
             }
 
             bool TryGetUnitRetryDelay(Exception error, CommandWriteOutcome outcome, out TimeSpan delay)
-                => core.CommandRetries!.TryGetUnitDelay(error, outcome, _retryCategories, unitAttempts,
+                => _client.CommandRetries!.TryGetUnitDelay(error, outcome, _retryCategories, unitAttempts,
                     deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue,
                     cancellationToken, out delay);
 
@@ -1203,8 +1203,8 @@ public abstract partial class RespireTransactionBase : IAsyncDisposable, IRespir
     // Only a complete unit that can be rebuilt from its retained frame is resent. WATCH state,
     // import fieldsets and server-local cursor pages cannot follow a new connection.
     // Repeating a conditional commit could report an abort after its first attempt succeeded.
-    private bool CanRetryUnit(ClientCore core)
-        => core.CommandRetries is not null && this is RespireTransaction
+    private bool CanRetryUnit()
+        => _client.CommandRetries is not null && this is RespireTransaction
             && ConditionalExec is null
             && _watchConnection is null && !ConnectionPolicy.IsImportSession && !_hasCursorContinuation
             && _ops.Count != 0;

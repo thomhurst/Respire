@@ -1,6 +1,6 @@
 diff --git b/src/Respire/RespireClient.ReadySend.cs a/src/Respire/RespireClient.ReadySend.cs
 new file mode 100644
-index 0000000..d52bda0
+index 000000000..67ef732fb
 --- /dev/null
 +++ a/src/Respire/RespireClient.ReadySend.cs
 @@ -0,0 +1,339 @@
@@ -23,7 +23,7 @@ index 0000000..d52bda0
 +        // With no listeners, IsOperationEnabled reduces to the command metric check, which only
 +        // scripting commands need here; the ready send captures that decision once afterwards.
 +        => (!_core.Options.EnableReplicaRedirects || _core.Options.UseCluster)
-+            && _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
++            && CommandRetries is null && !RespireTelemetry.Source.HasListeners()
 +            && !ShouldSkipTracking(operation, in command)
 +            && (!ScriptingEngineInfo.IsScriptingCommand(operation) || !RespireTelemetry.IsCommandMetricEnabled(operation))
 +            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)
@@ -344,10 +344,10 @@ index 0000000..d52bda0
 +        => await ValueTask.FromException<TResult>(error).ConfigureAwait(false);
 +}
 diff --git b/src/Respire/RespireClient.cs a/src/Respire/RespireClient.cs
-index 849f797..7b16e33 100644
+index 3387a6dc0..ddb9a117d 100644
 --- b/src/Respire/RespireClient.cs
 +++ a/src/Respire/RespireClient.cs
-@@ -7561,61 +7561,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -7704,61 +7704,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                  // Redis response, not user converter work (conversion runs at the caller).
                  var cache = core.ClientCache;
                  var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
@@ -413,7 +413,7 @@ index 849f797..7b16e33 100644
              }
              else if (TryGetDirectReplyCluster(in command, out var cluster))
              {
-@@ -7717,60 +7666,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -7860,60 +7809,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                  // CommandTimeout is enforced by the connection's deadline sweep.
                  var cache = core.ClientCache;
                  var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
@@ -477,7 +477,7 @@ index 849f797..7b16e33 100644
              }
              else if (TryGetDirectReplyCluster(in command, out var cluster))
              {
-@@ -7808,60 +7706,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -7951,60 +7849,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
              {
                  var cache = core.ClientCache;
                  var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
@@ -541,7 +541,7 @@ index 849f797..7b16e33 100644
              }
              else if (TryGetDirectReplyCluster(in command, out var cluster))
              {
-@@ -8064,292 +7911,4 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
+@@ -8207,292 +8054,4 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
  
          return result;
      }
@@ -554,7 +554,7 @@ index 849f797..7b16e33 100644
 -        // With no listeners, IsOperationEnabled reduces to the command metric check, which only
 -        // scripting commands need here; the ready send captures that decision once afterwards.
 -        => (!_core.Options.EnableReplicaRedirects || _core.Options.UseCluster)
--            && _core.CommandRetries is null && !RespireTelemetry.Source.HasListeners()
+-            && CommandRetries is null && !RespireTelemetry.Source.HasListeners()
 -            && !ShouldSkipTracking(operation, in command)
 -            && (!ScriptingEngineInfo.IsScriptingCommand(operation) || !RespireTelemetry.IsCommandMetricEnabled(operation))
 -            && (_readFrom == RespireReadFrom.Primary || command.ReadKind == ReadCommandKind.None)

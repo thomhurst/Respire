@@ -69,22 +69,25 @@ public class TransactionTransientRetryTests
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task LostExecReplyRequiresPermissionAndRebuildsReads(bool afterExecution, bool permitted)
+    [Arguments(false, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, false)]
+    [Arguments(true, true, true)]
+    public async Task LostExecReplyRequiresPermissionAndRebuildsReads(bool afterExecution, bool configuredWriteRetries, bool capWrites)
     {
         await using var server = new RespireFakeServer();
 #pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate configuration and connection state.
         await using var client = await RespireClient.ConnectAsync(Options(server,
-            permitted ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly));
+            configuredWriteRetries ? RespireCommandRetryCategory.WriteAccumulating : RespireCommandRetryCategory.ReadOnly));
 #pragma warning restore RESP010
+        var view = capWrites ? client.WithoutAmbiguousWriteRetries() : client;
+        var permitted = configuredWriteRetries && !capWrites;
         using var fault = server.InjectFault("EXEC", RespireFakeFault.Disconnect(afterExecution));
         var callbacks = 0;
         var inputs = new List<string?>();
         var pendings = new List<RespirePending<long>>();
-        var operation = client.RunTransactionWithReadsAsync(["result"], async (reads, transaction, token) =>
+        var operation = view.RunTransactionWithReadsAsync(["result"], async (reads, transaction, token) =>
         {
             callbacks++;
             inputs.Add(await reads.GetStringAsync("result", token));

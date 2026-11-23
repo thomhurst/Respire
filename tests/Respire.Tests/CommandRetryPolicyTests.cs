@@ -46,16 +46,26 @@ public sealed class CommandRetryPolicyTests
         foreach (var (maximum, expected) in permitted)
         {
             var policy = new CommandRetryPolicy(new() { MaxCommandRetryCategory = maximum });
+            var capped = policy.WithoutAmbiguousWriteRetries();
+            var allowsWrites = expected.Contains(RespireCommandRetryCategory.WriteChecked);
+
+            await Assert.That(ReferenceEquals(policy, capped)).IsEqualTo(!allowsWrites);
 
             foreach (var category in Enum.GetValues<RespireCommandRetryCategory>())
             {
+                var allowedAfterCap = expected.Contains(category)
+                    && permitted[RespireCommandRetryCategory.ReadOnly].Contains(category);
+
                 foreach (var outcome in new[] { CommandWriteOutcome.Unknown, CommandWriteOutcome.EffectMayHaveReachedServer })
                 {
                     await Assert.That(CanRetry(policy, category, outcome)).IsEqualTo(expected.Contains(category));
+                    await Assert.That(CanRetry(capped, category, outcome)).IsEqualTo(allowedAfterCap);
                 }
 
+                var allowsUnwritten = maximum != RespireCommandRetryCategory.Never && category != RespireCommandRetryCategory.Never;
                 await Assert.That(CanRetry(policy, category, CommandWriteOutcome.DefinitelyUnwritten))
-                    .IsEqualTo(maximum != RespireCommandRetryCategory.Never && category != RespireCommandRetryCategory.Never);
+                    .IsEqualTo(allowsUnwritten);
+                await Assert.That(CanRetry(capped, category, CommandWriteOutcome.DefinitelyUnwritten)).IsEqualTo(allowsUnwritten);
             }
         }
     }

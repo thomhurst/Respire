@@ -19,6 +19,13 @@ internal sealed class CommandRetryPolicy
         && _settings.MaxCommandRetryCategory != RespireCommandRetryCategory.Never
         && _settings.RetryableErrors != RespireRetryableErrors.None;
 
+    internal CommandRetryPolicy WithoutAmbiguousWriteRetries()
+    {
+        return PermitsPossibleExecution(RespireCommandRetryCategory.WriteChecked)
+            ? new CommandRetryPolicy(_settings with { MaxCommandRetryCategory = RespireCommandRetryCategory.ReadOnly })
+            : this;
+    }
+
     internal bool TryGetDelay(Exception failure, CommandWriteOutcome outcome, RespireCommandRetryCategory category,
         int completedAttempts, TimeSpan remaining, CancellationToken cancellationToken, out TimeSpan delay)
     {

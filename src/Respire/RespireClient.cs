@@ -54,9 +54,10 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     private RespireClient(
         ClientCore core, KeyPrefix? keyPrefix, bool ownsCore, RespireReadFrom? readFrom = null, bool bypassClientCache = false,
-        bool snapshotPrefixedBinaryKeys = false, KeyPrefix? pubSubPrefix = null)
+        bool snapshotPrefixedBinaryKeys = false, KeyPrefix? pubSubPrefix = null, CommandRetryPolicy? commandRetries = null)
     {
         _core = core;
+        CommandRetries = commandRetries ?? core.CommandRetries;
         _bypassClientCache = bypassClientCache;
         _snapshotPrefixedBinaryKeys = snapshotPrefixedBinaryKeys;
         _keyPrefix = keyPrefix;
@@ -340,7 +341,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         ArgumentException.ThrowIfNullOrEmpty(prefix);
         return new RespireClient(_core, _keyPrefix is null ? new KeyPrefix(prefix) : _keyPrefix.Append(prefix),
             ownsCore: false, readFrom: _readFrom, bypassClientCache: _bypassClientCache,
-            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix, commandRetries: CommandRetries);
     }
 
     /// <inheritdoc/>
@@ -358,7 +359,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
         return new RespireClient(_core, _keyPrefix is null ? new KeyPrefix(prefix.ToBytes()) : _keyPrefix.Append(prefix),
             ownsCore: false, readFrom: _readFrom, bypassClientCache: _bypassClientCache,
-            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix, commandRetries: CommandRetries);
     }
 
     /// <inheritdoc/>
@@ -368,7 +369,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         Utf8RouteName.Validate(prefix);
         return new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
             bypassClientCache: _bypassClientCache, snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys,
-            pubSubPrefix: _pubSubPrefix is null ? new KeyPrefix(prefix) : _pubSubPrefix.Append(prefix));
+            pubSubPrefix: _pubSubPrefix is null ? new KeyPrefix(prefix) : _pubSubPrefix.Append(prefix),
+            commandRetries: CommandRetries);
     }
 
     /// <inheritdoc/>
@@ -386,7 +388,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
         return new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
             bypassClientCache: _bypassClientCache, snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys,
-            pubSubPrefix: _pubSubPrefix is null ? new KeyPrefix(prefix.ToBytes()) : _pubSubPrefix.Append(prefix));
+            pubSubPrefix: _pubSubPrefix is null ? new KeyPrefix(prefix.ToBytes()) : _pubSubPrefix.Append(prefix),
+            commandRetries: CommandRetries);
     }
 
     /// <inheritdoc/>
@@ -423,7 +426,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
         return new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: readFrom,
             bypassClientCache: _bypassClientCache,
-            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix, commandRetries: CommandRetries);
     }
 
     /// <inheritdoc/>
@@ -431,7 +434,21 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         => ReadCache is null
             ? this
             : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom, bypassClientCache: true,
-                snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
+                snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix, commandRetries: CommandRetries);
+
+    // The compatibility view shares connections with the native client and limits only its own retries.
+    internal RespireClient WithoutAmbiguousWriteRetries()
+    {
+        CommandRetryPolicy? policy = CommandRetries?.WithoutAmbiguousWriteRetries();
+
+        if (ReferenceEquals(policy, CommandRetries))
+        {
+            return this;
+        }
+
+        return new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom, bypassClientCache: _bypassClientCache,
+            snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix, commandRetries: policy);
+    }
 
     /// <summary>The cache consulted for reads; null when caching is disabled or bypassed by this view.</summary>
     internal ClientSideCacheCoordinator? ReadCache => _bypassClientCache ? null : _core.ClientCache;
@@ -1951,6 +1968,11 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
     internal ClientCore Core => _core;
 
+    internal CommandRetryPolicy? CommandRetries
+    {
+        get;
+    }
+
     internal KeyPrefix? KeyPrefix => _keyPrefix;
 
     internal KeyPrefix? EncodedKeyPrefix => _keyPrefix;
@@ -1973,7 +1995,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         }
 
         var created = new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: _readFrom,
-            bypassClientCache: _bypassClientCache, snapshotPrefixedBinaryKeys: true, pubSubPrefix: _pubSubPrefix);
+            bypassClientCache: _bypassClientCache, snapshotPrefixedBinaryKeys: true, pubSubPrefix: _pubSubPrefix, commandRetries: CommandRetries);
         return Interlocked.CompareExchange(ref _deferredBatchClient, created, null) ?? created;
     }
 
@@ -3510,7 +3532,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             ? this
             : new RespireClient(_core, _keyPrefix, ownsCore: false, readFrom: RespireReadFrom.Primary,
                 bypassClientCache: _bypassClientCache,
-                snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix);
+                snapshotPrefixedBinaryKeys: _snapshotPrefixedBinaryKeys, pubSubPrefix: _pubSubPrefix, commandRetries: CommandRetries);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
