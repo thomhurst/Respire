@@ -62,7 +62,7 @@ internal sealed partial class RespireConnectionMultiplexer
 
         try
         {
-            await drain.WaitAsync(timeout, _options.MaintenanceDrainTimeProvider, _abortCancellation.Token).ConfigureAwait(false);
+            await WaitForLifetimeDrainAsync(drain, timeout).ConfigureAwait(false);
             return;
         }
         catch (TimeoutException) { }
@@ -79,6 +79,39 @@ internal sealed partial class RespireConnectionMultiplexer
         finally { await connection.DisposeAsync().ConfigureAwait(false); }
 
         await drain.ConfigureAwait(false);
+    }
+
+    private async Task WaitForLifetimeDrainAsync(Task drain, TimeSpan timeout)
+    {
+        var clock = _options.MaintenanceDrainTimeProvider;
+        var cancellationToken = _abortCancellation.Token;
+        var maximumTimerDelay = TimeSpan.FromMilliseconds(CommandTimeoutCancellation.MaximumTimerMilliseconds);
+        var started = clock.GetTimestamp();
+        var remaining = timeout;
+
+        // The timer limit applies to each wait. Keep the budget anchored to the original start.
+        while (remaining > maximumTimerDelay)
+        {
+            try
+            {
+                await drain.WaitAsync(maximumTimerDelay, clock, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            catch (TimeoutException)
+            {
+                // Observe the original result if the drain finished as the timer expired.
+                if (drain.IsCompleted)
+                {
+                    await drain.ConfigureAwait(false);
+                    return;
+                }
+
+                var elapsed = clock.GetElapsedTime(started);
+                remaining = elapsed < timeout ? timeout - elapsed : TimeSpan.Zero;
+            }
+        }
+
+        await drain.WaitAsync(remaining, clock, cancellationToken).ConfigureAwait(false);
     }
 
     private void ScheduleConnectionLifetime(int slot, RespireConnection connection)

@@ -283,24 +283,27 @@ public class ConnectionLifetimeTests
     }
 
     [Test, NotInParallel]
-    [Arguments(false, false)]
-    [Arguments(true, false)]
-    [Arguments(false, true)]
-    [Arguments(true, true)]
-    public async Task RetirementBoundsLifetimeDrainOnlyAfterOwnerStops(bool commandTimeout, bool replyBeforeDeadline)
+    [Arguments(0, false)]
+    [Arguments(1, false)]
+    [Arguments(0, true)]
+    [Arguments(1, true)]
+    [Arguments(50 * 24 * 60, false)]
+    [Arguments(50 * 24 * 60, true)]
+    public async Task RetirementBoundsLifetimeDrainOnlyAfterOwnerStops(int commandTimeoutMinutes, bool replyBeforeDeadline)
     {
         var clock = new LifetimeClock();
         var maintenanceClock = new LifetimeClock();
         var entered = NewSignal();
         var release = NewSignal();
-        var timeout = TimeSpan.FromMinutes(commandTimeout ? 1 : 2);
+        var fallback = TimeSpan.FromMinutes(2);
+        var timeout = commandTimeoutMinutes == 0 ? fallback : TimeSpan.FromMinutes(commandTimeoutMinutes);
         await using var server = EchoServer(2);
         server.GateCommand("PING", release.Task, () => entered.TrySetResult());
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port,
             options: ConnectionOptions(clock) with
             {
-                CommandTimeout = commandTimeout ? timeout : null,
-                RetirementDrainFallbackTimeout = TimeSpan.FromMinutes(2),
+                CommandTimeout = commandTimeoutMinutes == 0 ? null : timeout,
+                RetirementDrainFallbackTimeout = fallback,
                 MaintenanceDrainTimeProvider = maintenanceClock,
             });
         var original = multiplexer.GetConnection();
@@ -328,6 +331,16 @@ public class ConnectionLifetimeTests
             {
                 using var response = await current.SendAsync(new RawCommand(FakeRespServer.PingFrame));
             }).Throws<RespireConnectionRetiredException>();
+            var firstDelay = maintenanceClock.NextTimerDelay;
+
+            if (firstDelay < timeout)
+            {
+                maintenanceClock.Advance(firstDelay);
+                await UntilAsync(() => maintenanceClock.ActiveTimers != 0);
+                await Assert.That(maintenanceClock.NextTimerDelay).IsEqualTo(timeout - firstDelay);
+                timeout -= firstDelay;
+            }
+
             maintenanceClock.Advance(timeout - TimeSpan.FromTicks(1));
             await Assert.That(retirement.IsCompleted).IsFalse();
             await Assert.That(original.IsConnected).IsTrue();
