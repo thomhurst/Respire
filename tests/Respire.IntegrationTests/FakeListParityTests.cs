@@ -94,7 +94,7 @@ public class FakeListParityTests(Redis7ReferenceContainer fixture)
         (await Read(client, "RPOP", "list", long.MaxValue)).Should().Equal("676170");
         (await client.ExistsAsync("list")).Should().BeFalse();
         await client.Lists.RightPushAsync("list", "x", "x", "x");
-        (await Number(client, "LREM", "list", long.MinValue, "x")).Should().Be(3);
+        (await Number(client, "LREM", "list", -long.MaxValue, "x")).Should().Be(3);
         (await client.ExistsAsync("list")).Should().BeFalse();
         await client.Lists.RightPushAsync("list", "x");
 

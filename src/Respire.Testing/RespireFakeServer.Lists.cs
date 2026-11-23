@@ -199,14 +199,20 @@ public sealed partial class RespireFakeServer
     private FakeReply ListRemove(byte[][] args)
     {
         var requested = Integer(args[2]);
+
+        if (requested == long.MinValue)
+        {
+            return FakeReply.Error("ERR value is out of range, value must between -9223372036854775807 and 9223372036854775807");
+        }
+
         var list = Find(args[1])?.List;
 
         if (list is null)
         {
             return FakeReply.Integer(0);
         }
-        // long.MinValue requests more matches than any managed list can contain.
-        var limit = requested is 0 or long.MinValue ? long.MaxValue : Math.Abs(requested);
+
+        var limit = requested == 0 ? long.MaxValue : Math.Abs(requested);
         var skip = requested < 0 ? Math.Max(0, list.Count(value => SameListValue(value, args[3])) - limit) : 0;
         var remaining = limit;
         // Compact once, preserving order. Repeated RemoveAt would be quadratic for many matches.
