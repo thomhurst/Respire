@@ -301,6 +301,33 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task RemoteGroupRejoinRestoresDeliveryAfterUnsubscribeIsRejected()
+    {
+        string prefix = Guid.NewGuid().ToString("N");
+        await using var sender = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, false, false);
+        await using var owner = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, false, false,
+            commandHook: new RejectFirstUnsubscribe());
+        await using var peer = await owner.ConnectAsync("user", false);
+        const string group = "group";
+
+        await sender.Manager.AddToGroupAsync(peer.Id, group);
+        await sender.Manager.SendGroupAsync(group, "message", ["before"]);
+        await peer.ExpectAsync("before");
+
+        await Assert.That(() => owner.Manager.RemoveFromGroupAsync(peer.Id, group))
+            .ThrowsExactly<InvalidOperationException>();
+
+        await sender.Manager.AddToGroupAsync(peer.Id, group);
+        await sender.Manager.SendGroupAsync(group, "message", ["after"]);
+        await peer.ExpectAsync("after");
+
+        await sender.Manager.RemoveFromGroupAsync(peer.Id, group);
+        var client = sender.Application.Services.GetRequiredService<RespireClient>();
+        string channel = prefix + typeof(BackplaneTestHub).FullName + ":group:" + group;
+        await Assert.That(await client.PublishAsync(channel, ReadOnlyMemory<byte>.Empty)).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task GroupNamesRemainCaseSensitiveAndRemovingMissingMembershipDoesNothing()
     {
         var prefix = Guid.NewGuid().ToString("N");
@@ -708,6 +735,26 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         await host.Manager.SendGroupAsync("group", "message", ["after"]);
         await peer.ExpectAsync("after");
     }
+
+    private sealed class RejectFirstUnsubscribe : RespireCommandHook
+    {
+        private int _rejectNext = 1;
+
+        public override object? OnExecuting(RespireCommandContext context)
+        {
+            if (context.Command == "UNSUBSCRIBE" && Interlocked.Exchange(ref _rejectNext, 0) == 1)
+            {
+                throw new InvalidOperationException("Reject the first unsubscribe.");
+            }
+
+            return null;
+        }
+
+        public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome,
+            Exception? error)
+        {
+        }
+    }
 }
 
 public sealed class BackplaneTestHub : Hub
@@ -730,7 +777,8 @@ internal sealed class BackplaneHost(WebApplication application) : IAsyncDisposab
     internal HubLifetimeManager<BackplaneTestHub> Manager => application.Services.GetRequiredService<HubLifetimeManager<BackplaneTestHub>>();
 
     internal static async Task<BackplaneHost> StartAsync(string connectionString, string prefix, bool microsoft,
-        bool sharded, TimeSpan? ackTimeout = null, bool cluster = false, TimeSpan? remoteResultTimeout = null)
+        bool sharded, TimeSpan? ackTimeout = null, bool cluster = false, TimeSpan? remoteResultTimeout = null,
+        RespireCommandHook? commandHook = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
         builder.WebHost.UseTestServer();
@@ -749,7 +797,11 @@ internal sealed class BackplaneHost(WebApplication application) : IAsyncDisposab
         }
         else
         {
-            builder.Services.AddRespire(_ => RespireOptions.Parse(connectionString) with { UseCluster = cluster });
+            builder.Services.AddRespire(_ => RespireOptions.Parse(connectionString) with
+            {
+                UseCluster = cluster,
+                CommandHook = commandHook,
+            });
             signalr.AddRespire(options =>
             {
                 options.ChannelPrefix = prefix;

@@ -386,15 +386,20 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
 
         try
         {
+            // Local membership is removed even if the last Redis unsubscribe fails.
+            feature.Groups.Remove(groupName);
+
             await _groups.RemoveSubscriptionAsync(groupChannel, connection, this, static (state, channelName) =>
             {
                 var lifetimeManager = (RespireHubLifetimeManager<THub>)state;
                 RedisLog.Unsubscribe(lifetimeManager._logger, channelName);
                 return lifetimeManager._bus.UnsubscribeAsync(channelName);
             }).ConfigureAwait(false);
-            feature.Groups.Remove(groupName);
         }
-        finally { feature.GroupLock.Release(); }
+        finally
+        {
+            feature.GroupLock.Release();
+        }
     }
 
     private async Task SendGroupActionAndWaitForAck(string connectionId, string groupName, GroupAction action,

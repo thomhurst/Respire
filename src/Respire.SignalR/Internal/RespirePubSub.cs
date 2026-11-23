@@ -59,7 +59,12 @@ internal sealed class RespirePubSub : IAsyncDisposable
 
             if (_subscriptions.TryGetValue(channel, out var existing))
             {
-                return existing;
+                if (!existing.UnsubscribeRequested)
+                {
+                    return existing;
+                }
+
+                await UnsubscribeCoreAsync(channel, existing).ConfigureAwait(false);
             }
 
             var subscription = await _client.SubscribeAsync(Channel(channel),
@@ -68,23 +73,49 @@ internal sealed class RespirePubSub : IAsyncDisposable
             _subscriptions[channel] = receiver;
             return receiver;
         }
-        finally { _gate.Release(); }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     internal async Task UnsubscribeAsync(string channel)
     {
-        ChannelSubscription? receiver;
         await _gate.WaitAsync(Stopping).ConfigureAwait(false);
+        ChannelSubscription? receiver = null;
 
         try
         {
-            _subscriptions.TryRemove(channel, out receiver);
+            if (_subscriptions.TryGetValue(channel, out receiver))
+            {
+                await UnsubscribeCoreAsync(channel, receiver).ConfigureAwait(false);
+            }
         }
-        finally { _gate.Release(); }
-
-        if (receiver is not null)
+        finally
         {
-            await receiver.DisposeAsync().ConfigureAwait(false);
+            _gate.Release();
+
+            if (receiver is not null)
+            {
+                await receiver.StopConsumerAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task UnsubscribeCoreAsync(string channel, ChannelSubscription receiver)
+    {
+        try
+        {
+            await receiver.UnsubscribeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            // A rejected command hook leaves the native subscription live. Keep the handle so a
+            // later unsubscribe or subscription replacement can retry its teardown.
+            if (receiver.IsUnsubscribed)
+            {
+                _subscriptions.TryRemove(channel, out _);
+            }
         }
     }
 
@@ -156,6 +187,19 @@ internal sealed class RespirePubSub : IAsyncDisposable
             _stopping = CancellationTokenSource.CreateLinkedTokenSource(owner.Stopping);
         }
 
+        internal bool UnsubscribeRequested
+        {
+            get; private set;
+        }
+
+        internal bool IsUnsubscribed => _subscription.IsDisposed;
+
+        internal ValueTask UnsubscribeAsync()
+        {
+            UnsubscribeRequested = true;
+            return _subscription.DisposeAsync();
+        }
+
         internal void OnMessage(Action<ChannelMessage> callback)
             => OnMessage(message =>
             {
@@ -196,7 +240,12 @@ internal sealed class RespirePubSub : IAsyncDisposable
 
                 if (!_stopping.IsCancellationRequested)
                 {
-                    RedisLog.SubscriptionEnded(_owner._logger, _channel, await _subscription.Completion.ConfigureAwait(false));
+                    RespireSubscriptionEndReason reason = await _subscription.Completion.ConfigureAwait(false);
+
+                    if (!_stopping.IsCancellationRequested && reason != RespireSubscriptionEndReason.Disposed)
+                    {
+                        RedisLog.SubscriptionEnded(_owner._logger, _channel, reason);
+                    }
                 }
             }
             catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { }
@@ -205,13 +254,24 @@ internal sealed class RespirePubSub : IAsyncDisposable
 
         public async ValueTask DisposeAsync()
         {
+            try
+            {
+                await UnsubscribeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                await StopConsumerAsync().ConfigureAwait(false);
+            }
+        }
+
+        internal async ValueTask StopConsumerAsync()
+        {
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
             {
                 return;
             }
 
             await _stopping.CancelAsync().ConfigureAwait(false);
-            await _subscription.DisposeAsync().ConfigureAwait(false);
 
             if (_consumer is not null)
             {
