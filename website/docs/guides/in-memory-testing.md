@@ -134,7 +134,7 @@ a server error that names the command. Each error uses one response slot, so lat
 | Scripting | Unregistered application scripts, `EVAL_RO`/`EVALSHA_RO`, `cjson`, and functions; see [testing script-heavy code](#testing-script-heavy-code) |
 | Hashes | Hash-field expiry, `HINCRBYFLOAT`, `HRANDFIELD` |
 | Sets | `SPOP`, `SRANDMEMBER` |
-| Lists | `BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`, `BLMOVE`, `RPOPLPUSH`, `BRPOPLPUSH`. Use the nonblocking typed overloads without `waitFor`. |
+| Lists | `BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`, `BLMOVE`, `RPOPLPUSH`, `BRPOPLPUSH` |
 | Sorted sets | `ZRANDMEMBER`, `BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP`, `ZUNION`, `ZINTER`, `ZDIFF` and their `STORE` forms, `ZRANGESTORE`, `ZRANK`/`ZREVRANK WITHSCORE` |
 | Streams | Trimming, `XCLAIM`, `XREADGROUP` `NOACK` and `CLAIM`, `IDMPAUTO`, range commands, stream metadata, other group-administration commands |
 | Pub/sub | `PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB`, `QUIT`, `RESET` |
@@ -226,10 +226,11 @@ if (onlineSubscribers.Length != 1 || onlineSubscribers[0] != "Grace")
 
 - Lists keep binary elements, duplicates, order, and key TTL. Removing the last element deletes the key.
 - Negative indexes count from the tail. `LRANGE` and `LTRIM` end indexes are inclusive.
-- `LREM` count: positive from the head, negative from the tail, zero for all matches.
+- `LREM` removes matches from the head with a positive count and from the tail with a negative count. A count of zero removes all matches. The fake rejects `long.MinValue` without changing the list, matching current Redis and Valkey releases.
 - `LPOS` supports negative ranks, `COUNT 0` (unlimited), and `MAXLEN`. Without `COUNT`, no match returns null; with it, an array. `RANK` must be nonzero and within `long.MaxValue` (Redis 7.2+).
 - Repeated options use the last value, but each is validated: `RANK 0 RANK 1` fails.
 - Count-pop returns null for a missing key and an empty array for count zero.
+- Omit `waitFor` from `LeftPopAsync` or `RightPopAsync` to use a single-key pop in the fake. Use a real server for `PopManyAsync` and `MoveAsync`, which use unsupported commands even without `waitFor`. If your code can use an array result, `MoveManyAsync` is supported by the fake.
 - `LMOVEM` and `BLMOVEM` support `COUNT`/`EXACTLY` and `OBO`/`BULK`. `BLMOVEM` timeouts use wall-clock time; cancellation or server disposal releases the wait. Inside `MULTI` it runs immediately, as in Redis.
 
 ```csharp

@@ -89,6 +89,32 @@ public class FakeListServerTests
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task RemoveRejectsMinimumCountBeforeLookingUpTheKey(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
+        await client.Lists.RightPushAsync("list", "a", "b", "a");
+        await client.SetAsync("string", "value");
+
+        foreach (var key in new[] { "list", "missing", "string" })
+        {
+            var error = await Assert.That(async () => await client.Lists.RemoveAsync(key, "a", long.MinValue))
+                .Throws<RespireServerException>();
+            await Assert.That(error!.Message)
+                .IsEqualTo("ERR value is out of range, value must between -9223372036854775807 and 9223372036854775807");
+        }
+
+        await Assert.That(await client.Lists.RangeAsync("list", 0, 3))
+            .IsEquivalentTo(new[] { "a", "b", "a" }, CollectionOrdering.Matching);
+        await Assert.That(await client.ExistsAsync("missing")).IsFalse();
+        await Assert.That(await client.GetStringAsync("string")).IsEqualTo("value");
+    }
+
+    [Test]
     public async Task ConcurrentPushesAndPopsOwnEachElementExactlyOnce()
     {
         await using var server = new RespireFakeServer();
