@@ -140,6 +140,23 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task Remove_WithLongCommandTimeout_DeletesEntry()
+    {
+        const string key = "remove-long-timeout";
+        await Cache.SetAsync(key, [1, 2, 3], new DistributedCacheEntryOptions());
+
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(Server.IsolatedConnectionString) with { CommandTimeout = TimeSpan.FromDays(50) },
+            limit.Token);
+        await using var cache = new RespireDistributedCache(client);
+
+        await cache.RemoveAsync(key, limit.Token);
+
+        await Assert.That(await Cache.GetAsync(key)).IsNull();
+    }
+
+    [Test]
     public async Task Set_WithoutExpiration_HasNoTtl()
     {
         await Cache.SetAsync("no-ttl", [42], new DistributedCacheEntryOptions());

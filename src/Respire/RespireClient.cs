@@ -7323,7 +7323,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         RespireTelemetry.ErrorObservation observation)
     {
         var timeout = _core.Options.CommandTimeout ?? RemovalLeaseTtl;
-        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        using CommandTimeoutCancellation.TimeoutScope timeoutSource =
+            CommandTimeoutCancellation.CreateForTimeout(cancellationToken, timeout);
 
         try
         {
