@@ -10,11 +10,19 @@ namespace Respire.Internal;
 /// </summary>
 internal static class ResponseReader
 {
-    public static long Integer(in RespValue value) => value.AsInteger();
+    public static long Integer(in RespValue value)
+    {
+        if (value.Type != RespireDataType.Integer)
+        {
+            throw UnexpectedReplyType(RespireDataType.Integer, value.Type);
+        }
+
+        return value.AsInteger();
+    }
 
     public static long[] IntegerArray(in RespValue value)
     {
-        var elements = value.AsArray();
+        ReadOnlySpan<RespValue> elements = RequireArray(in value);
 
         if (elements.IsEmpty)
         {
@@ -25,7 +33,7 @@ internal static class ResponseReader
 
         for (var i = 0; i < elements.Length; i++)
         {
-            result[i] = elements[i].AsInteger();
+            result[i] = Integer(in elements[i]);
         }
 
         return result;
@@ -103,11 +111,14 @@ internal static class ResponseReader
 
     public static double? DoubleOrNull(in RespValue value) => value.IsNull ? null : Double(in value);
 
-    public static long? IntegerOrNull(in RespValue value) => value.IsNull ? null : value.AsInteger();
+    public static long? IntegerOrNull(in RespValue value)
+    {
+        return value.IsNull ? null : Integer(in value);
+    }
 
     public static long? IntegerMinusOneOrNull(in RespValue value)
     {
-        var result = value.AsInteger();
+        long result = Integer(in value);
         return result == -1 ? null : result;
     }
 
@@ -171,7 +182,7 @@ internal static class ResponseReader
 
     public static long?[] NullableIntegerArray(in RespValue value)
     {
-        var elements = value.AsArray();
+        ReadOnlySpan<RespValue> elements = RequireArray(in value);
 
         if (elements.Length == 0)
         {
@@ -182,7 +193,7 @@ internal static class ResponseReader
 
         for (var i = 0; i < elements.Length; i++)
         {
-            result[i] = elements[i].IsNull ? null : elements[i].AsInteger();
+            result[i] = IntegerOrNull(in elements[i]);
         }
 
         return result;
@@ -209,7 +220,7 @@ internal static class ResponseReader
 
     public static RespireTtlResult[] TtlArray(in RespValue value)
     {
-        var elements = value.AsArray();
+        ReadOnlySpan<RespValue> elements = RequireArray(in value);
 
         if (elements.Length == 0)
         {
@@ -220,7 +231,7 @@ internal static class ResponseReader
 
         for (var i = 0; i < elements.Length; i++)
         {
-            result[i] = RespireTtlResult.FromRedisMilliseconds(elements[i].AsInteger());
+            result[i] = RespireTtlResult.FromRedisMilliseconds(Integer(in elements[i]));
         }
 
         return result;
@@ -228,7 +239,7 @@ internal static class ResponseReader
 
     public static RespireHashFieldExpiryResult[] HashFieldExpiryResultArray(in RespValue value)
     {
-        var elements = value.AsArray();
+        ReadOnlySpan<RespValue> elements = RequireArray(in value);
 
         if (elements.Length == 0)
         {
@@ -239,7 +250,7 @@ internal static class ResponseReader
 
         for (var i = 0; i < elements.Length; i++)
         {
-            result[i] = (RespireHashFieldExpiryResult)elements[i].AsInteger();
+            result[i] = (RespireHashFieldExpiryResult)Integer(in elements[i]);
         }
 
         return result;
@@ -263,5 +274,20 @@ internal static class ResponseReader
         RespireEndpoint? endpoint = null)
     {
         return new(value.GetErrorMessage(), commandName) { Endpoint = endpoint };
+    }
+
+    private static ReadOnlySpan<RespValue> RequireArray(in RespValue value)
+    {
+        if (value.Type != RespireDataType.Array)
+        {
+            throw UnexpectedReplyType(RespireDataType.Array, value.Type);
+        }
+
+        return value.AsArray();
+    }
+
+    private static RespireProtocolException UnexpectedReplyType(RespireDataType expected, RespireDataType actual)
+    {
+        return new RespireProtocolException($"Expected a RESP {expected} reply; received {actual}.");
     }
 }
