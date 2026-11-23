@@ -138,12 +138,9 @@ public sealed class RespireHealthCheck : IHealthCheck
 
             return HealthCheckResult.Healthy("Respire data nodes responded to PING.", data);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw new OperationCanceledException(cancellationToken);
-        }
         catch (Exception error)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             return new(context.Registration.FailureStatus, "Respire health probe failed.", error, data);
         }
     }

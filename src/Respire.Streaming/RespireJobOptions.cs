@@ -120,6 +120,7 @@ public sealed record RespireJobQueueOptions
     } = 64;
 
     /// <summary>Minimum interval between scheduling passes and maximum idle/pause poll interval. Defaults to one second.</summary>
+    /// <remarks>Positive reader delays below one millisecond round up to one millisecond.</remarks>
     public TimeSpan SchedulingPollInterval
     {
         get; init;

@@ -279,7 +279,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
                             poll = TimeSpan.FromMilliseconds(Math.Min(poll.TotalMilliseconds, page.RetryAfter));
                         }
 
-                        await Task.Delay(poll, readers.Token).ConfigureAwait(false);
+                        await DelayJobReaderAsync(poll, readers.Token).ConfigureAwait(false);
                         continue;
                     }
 
@@ -330,9 +330,7 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
 
                         if (wait > TimeSpan.Zero)
                         {
-                            // Task.Delay truncates positive waits below its one-millisecond resolution to zero.
-                            wait = TimeSpan.FromTicks(Math.Max(wait.Ticks, TimeSpan.TicksPerMillisecond));
-                            await Task.Delay(wait, readers.Token).ConfigureAwait(false);
+                            await DelayJobReaderAsync(wait, readers.Token).ConfigureAwait(false);
                         }
                     }
                 }
@@ -414,6 +412,12 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
     }
 
     private readonly record struct Delivery(RespireStreamEntry Entry, long Attempt);
+
+    private static Task DelayJobReaderAsync(TimeSpan delay, CancellationToken token)
+    {
+        // Task.Delay truncates positive waits below its one-millisecond resolution to zero.
+        return Task.Delay(TimeSpan.FromTicks(Math.Max(delay.Ticks, TimeSpan.TicksPerMillisecond)), token);
+    }
 
     private async Task<(RespireStreamId Cursor, Delivery[] Deliveries, bool Paused, long RetryAfter)> ReadPageAsync(
         RespireScript script, RespireValue[] arguments, CancellationToken token, bool controls = false, bool grouped = false)
