@@ -133,6 +133,41 @@ public class RespireHealthProbeContractTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CallerCancellationTakesPrecedenceWhenPingFaults(bool callerCancellation)
+    {
+        var client = DispatchProxy.Create<IRespireClient, ProbeClientProxy>();
+        var proxy = (ProbeClientProxy)client;
+        proxy.Connected = true;
+        using var cancellation = new CancellationTokenSource();
+        var error = new RespireConnectionException("Connection retired during the probe.");
+        proxy.Ping = _ =>
+        {
+            if (callerCancellation)
+            {
+                cancellation.Cancel();
+            }
+
+            return ValueTask.FromException<TimeSpan>(error);
+        };
+        var check = new RespireHealthCheck(client);
+
+        if (callerCancellation)
+        {
+            var cancelled = await Assert.That(async () => await check.CheckHealthAsync(Context(), cancellation.Token))
+                .ThrowsExactly<OperationCanceledException>();
+            await Assert.That(cancelled!.CancellationToken).IsEqualTo(cancellation.Token);
+        }
+        else
+        {
+            var result = await check.CheckHealthAsync(Context(), cancellation.Token);
+            await Assert.That(result.Status).IsEqualTo(HealthStatus.Unhealthy);
+            await Assert.That(result.Exception).IsSameReferenceAs(error);
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
