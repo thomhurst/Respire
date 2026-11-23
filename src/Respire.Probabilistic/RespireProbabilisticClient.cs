@@ -225,8 +225,10 @@ public sealed class RespireProbabilisticClient
 
     private async ValueTask<RespireCuckooInsertResult[]> CuckooInsertUnhookedAsync(RespireKey key, IReadOnlyList<RespireValue> items, RespireCuckooInsertOptions? options = null, CancellationToken cancellationToken = default)
     {
-        using var result = await DispatchAsync(CuckooInsertCommand, [key, .. (options ?? new()).ToArguments(items)], cancellationToken).ConfigureAwait(false);
-        return ReadCuckooInsertResults(result);
+        var arguments = (options ?? new()).ToArguments(items);
+        int itemCount = items.Count;
+        using var result = await DispatchAsync(CuckooInsertCommand, [key, .. arguments], cancellationToken).ConfigureAwait(false);
+        return ReadCuckooInsertResults(result, itemCount);
     }
 
     /// <summary>Creates a Cuckoo filter when needed and inserts only absent items, reporting per item whether it was inserted, already present, or the filter was full.</summary>
@@ -239,8 +241,10 @@ public sealed class RespireProbabilisticClient
 
     private async ValueTask<RespireCuckooInsertResult[]> CuckooInsertIfAbsentUnhookedAsync(RespireKey key, IReadOnlyList<RespireValue> items, RespireCuckooInsertOptions? options = null, CancellationToken cancellationToken = default)
     {
-        using var result = await DispatchAsync(CuckooInsertIfAbsentCommand, [key, .. (options ?? new()).ToArguments(items)], cancellationToken).ConfigureAwait(false);
-        return ReadCuckooInsertResults(result);
+        var arguments = (options ?? new()).ToArguments(items);
+        int itemCount = items.Count;
+        using var result = await DispatchAsync(CuckooInsertIfAbsentCommand, [key, .. arguments], cancellationToken).ConfigureAwait(false);
+        return ReadCuckooInsertResults(result, itemCount);
     }
 
     /// <summary>Deletes one item from a Cuckoo filter.</summary>
@@ -980,15 +984,29 @@ public sealed class RespireProbabilisticClient
         return new RespireBloomBatchException(itemErrors[firstErrorIndex], itemResults, itemErrors, skippedCount);
     }
 
-    private static RespireCuckooInsertResult[] ReadCuckooInsertResults(RespireResult result)
+    private static RespireCuckooInsertResult[] ReadCuckooInsertResults(RespireResult result, int itemCount)
     {
-        var values = new RespireCuckooInsertResult[result.Count];
+        if (result.Type != RespireDataType.Array || result.Count != itemCount)
+        {
+            throw new RespireProtocolException(
+                $"Unexpected Cuckoo insert reply: expected an array of {itemCount} outcomes, got {result.Type} with {result.Count} elements.");
+        }
+
+        var values = new RespireCuckooInsertResult[itemCount];
 
         for (var i = 0; i < values.Length; i++)
         {
             // RESP3 replies with booleans for success/presence and keeps -1 for a full filter.
             var item = result[i];
-            values[i] = (item.Type == RespireDataType.Boolean ? (item.AsBoolean() ? 1 : 0) : item.AsInteger()) switch
+            long outcome = item.Type switch
+            {
+                RespireDataType.Boolean => item.AsBoolean() ? 1 : 0,
+                RespireDataType.Integer => item.AsInteger(),
+                _ => throw new RespireProtocolException(
+                    $"Unexpected Cuckoo insert reply: outcome at index {i} has type {item.Type}."),
+            };
+
+            values[i] = outcome switch
             {
                 1 => RespireCuckooInsertResult.Inserted,
                 0 => RespireCuckooInsertResult.AlreadyExists,
