@@ -127,9 +127,10 @@ See [FT.SEARCH](https://redis.io/docs/latest/commands/ft.search/).
 
 ## Aggregation
 
-`AggregateAsync` uses `FT.AGGREGATE`. `RespireSearchAggregateOptions.Stages` is an ordered pipeline sent exactly as written, so a FILTER can use an earlier APPLY alias and a LIMIT can run before GROUPBY.
+`AggregateAsync` uses `FT.AGGREGATE`. Stages in `RespireSearchAggregateOptions.Stages` run in the order you specify, so a FILTER can use an earlier APPLY alias and a LIMIT can run before GROUPBY.
 
 - `RespireSearchAggregateStage` creates LOAD, FILTER, APPLY, GROUPBY with REDUCE, SORTBY (multiple keys, optional `Max`) and LIMIT stages.
+- A LIMIT stage with a count of zero returns an empty page and ignores the offset.
 - An empty GROUPBY property list groups all rows together.
 - `Rows` gives string values by name. `StructuredRows` keeps nested values from reducers such as `TOLIST`.
 
@@ -140,7 +141,7 @@ Cursor paging:
 
 ## Collecting documents within aggregate groups
 
-`RespireSearchReducer.Collect` exposes Redis 8.10's `COLLECT` reducer. Pass `RespireSearchCollectOptions` with nonempty `Fields` or `AllFields`, optional `Distinct`, `SortBy` and `Limit`, and an optional alias. Names get an `@` prefix automatically.
+`RespireSearchReducer.Collect` exposes Redis 8.10's `COLLECT` reducer. Pass `RespireSearchCollectOptions` with nonempty `Fields` or `AllFields`, optional `Distinct`, `SortBy` and `Limit`, and an optional alias. `Fields` and `SortBy` add an `@` prefix to bare names and preserve existing prefixes. Use `@@rank` to reference a field named `@rank`.
 
 - `AllFields` projects fields already loaded by `LOAD` or earlier stages; it does not load whole documents.
 - Entries are in `StructuredRows[row][alias].Items`: field/value arrays on RESP2, maps on RESP3 (whose `Items` alternate keys and values).

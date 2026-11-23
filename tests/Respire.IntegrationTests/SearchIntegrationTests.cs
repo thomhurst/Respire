@@ -230,6 +230,91 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task CollectDistinguishesFieldsWhoseNamesStartWithAtSign(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var search = client.Search;
+        string index = NewIndex();
+
+        try
+        {
+            await search.CreateIndexAsync(index, new()
+            {
+                Prefixes = [index + ":doc:"],
+                SkipInitialScan = true,
+                Fields =
+                [
+                    new("title", RespireSearchFieldType.Text),
+                    new("rank", RespireSearchFieldType.Numeric),
+                    new("@rank", RespireSearchFieldType.Numeric),
+                ],
+            });
+            await client.Hashes.SetAsync(index + ":doc:1", ("title", "first"), ("rank", "4"), ("@rank", "9"));
+            await client.Hashes.SetAsync(index + ":doc:2", ("title", "second"), ("rank", "8"), ("@rank", "1"));
+
+            var result = await search.AggregateAsync(index, All, new()
+            {
+                Stages =
+                [
+                    RespireSearchAggregateStage.Load("@title", "@rank", "@@rank"),
+                    RespireSearchAggregateStage.GroupBy([],
+                        RespireSearchReducer.Collect(new() { Fields = ["@@rank"] }, "ranks"),
+                        RespireSearchReducer.Collect(new()
+                        {
+                            Fields = ["title"],
+                            SortBy = [new("@@rank", RespireSearchSortDirection.Descending)],
+                            Limit = (0, 1),
+                        }, "top")),
+                ],
+            });
+            var group = result.StructuredRows.Should().ContainSingle().Which;
+            group["ranks"].Items.Select(entry => entry.Items[1].Scalar).Should().BeEquivalentTo(new[] { "9", "1" });
+            group["top"].Items.Should().ContainSingle().Which.Items[1].Scalar.Should().Be("first");
+        }
+        finally
+        {
+            await DropIndexIfPresentAsync(search, index);
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task AggregateLimitWithZeroCountMatchesZeroOffset(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var search = client.Search;
+        string index = NewIndex();
+
+        try
+        {
+            await CreateDocumentsAsync(client, search, index);
+            var control = await search.AggregateAsync(index, All, new()
+            {
+                Stages = [RespireSearchAggregateStage.Limit(0, 0)],
+            });
+            var result = await search.AggregateAsync(index, All, new()
+            {
+                Stages = [RespireSearchAggregateStage.Limit(1, 0)],
+            });
+            result.Rows.Should().BeEmpty();
+            result.Total.Should().Be(control.Total);
+
+            var beyondEnd = await search.AggregateAsync(index, All, new()
+            {
+                Stages = [RespireSearchAggregateStage.Limit(3, 1)],
+            });
+            beyondEnd.Rows.Should().BeEmpty();
+        }
+        finally
+        {
+            await DropIndexIfPresentAsync(search, index);
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task IndexInventoryAndAliasSwapUseRealServerReplies(int protocol)
     {
         await using var client = await ConnectAsync(protocol);

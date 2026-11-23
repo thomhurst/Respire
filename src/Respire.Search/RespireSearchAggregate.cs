@@ -194,7 +194,7 @@ public sealed record RespireSearchAggregateSortBy(IReadOnlyList<RespireSearchAgg
 public sealed record RespireSearchAggregateSort(string Field, RespireSearchSortDirection Direction = RespireSearchSortDirection.Ascending);
 
 /// <summary>Limits rows at this point in the pipeline.</summary>
-/// <param name="Offset">Number of rows to skip.</param>
+/// <param name="Offset">Number of rows to skip when <paramref name="Count"/> is positive.</param>
 /// <param name="Count">Maximum number of rows to keep.</param>
 public sealed record RespireSearchAggregateLimit(int Offset, int Count) : RespireSearchAggregateStage
 {
@@ -211,7 +211,7 @@ public sealed record RespireSearchAggregateLimit(int Offset, int Count) : Respir
         }
 
         args.Add("LIMIT");
-        args.Add(Offset);
+        args.Add(Count == 0 ? 0 : Offset);
         args.Add(Count);
     }
 }
@@ -250,7 +250,7 @@ public sealed record RespireSearchReducer(string Function, IReadOnlyList<string>
 /// <summary>Projects and optionally sorts and limits documents within each aggregate group.</summary>
 public sealed record RespireSearchCollectOptions
 {
-    /// <summary>Fields to collect. Names are normalized to an @ prefix.</summary>
+    /// <summary>Fields to collect. Bare names get an @ prefix. Existing prefixes are preserved.</summary>
     public IReadOnlyList<string> Fields
     {
         get; init;
@@ -268,7 +268,7 @@ public sealed record RespireSearchCollectOptions
         get; init;
     }
 
-    /// <summary>Sort keys within each group.</summary>
+    /// <summary>Sort keys within each group. Field references follow the same prefix rules as <see cref="Fields"/>.</summary>
     public IReadOnlyList<RespireSearchAggregateSort> SortBy
     {
         get; init;
@@ -342,9 +342,13 @@ public sealed record RespireSearchCollectOptions
     private static string Property(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        var field = name.TrimStart('@');
-        ArgumentException.ThrowIfNullOrWhiteSpace(field, nameof(name));
-        return "@" + field;
+
+        if (name.AsSpan().TrimStart('@').IsWhiteSpace())
+        {
+            throw new ArgumentException("A field name must follow the @ prefix.", nameof(name));
+        }
+
+        return name.StartsWith('@') ? name : "@" + name;
     }
 }
 
