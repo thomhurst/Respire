@@ -105,7 +105,8 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
             return null;
         }
 
-        var payload = new RespBulkPayloadPipe(ErrorEndpoint);
+        // The stream keeps the token after the receive loop unregisters its abort callback.
+        var payload = new RespBulkPayloadPipe(ErrorEndpoint, _streamCancellationToken);
         Volatile.Write(ref _payload, payload);
 
         if (Volatile.Read(ref _payloadAbortError) is { } lateAbort)
@@ -321,10 +322,10 @@ internal sealed class RespBulkPayloadPipe : IDisposable
     private bool _flushCancelled;
     private long _lastReaderProgress = Stopwatch.GetTimestamp();
 
-    internal RespBulkPayloadPipe(RespireEndpoint? endpoint = null)
+    internal RespBulkPayloadPipe(RespireEndpoint? endpoint = null, CancellationToken lifetimeCancellation = default)
     {
         _endpoint = endpoint;
-        _readStream = new ProgressTrackingStream(_pipe.Reader.AsStream(leaveOpen: false), this);
+        _readStream = new ProgressTrackingStream(_pipe.Reader.AsStream(leaveOpen: false), this, lifetimeCancellation);
     }
 
     internal Stream ReadStream => _readStream;
@@ -417,7 +418,8 @@ internal sealed class RespBulkPayloadPipe : IDisposable
         _readStream.Dispose();
     }
 
-    private sealed class ProgressTrackingStream(Stream inner, RespBulkPayloadPipe owner) : Stream
+    private sealed class ProgressTrackingStream(
+        Stream inner, RespBulkPayloadPipe owner, CancellationToken lifetimeCancellation) : Stream
     {
         internal void SetErrorAttempts(int attempts) => owner._errorAttempts = attempts;
 
@@ -452,54 +454,51 @@ internal sealed class RespBulkPayloadPipe : IDisposable
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            try
-            {
-                return RecordProgress(inner.Read(buffer, offset, count));
-            }
-            catch (Exception error) { owner.RecordReadError(error); throw; }
+            ArgumentNullException.ThrowIfNull(buffer);
+            return Read(buffer.AsSpan(offset, count));
         }
 
         public override int Read(Span<byte> buffer)
         {
             try
             {
+                lifetimeCancellation.ThrowIfCancellationRequested();
                 return RecordProgress(inner.Read(buffer));
             }
-            catch (Exception error) { owner.RecordReadError(error); throw; }
+            catch (Exception error)
+            {
+                ObserveReadFailure(error);
+                throw;
+            }
         }
 
         public override int ReadByte()
         {
-            try
-            {
-                var value = inner.ReadByte();
-
-                if (value >= 0)
-                {
-                    owner.MarkReaderProgress();
-                }
-
-                return value;
-            }
-            catch (Exception error) { owner.RecordReadError(error); throw; }
+            // stackalloc-audit[c7938ed77f481979]: init: a successful one-byte read writes buffer[0];
+            // read: buffer[0] is read only when Read returns a byte;
+            // failure: EOF returns -1 and exceptions propagate before buffer[0] is read.
+            Span<byte> buffer = stackalloc byte[1];
+            return Read(buffer) == 0 ? -1 : buffer[0];
         }
 
         public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            try
-            {
-                return RecordProgressAsync(inner.ReadAsync(buffer, offset, count, cancellationToken), cancellationToken);
-            }
-            catch (Exception error) { owner.RecordReadError(error, cancellationToken); throw; }
+            ArgumentNullException.ThrowIfNull(buffer);
+            return ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
         }
 
-        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             try
             {
-                return RecordProgressAsync(inner.ReadAsync(buffer, cancellationToken), cancellationToken);
+                lifetimeCancellation.ThrowIfCancellationRequested();
+                return RecordProgress(await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false));
             }
-            catch (Exception error) { owner.RecordReadError(error, cancellationToken); throw; }
+            catch (Exception error)
+            {
+                ObserveReadFailure(error, cancellationToken);
+                throw;
+            }
         }
 
         protected override void Dispose(bool disposing)
@@ -514,6 +513,9 @@ internal sealed class RespBulkPayloadPipe : IDisposable
 
         private int RecordProgress(int read)
         {
+            // A read can resume as the producer finishes the frame or cancels its pipe wait.
+            lifetimeCancellation.ThrowIfCancellationRequested();
+
             if (read > 0)
             {
                 owner.MarkReaderProgress();
@@ -522,22 +524,22 @@ internal sealed class RespBulkPayloadPipe : IDisposable
             return read;
         }
 
-        private async Task<int> RecordProgressAsync(Task<int> read, CancellationToken cancellationToken)
+        private void ObserveReadFailure(Exception error, CancellationToken readCancellation = default)
         {
-            try
+            if (error is OperationCanceledException cancellation && lifetimeCancellation.IsCancellationRequested)
             {
-                return RecordProgress(await read.ConfigureAwait(false));
-            }
-            catch (Exception error) { owner.RecordReadError(error, cancellationToken); throw; }
-        }
+                // CancelPendingRead wakes the reader with a tokenless exception.
+                if (cancellation.CancellationToken != lifetimeCancellation)
+                {
+                    var lifetimeError = new OperationCanceledException(lifetimeCancellation);
+                    owner.RecordReadError(lifetimeError);
+                    throw lifetimeError;
+                }
 
-        private async ValueTask<int> RecordProgressAsync(ValueTask<int> read, CancellationToken cancellationToken)
-        {
-            try
-            {
-                return RecordProgress(await read.ConfigureAwait(false));
+                readCancellation = default;
             }
-            catch (Exception error) { owner.RecordReadError(error, cancellationToken); throw; }
+
+            owner.RecordReadError(error, readCancellation);
         }
     }
 }
