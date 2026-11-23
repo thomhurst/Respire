@@ -48,8 +48,8 @@ internal sealed class KeyPrefix
     private KeyPrefix(string text, string scanOwnerPrefix) : this(text)
         => ScanOwnerPrefix = scanOwnerPrefix;
 
-    /// <summary>Owns a scan suffix, including a scalar split across the string prefix boundary.</summary>
-    internal bool TryStripScanKey(ReadOnlySpan<byte> physical, out RespireKey key)
+    /// <summary>Owns a logical key, including a scalar split across the string prefix boundary.</summary>
+    internal bool TryStripFromKey(ReadOnlySpan<byte> physical, out RespireKey key)
     {
         if (physical.StartsWith(Bytes))
         {

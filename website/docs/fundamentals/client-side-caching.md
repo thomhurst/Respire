@@ -204,7 +204,10 @@ Set `ReuseHashFields = true` to serve `HMGET` fields from cached `HGET` entries.
 - `Hashes.GetManyAsync` and raw `HMGET` look up each field in the same entry as `HGET`. Cached
   fields return locally; all missing fields go in one `HMGET`. An all-hit request sends no command.
 - Results keep the requested order, duplicate fields, and nulls for absent hashes or fields.
-- Typed calls apply `WithKeyPrefix`; raw commands must pass physical keys.
+- On a `WithKeyPrefix("billing:")` view, pass the logical key `invoice` to `Hashes.GetManyAsync` or
+  `ExecuteAsync(RespireCommands.Hash.HMGET, ["invoice", "status"])`. On the unprefixed client, pass
+  the physical key `billing:invoice`. Plain-string `ExecuteAsync("HMGET", ...)` and interpolated
+  commands take the physical key on either client.
 - A Redis invalidation or local write of the hash evicts every cached field of that hash. A
   malformed reply is rejected before any field is cached.
 - With `CoalesceConcurrentMisses` also on, concurrent requests for the same hash with identical
