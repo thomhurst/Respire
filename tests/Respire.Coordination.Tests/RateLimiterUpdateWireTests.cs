@@ -1,5 +1,7 @@
+using System.Net.Sockets;
 using System.Text;
 using System.Threading.RateLimiting;
+using Respire.Internal;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -10,6 +12,257 @@ namespace Respire.Coordination.Tests;
 public class RateLimiterUpdateWireTests
 {
     private static readonly byte[] Accepted = "*3\r\n:1\r\n:0\r\n:1\r\n"u8.ToArray();
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AcquisitionCanceledWhileConnectingDoesNotSendScript(bool composite)
+    {
+        var opening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowConnection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(Accepted);
+        await using var client = CreateGatedClient(server, opening, allowConnection);
+        var factory = client.Coordination.RateLimiters;
+        var limit = RespireRateLimit.TokenBucket(1, 1, TimeSpan.FromMinutes(1));
+        var newLimit = RespireRateLimit.TokenBucket(2, 1, TimeSpan.FromMinutes(1));
+        await using var limiter = composite
+            ? factory.Composite("key", [limit])
+            : factory.TokenBucket("key", 1, 1, TimeSpan.FromMinutes(1));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var caller = new CancellationTokenSource();
+        var acquisition = limiter.AcquireAsync(1, caller.Token).AsTask();
+
+        try
+        {
+            await opening.Task.WaitAsync(deadline.Token);
+            await caller.CancelAsync();
+            var canceled = await Assert.That(async () => await acquisition.WaitAsync(deadline.Token))
+                .Throws<OperationCanceledException>();
+            await Assert.That(canceled!.CancellationToken == caller.Token).IsTrue();
+        }
+        finally
+        {
+            allowConnection.TrySetResult();
+        }
+
+        // Adoption drains the canceled attempt before the next acquisition can submit.
+        var adoption = composite
+            ? factory.UpdateAsync(limiter, [newLimit], RespireRateLimitUpdateMode.Adopt, deadline.Token)
+            : factory.UpdateAsync(limiter, newLimit, RespireRateLimitUpdateMode.Adopt, deadline.Token);
+        await adoption;
+        using var next = await limiter.AcquireAsync(1, deadline.Token);
+        await Assert.That(next.IsAcquired).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task AcquisitionCanceledBeforeNoScriptReplyDoesNotSendEval()
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(Accepted)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var factory = client.Coordination.RateLimiters;
+        var window = TimeSpan.FromMinutes(1);
+        await using var limiter = factory.Gcra("key", 1, window);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var caller = new CancellationTokenSource();
+        var acquisition = limiter.AcquireAsync(1, caller.Token).AsTask();
+
+        await received.Task.WaitAsync(deadline.Token);
+        await caller.CancelAsync();
+        await Assert.That(async () => await acquisition.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
+        await server.SendRawAsync("-NOSCRIPT No matching script. Please use EVAL.\r\n"u8.ToArray());
+        await factory.UpdateAsync(limiter, RespireRateLimit.Gcra(2, window), RespireRateLimitUpdateMode.Adopt, deadline.Token);
+
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task MigrationCanceledWhileConnectingLeavesOldSettingsUsable()
+    {
+        var opening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowConnection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(Accepted)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("EVAL ", StringComparison.Ordinal)
+                ? ":1\r\n"u8.ToArray() : Accepted,
+        };
+        await using var client = CreateGatedClient(server, opening, allowConnection);
+        var factory = client.Coordination.RateLimiters;
+        var window = TimeSpan.FromMinutes(1);
+        await using var limiter = factory.Gcra("key", 1, window);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var caller = new CancellationTokenSource();
+        var update = factory.UpdateAsync(limiter, RespireRateLimit.Gcra(2, window),
+            cancellationToken: caller.Token).AsTask();
+
+        try
+        {
+            await opening.Task.WaitAsync(deadline.Token);
+            await caller.CancelAsync();
+            var canceled = await Assert.That(async () => await update.WaitAsync(deadline.Token))
+                .Throws<OperationCanceledException>();
+            await Assert.That(canceled!.CancellationToken == caller.Token).IsTrue();
+        }
+        finally
+        {
+            allowConnection.TrySetResult();
+        }
+
+        using var oversized = await limiter.AcquireAsync(2, deadline.Token);
+        await Assert.That(oversized.IsAcquired).IsFalse();
+        using var accepted = await limiter.AcquireAsync(1, deadline.Token);
+        await Assert.That(accepted.IsAcquired).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task MigrationCanceledAfterSubmissionAppliesNewSettings()
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(Accepted)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("EVAL ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var factory = client.Coordination.RateLimiters;
+        var window = TimeSpan.FromMinutes(1);
+        await using var limiter = factory.Gcra("key", 1, window);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var caller = new CancellationTokenSource();
+        var update = factory.UpdateAsync(limiter, RespireRateLimit.Gcra(2, window),
+            cancellationToken: caller.Token).AsTask();
+
+        await received.Task.WaitAsync(deadline.Token);
+        await caller.CancelAsync();
+        await Assert.That(update.IsCompleted).IsFalse();
+        await server.SendRawAsync(":1\r\n"u8.ToArray());
+        await update.WaitAsync(deadline.Token);
+
+        using var accepted = await limiter.AcquireAsync(2, deadline.Token);
+        await Assert.That(accepted.IsAcquired).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments("MOVED", false)]
+    [Arguments("MOVED", true)]
+    [Arguments("ASK", false)]
+    [Arguments("ASK", true)]
+    [Arguments("REDIRECT", false)]
+    public async Task MigrationCanceledAfterSubmissionFollowsRedirect(string redirect, bool readySlot)
+    {
+        const string key = "key";
+        var cluster = redirect != "REDIRECT";
+        var redirectSlot = cluster ? $"{ClusterHash.GetSlot(key)} " : string.Empty;
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var target = new FakeRespServer(Accepted)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                "ASKING" => "+OK\r\n"u8.ToArray(),
+                _ when command.StartsWith("EVAL ", StringComparison.Ordinal) => ":1\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var seed = new FakeRespServer(Accepted);
+        byte[] slots = readySlot
+            ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n")
+            : "*0\r\n"u8.ToArray();
+        seed.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => slots,
+            "CLIENT CAPA REDIRECT" => FakeRespServer.OkReply,
+            _ when command.StartsWith("EVAL ", StringComparison.Ordinal) =>
+                Encoding.ASCII.GetBytes($"-{redirect} {redirectSlot}127.0.0.1:{target.Port}\r\n"),
+            _ => null,
+        };
+        seed.GateCommand("EVAL ", release.Task, () => received.TrySetResult());
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = cluster,
+            EnableReplicaRedirects = !cluster,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            Connections = 1,
+        }, deadline.Token);
+        var factory = client.Coordination.RateLimiters;
+        var window = TimeSpan.FromMinutes(1);
+        await using var limiter = factory.Gcra(key, 1, window);
+        using var caller = new CancellationTokenSource();
+        var update = factory.UpdateAsync(limiter, RespireRateLimit.Gcra(2, window),
+            cancellationToken: caller.Token).AsTask();
+
+        try
+        {
+            await received.Task.WaitAsync(deadline.Token);
+            await caller.CancelAsync();
+            await Assert.That(update.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        await update.WaitAsync(deadline.Token);
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("EVAL ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Contains("ASKING")).IsEqualTo(redirect == "ASK");
+        using var accepted = await limiter.AcquireAsync(2, deadline.Token);
+        await Assert.That(accepted.IsAcquired).IsTrue();
+    }
+
+    private static RespireClient CreateGatedClient(FakeRespServer server, TaskCompletionSource opening,
+        TaskCompletionSource allowConnection)
+    {
+        return RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new RespireEndpoint("127.0.0.1", server.Port)],
+            Connections = 1,
+            ConnectionFactory = async (endpoint, token) =>
+            {
+                opening.TrySetResult();
+                await allowConnection.Task.WaitAsync(token);
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
+                try
+                {
+                    await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            },
+        });
+    }
 
     [Test]
     [Arguments(false)]

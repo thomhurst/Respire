@@ -118,6 +118,7 @@ public sealed partial class RespireClient
                 // that allowance across the redirect, once, before checking or renting.
                 deadline = connection.GetReroutedCommandDeadline(deadline);
                 acquisition.Dispose();
+                cancellationToken = command.GetRedirectCancellationToken(cancellationToken);
                 acquisition = new CommandAcquisitionScope(cancellationToken, deadline, _core.Options.CommandTimeout);
 
                 if (!retainTracking)

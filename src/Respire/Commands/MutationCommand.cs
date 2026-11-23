@@ -21,6 +21,9 @@ internal readonly struct MutationCommand<TCommand>(TCommand command,
     public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)
         => command.GetResponseCancellationToken(admissionToken);
 
+    public CancellationToken GetRedirectCancellationToken(CancellationToken callerToken)
+        => command.GetRedirectCancellationToken(callerToken);
+
     public ClientSideCacheCoordinator.MutationFence GetMutationFence() => fence;
 
     public ReadCommandKind ReadKind => command.ReadKind;

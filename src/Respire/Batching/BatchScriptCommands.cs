@@ -69,9 +69,33 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IRespireBatchScri
 
 internal readonly struct BatchScriptCommand(
     Verb verb, RespireValue source, RespireValue[] tail, int keyCount,
-    RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never) : IRespCommand
+    RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never,
+    ScriptSubmission? submission = null) : IRespCommand
 {
     public RespireCommandRetryCategory RetryCategory => retryCategory;
+
+    public void ValidateAdmission()
+    {
+        if (submission is { IsCancellationDetached: false })
+        {
+            submission.CancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
+    public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)
+    {
+        return submission is null ? admissionToken : CancellationToken.None;
+    }
+
+    public CancellationToken GetRedirectCancellationToken(CancellationToken callerToken)
+    {
+        return submission is { IsCancellationDetached: true } ? CancellationToken.None : callerToken;
+    }
+
+    public void OnAccepted()
+    {
+        submission?.MarkAccepted();
+    }
 
     public int GetWriteSizeHint() => CommandWriteSizeHint.Add(
         CommandWriteSizeHint.For(verb, source.GetWriteSizeHint()), tail);

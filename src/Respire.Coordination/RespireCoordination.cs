@@ -146,25 +146,52 @@ public sealed class RespireCoordination
             ? CoordinationCommandHooks.ExecuteAsync(_client, script, [key], args, cancellationToken)
             : _client.Scripts.ExecuteLeaseAsync(script, [key], args, cancellationToken);
 
+    internal ValueTask<RespireResult> ExecuteRateLimitAcquisitionAsync(
+        RespireScript script, RespireKey key, RespireValue[] args, bool composite, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (composite)
+        {
+            var submission = cancellationToken.CanBeCanceled ? new ScriptSubmission(cancellationToken) : null;
+            return ExecuteCompositeRateLimitAsync(script, key, args, submission);
+        }
+
+        if (cancellationToken.CanBeCanceled && _client is RespireClient concrete)
+        {
+            return DispatchResponseSource<RespireResult>.Run(
+                (Client: concrete, Script: script, Key: key, Args: args, Token: cancellationToken),
+                static (state, observation) => state.Client.ExecuteScriptBorrowedAsync(
+                    state.Script, [state.Key], state.Args, state.Token, observation, cancelBeforeSubmissionOnly: true));
+        }
+
+        return ExecuteRateLimitScriptAsync(script, key, args, CancellationToken.None);
+    }
+
     // Send EVAL directly even on a cold server, preserving the batch command's prefix,
     // Cluster routing and mutation metadata without admitting an internal pipeline.
     internal async ValueTask<RespireResult> ExecuteCompositeRateLimitAsync(
-        RespireScript script, RespireKey key, RespireValue[] args, CancellationToken cancellationToken)
+        RespireScript script, RespireKey key, RespireValue[] args, ScriptSubmission? submission)
     {
         if (_client is RespireClient concrete
-            && (concrete.Core.Options.CommandHook is not null || concrete.Core.Options.PipelineHook is not null))
+            && (submission is not null || concrete.Core.Options.CommandHook is not null
+                || concrete.Core.Options.PipelineHook is not null))
         {
             var tail = concrete.BuildScriptTail([key], args);
             return await concrete.ConvertResponseUnhookedAsync(script.EvalOperation,
-                new BatchScriptCommand(script.EvalVerb, script.Source, tail, 1, script.RetryCategory),
-                cancellationToken, concrete,
+                new BatchScriptCommand(script.EvalVerb, script.Source, tail, 1, script.RetryCategory, submission),
+                submission?.CancellationToken ?? CancellationToken.None, concrete,
                 static (RespireClient client, in Respire.Protocol.RespValue value) =>
                     RespireResult.CreateOwned(in value, client.Core.Options.Serializer)).ConfigureAwait(false);
         }
 
         using var batch = _client.CreateBatch();
         var pending = batch.Scripts.Evaluate(script, [key], args);
-        await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+        // The public batch interface has no transport acceptance callback. Its execution
+        // is the handoff boundary for clients that hide the transport behind IRespireClient.
+        submission?.CancellationToken.ThrowIfCancellationRequested();
+        submission?.MarkAccepted();
+        await batch.ExecuteAsync(CancellationToken.None).ConfigureAwait(false);
         return pending.Result;
     }
 

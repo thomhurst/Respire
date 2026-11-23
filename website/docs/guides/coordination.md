@@ -725,8 +725,11 @@ if (!lease.IsAcquired
 - Queued acquisitions honor cancellation and disposal and wait for the server-calculated
   availability time instead of polling. Queue order is local: other processes, and new local
   callers during a retry, can take permits first.
-- If cancellation, disposal or a disconnect races an accepted script, the permit is consumed even
-  without an acquired lease.
+- With `RespireClient`, cancellation while waiting for a connection or for the script to enter
+  the connection's write queue leaves permits untouched. A custom `IRespireClient` can still
+  queue and send the script if cancellation happens after Respire hands it off.
+- If cancellation, disposal or a disconnect races a script that grants permits, Redis can
+  consume them even when the caller receives no lease.
 - `GetStatistics()` reports this instance's granted and rejected leases, queued permits, and
   available permits from the latest Redis response. `IdleDuration` lets `PartitionedRateLimiter`
   dispose idle limiters; shared state stays in Redis.
@@ -795,14 +798,18 @@ Mixed configurations are unsupported. Composites reject mismatched signatures; s
 do not record a configuration signature. These rules apply equally to clients with key prefixes and
 Cluster routing; migration uses the limiter's original binary key and the same single Cluster slot.
 
-Cancellation is honored while waiting to start migration. After the migration command is submitted,
-the update observes its result even if the cancellation token is canceled. An explicit migration
-validation rejection (a composite configuration mismatch or GCRA debt overflow) preserves the original
-local settings and queue because the script rejects these cases before writing. Other submission or
-reply failures close the limiter and fail its queued requests: Redis may already have changed. Reconcile
-shared state under the rollout barrier before constructing replacement instances; do not blindly retry
-`Migrate`. Cancellation before submission leaves the original settings usable. As with ordinary
-acquisitions, a disconnect or canceled in-flight command can have consumed permits on the server.
+With `RespireClient`, cancellation is honored until the migration reaches the connection's write
+queue. With a custom `IRespireClient`, cancellation is honored until Respire hands off the script.
+After submission, the update follows server redirects and observes the reply even if the caller
+cancels.
+
+An explicit migration validation rejection (a composite configuration mismatch or GCRA debt
+overflow) preserves the original local settings and queue because the script rejects these cases
+before writing. Other submission or reply failures close the limiter and fail its queued requests
+because Redis may already have changed. Reconcile shared state under the rollout barrier before
+constructing replacement instances or retrying `Migrate`. Cancellation before submission leaves the
+original settings usable. As with ordinary acquisitions, a disconnect or canceled in-flight command
+can have consumed permits on the server.
 
 ### Fixed window
 

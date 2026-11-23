@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using Respire.Internal;
 
 namespace Respire.Coordination;
 
@@ -90,6 +91,7 @@ internal sealed partial class RedisRateLimiter
         await _updateGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         Interlocked.Increment(ref _activeAcquisitions);
         var migrationStarted = false;
+        ScriptSubmission? submission = null;
 
         try
         {
@@ -140,11 +142,13 @@ internal sealed partial class RedisRateLimiter
                     args[2 + previous.Length + i] = configurations[i];
                 }
 
-                migrationStarted = true;
                 // Cancellation is honored before submission. Once submitted, observe the migration
                 // reply so cancellation cannot knowingly leave local and Redis settings out of sync.
+                submission = cancellationToken.CanBeCanceled
+                    ? new ScriptSubmission(cancellationToken, completeAfterAcceptance: true) : null;
+                migrationStarted = true;
                 using var result = await _coordination.ExecuteCompositeRateLimitAsync(
-                    UpdateScript, _key, args, CancellationToken.None).ConfigureAwait(false);
+                    UpdateScript, _key, args, submission).ConfigureAwait(false);
 
                 if (result.AsInteger() != 1)
                 {
@@ -191,6 +195,11 @@ internal sealed partial class RedisRateLimiter
                     node = next;
                 }
             }
+        }
+        catch (OperationCanceledException error) when (submission is { WasAccepted: false }
+            && cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
         }
         catch (RespireServerException error) when (error.Message is
             "ERR composite rate-limit configuration mismatch during update" or

@@ -18,8 +18,9 @@ public class RateLimiterCommandHookTests
         var hook = new RecordingHook();
         await using var client = await Connect(server, hook);
         await using var limiter = Create(client, composite);
+        using var caller = new CancellationTokenSource();
         hook.Before = _ => throw new InvalidOperationException("Denied");
-        await Assert.That(async () => await limiter.AcquireAsync()).Throws<InvalidOperationException>();
+        await Assert.That(async () => await limiter.AcquireAsync(1, caller.Token)).Throws<InvalidOperationException>();
         await Assert.That(async () => await Update(client, limiter, composite)).Throws<InvalidOperationException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
         await Assert.That(limiter.GetStatistics()!.CurrentQueuedCount).IsEqualTo(0);
@@ -47,7 +48,8 @@ public class RateLimiterCommandHookTests
         server.ReplyOverride = (connection, command) =>
             !composite && Interlocked.Increment(ref calls) == 1
                 ? "-NOSCRIPT missing\r\n"u8.ToArray() : original!(connection, command);
-        using var lease = await limiter.AcquireAsync();
+        using var caller = new CancellationTokenSource();
+        using var lease = await limiter.AcquireAsync(1, caller.Token);
         await Assert.That(lease.IsAcquired).IsTrue();
         await Assert.That(hook.Completed.Single()).IsEqualTo(("RATE LIMIT ACQUIRE", RespireCommandOutcome.Succeeded));
         await Assert.That(server.CommandsSeen).IsEqualTo(composite ? 1 : 2);

@@ -9,19 +9,22 @@ internal readonly struct ReadOnlyCommand<TCommand> : IRespCommandWrapper
 {
     private readonly TCommand _command;
     private readonly bool _declaredReadOnly;
+    private readonly CancellationToken _scriptAdmissionToken;
 
-    private ReadOnlyCommand(TCommand command, bool declaredReadOnly)
+    private ReadOnlyCommand(TCommand command, bool declaredReadOnly, CancellationToken scriptAdmissionToken)
     {
         _command = command;
         _declaredReadOnly = declaredReadOnly;
+        _scriptAdmissionToken = scriptAdmissionToken;
     }
 
     // Source guards restrict these declarations to their audited script and node paths.
-    internal static ReadOnlyCommand<TCommand> ForAuditedScript(TCommand command, bool declaredReadOnly)
-        => new(command, declaredReadOnly);
+    internal static ReadOnlyCommand<TCommand> ForAuditedScript(TCommand command, bool declaredReadOnly,
+        CancellationToken scriptAdmissionToken)
+        => new(command, declaredReadOnly, scriptAdmissionToken);
 
     internal static ReadOnlyCommand<TCommand> ForNodeRead(TCommand command, bool declaredReadOnly)
-        => new(command, declaredReadOnly);
+        => new(command, declaredReadOnly, CancellationToken.None);
 
     public void Write(ref RespWriter writer) => _command.Write(ref writer);
 
@@ -37,10 +40,14 @@ internal readonly struct ReadOnlyCommand<TCommand> : IRespCommandWrapper
 
     public void OnAccepted() => _command.OnAccepted();
 
-    public void ValidateAdmission() => _command.ValidateAdmission();
+    public void ValidateAdmission()
+    {
+        _scriptAdmissionToken.ThrowIfCancellationRequested();
+        _command.ValidateAdmission();
+    }
 
     public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)
-        => _command.GetResponseCancellationToken(admissionToken);
+        => _scriptAdmissionToken.CanBeCanceled ? CancellationToken.None : _command.GetResponseCancellationToken(admissionToken);
 
     public ClientSideCacheCoordinator.MutationFence GetMutationFence() => CommandDispatchAdmission<TCommand>.GetMutationFence(in _command);
 

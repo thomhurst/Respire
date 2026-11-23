@@ -3850,7 +3850,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         RespireServerException error, RespireReadFrom readFrom, CancellationToken cancellationToken,
         Action<Exception>? onRetry = null, RespireTelemetry.ErrorObservation observation = default, CommandDeadline deadline = default)
         where TCommand : struct, IRespCommand
-        => SendClusterAsync(operation, _core.Cluster!, command, cancellationToken,
+        => SendClusterAsync(operation, _core.Cluster!, command, command.GetRedirectCancellationToken(cancellationToken),
             initialConnection: source, firstAttempt: 1, initialRejection: error, readFromOverride: readFrom,
             cursorReadFromOverride: EffectiveReadFrom, onRetry: onRetry, observation: observation, retryDeadline: deadline);
 
@@ -4115,6 +4115,15 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     // An accepted reply may outlive admission. Check before redirect discovery
                     // so a failed topology query cannot replace an expired retry budget.
                     command.ValidateAdmission();
+                    var redirectToken = command.GetRedirectCancellationToken(cancellationToken);
+
+                    if (redirectToken != cancellationToken)
+                    {
+                        cancellationToken = redirectToken;
+                        backlogAcquisition.Dispose();
+                        backlogAcquisition = new CommandAcquisitionScope(cancellationToken, retryDeadline, _core.Options.CommandTimeout);
+                    }
+
                     // Learn the new owner before touching the caller-owned stream. A broken seek
                     // must not leave later commands pinned to the stale slot owner.
                     cluster.RecordRejection(ref discovery, connection, error);
@@ -6407,7 +6416,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         RespireScript script,
         RespireValue[] tail,
         CancellationToken cancellationToken, ClientSideCacheCoordinator.MutationFence mutationFence,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, CancellationToken scriptAdmissionToken)
     {
         var core = _core;
         var started = RespireTelemetry.CaptureOperationStart(script.EvalShaOperation);
@@ -6426,10 +6435,11 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
 
                 try
                 {
+                    var evalSha = new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments);
+                    var command = ReadOnlyCommand<Cmd2N>.ForAuditedScript(evalSha, script.IsCacheReadOnly, scriptAdmissionToken);
                     clusterReply = await SendClusterAsync(
                         script.EvalShaOperation, cluster,
-                        new MutationCommand<ReadOnlyCommand<Cmd2N>>(ReadOnlyCommand<Cmd2N>.ForAuditedScript(new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments),
-                            script.IsCacheReadOnly), mutationFence),
+                        new MutationCommand<ReadOnlyCommand<Cmd2N>>(command, mutationFence),
                         cancellationToken, script.Sha1, allowReadFrom: true,
                         suppressTelemetry: true, scriptTelemetry: scriptTelemetry, observation: observation,
                         scriptReplicaMiss: replicaMiss).ConfigureAwait(false);
@@ -6439,7 +6449,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     observation.Handled(ex);
                     var source = new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments);
                     var command = new MutationCommand<ReadOnlyCommand<Cmd2N>>(
-                        ReadOnlyCommand<Cmd2N>.ForAuditedScript(source, script.IsCacheReadOnly), mutationFence);
+                        ReadOnlyCommand<Cmd2N>.ForAuditedScript(source, script.IsCacheReadOnly, scriptAdmissionToken), mutationFence);
                     clusterReply = await SendClusterScriptSourceAsync(cluster, script, command, replicaMiss?.Connection,
                         scriptTelemetry, observation, cancellationToken).ConfigureAwait(false);
                 }
@@ -6521,7 +6531,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection!,
                     core.Options.Database, storedProcedureName: script.Sha1, started: started);
                 var result = await ExecuteScriptOnConnectionCoreAsync(connection!, script, tail, cancellationToken, mutationFence,
-                        observation: observation, commandDeadline: deadline,
+                        observation: observation, commandDeadline: deadline, scriptAdmissionToken: scriptAdmissionToken,
                         onEndpointSelected: connection!.ReplicaRedirectsEnabled ? (endpoint, selected) =>
                         {
                             telemetryEndpoint = endpoint;
@@ -7011,7 +7021,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         ClientSideCacheCoordinator.MutationFence mutationFence,
         RespireTelemetry.ErrorObservation observation,
         TrackedScriptExecution? execution = null, CommandDeadline commandDeadline = default,
-        Action<RespireEndpoint, RespireConnection?>? onEndpointSelected = null)
+        Action<RespireEndpoint, RespireConnection?>? onEndpointSelected = null,
+        CancellationToken scriptAdmissionToken = default)
     {
         RespValue reply;
 
@@ -7020,7 +7031,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             reply = await SendScriptCommandAsync(
                 script.EvalShaOperation, connection, new Cmd1N(script.EvalShaVerb, script.Sha1, tail),
                 cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline,
-                onEndpointSelected).ConfigureAwait(false);
+                onEndpointSelected, scriptAdmissionToken).ConfigureAwait(false);
         }
         catch (RespireServerException error) when (error.Code == RespireErrorCodes.NoScript)
         {
@@ -7035,7 +7046,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             reply = await SendScriptCommandAsync(
                 script.EvalOperation, execution?.Connection ?? connection, new Cmd1N(script.EvalVerb, script.Source, tail),
                 cancellationToken, execution, mutationFence, script.IsCacheReadOnly, observation, commandDeadline,
-                onEndpointSelected).ConfigureAwait(false);
+                onEndpointSelected, scriptAdmissionToken).ConfigureAwait(false);
         }
 
         return new RespireResult(in reply, _core.Options.Serializer);
@@ -7048,12 +7059,13 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         CancellationToken cancellationToken,
         TrackedScriptExecution? execution, ClientSideCacheCoordinator.MutationFence mutationFence, bool cacheReadOnly,
         RespireTelemetry.ErrorObservation observation, CommandDeadline commandDeadline = default,
-        Action<RespireEndpoint, RespireConnection?>? onEndpointSelected = null)
+        Action<RespireEndpoint, RespireConnection?>? onEndpointSelected = null,
+        CancellationToken scriptAdmissionToken = default)
     {
+        var readOnly = ReadOnlyCommand<Cmd1N>.ForAuditedScript(command, cacheReadOnly, scriptAdmissionToken);
+
         if (!mutationFence.IsRequired)
         {
-            var readOnly = ReadOnlyCommand<Cmd1N>.ForAuditedScript(command, cacheReadOnly);
-
             if (execution is { FollowsReplicaRedirects: true })
             {
                 return SendWithReplicaRedirectsAsync(operation, connection, readOnly, cancellationToken,
@@ -7073,7 +7085,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     new SendTimestampCommand<ReadOnlyCommand<Cmd1N>>(readOnly, execution), cancellationToken, observation: observation, commandDeadline: commandDeadline);
         }
 
-        var bound = new MutationCommand<Cmd1N>(command, mutationFence);
+        var bound = new MutationCommand<ReadOnlyCommand<Cmd1N>>(readOnly, mutationFence);
 
         if (execution is { FollowsReplicaRedirects: true })
         {
@@ -7091,7 +7103,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         return execution is null
             ? SendOnConnectionCoreAsync(operation, connection, bound, cancellationToken, observation: observation, commandDeadline: commandDeadline)
             : SendOnConnectionCoreAsync(operation, connection,
-                new SendTimestampCommand<MutationCommand<Cmd1N>>(bound, execution), cancellationToken, observation: observation, commandDeadline: commandDeadline);
+                new SendTimestampCommand<MutationCommand<ReadOnlyCommand<Cmd1N>>>(bound, execution), cancellationToken, observation: observation, commandDeadline: commandDeadline);
     }
 
     /// <summary>

@@ -314,6 +314,9 @@ public sealed partial class RespireClient
 
         public CancellationToken GetResponseCancellationToken(CancellationToken token) => _command.GetResponseCancellationToken(token);
 
+        public CancellationToken GetRedirectCancellationToken(CancellationToken callerToken)
+            => _command.GetRedirectCancellationToken(callerToken);
+
         public void OnAccepted() => _command.OnAccepted();
     }
 }
