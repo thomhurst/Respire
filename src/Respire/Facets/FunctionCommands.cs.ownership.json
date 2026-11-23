@@ -34,7 +34,7 @@
     {
       "Name": "function-library-reload",
       "Role": "borrower",
-      "Member": "Respire.FunctionCommands.EnsureLibraryAsync(RespireFunctionLibrary,string,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
+      "Member": "Respire.FunctionCommands.EnsureLibraryAsync(RespireFunctionLibrary,string,RespireEndpoint?,CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<bool>",
       "Owner": "Respire.FunctionCommands.ExecuteSpanAsync(RespireFunction,ReadOnlySpan<RespireKey>,ReadOnlySpan<RespireValue>,CancellationToken):ValueTask<RespireResult>",
       "Contract": "Join every library inspection and reload target before releasing the library gate. The gate and generation coordinate callers without sharing their error owner, retry count or final publication."
     },
