@@ -751,7 +751,7 @@ public class ClientSideCacheCoordinatorTests
         string[] operations =
         [
             "GET", "MGET", "STRLEN", "GETRANGE", "SUBSTR", "DIGEST", "LCS",
-            "EXISTS", "EXPIRETIME", "PEXPIRETIME", "TYPE", "OBJECT ENCODING", "MEMORY USAGE",
+            "EXISTS", "EXPIRETIME", "PEXPIRETIME", "TYPE", "OBJECT ENCODING",
             "HGET", "HMGET", "HGETALL", "HEXISTS", "HLEN", "HSTRLEN", "HKEYS", "HVALS",
             "HEXPIRETIME", "HPEXPIRETIME",
             "LLEN", "LRANGE", "LINDEX", "LPOS",
@@ -760,7 +760,7 @@ public class ClientSideCacheCoordinatorTests
             "ZSCORE", "ZMSCORE", "ZCARD", "ZCOUNT", "ZLEXCOUNT", "ZRANK", "ZREVRANK",
             "ZRANGE", "ZRANGEBYLEX", "ZRANGEBYSCORE", "ZREVRANGE", "ZREVRANGEBYLEX",
             "ZREVRANGEBYSCORE", "ZINTER", "ZUNION", "ZDIFF", "ZINTERCARD",
-            "XLEN", "XRANGE", "XREVRANGE", "XPENDING", "XINFO STREAM", "XINFO GROUPS",
+            "XLEN", "XRANGE", "XREVRANGE",
             "GETBIT", "BITCOUNT", "BITPOS", "BITFIELD_RO",
             "GEODIST", "GEOHASH", "GEOPOS", "GEOSEARCH", "GEORADIUS_RO",
             "GEORADIUSBYMEMBER_RO",
@@ -791,6 +791,7 @@ public class ClientSideCacheCoordinatorTests
             "DUMP", "TTL", "PTTL", "HTTL", "HPTTL",
             "SCAN", "HSCAN", "SSCAN", "ZSCAN", "RANDOMKEY", "HRANDFIELD", "SRANDMEMBER",
             "ZRANDMEMBER", "VRANDMEMBER", "XREAD", "EVAL_RO", "EVALSHA_RO", "FCALL_RO",
+            "XPENDING", "XINFO STREAM", "XINFO GROUPS", "MEMORY USAGE",
             "BF.EXISTS", "CF.EXISTS", "CMS.QUERY", "TDIGEST.CDF", "TOPK.QUERY",
             "TS.GET", "FT.SEARCH", "KEYS", "DBSIZE", "TOUCH",
         ];
@@ -889,21 +890,6 @@ public class ClientSideCacheCoordinatorTests
 
         await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("GEOSEARCH", in deterministic, out _)).IsTrue();
         await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("GEOSEARCH", in any, out _)).IsFalse();
-    }
-
-    [Test]
-    public async Task OnlyExactMemoryUsage_IsCacheable()
-    {
-        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
-        var defaultSampling = new CatalogCommand(RespireCommands.Server.MEMORY_USAGE, ["key"]);
-        var sampled = new CatalogCommand(
-            RespireCommands.Server.MEMORY_USAGE, ["key", "SAMPLES", 5]);
-        var exact = new CatalogCommand(
-            RespireCommands.Server.MEMORY_USAGE, ["key", "SAMPLES", 0]);
-
-        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("MEMORY USAGE", in defaultSampling, out _)).IsFalse();
-        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("MEMORY USAGE", in sampled, out _)).IsFalse();
-        await Assert.That(ClientSideCacheCoordinator.TryCreateQuery("MEMORY USAGE", in exact, out _)).IsTrue();
     }
 
     [Test]

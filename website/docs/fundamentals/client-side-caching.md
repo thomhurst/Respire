@@ -42,17 +42,18 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 
 ## Cached commands
 
-A read is cached only when Redis marks it cacheable and Respire can name every key it depends on:
+Respire caches reads when it can identify every key they depend on and rely on server tracking to
+invalidate stale replies.
 
 | Group | Cached reads |
 |---|---|
 | Strings | `GET`, `MGET`, `STRLEN`, `GETRANGE`, `SUBSTR`, `DIGEST`, `LCS` |
-| Keys | `EXISTS`, `EXPIRETIME`, `PEXPIRETIME`, `TYPE`, `OBJECT ENCODING`, `MEMORY USAGE ... SAMPLES 0`, `SORT_RO` without `BY` or `GET` patterns |
+| Keys | `EXISTS`, `EXPIRETIME`, `PEXPIRETIME`, `TYPE`, `OBJECT ENCODING`, `SORT_RO` without `BY` or `GET` patterns |
 | Hashes | `HGET`, `HMGET`, `HGETALL`, `HEXISTS`, `HLEN`, `HSTRLEN`, `HKEYS`, `HVALS`, `HEXPIRETIME`, `HPEXPIRETIME` |
 | Lists | `LINDEX`, `LLEN`, `LPOS`, `LRANGE` |
 | Sets | `SCARD`, `SDIFF`, `SINTER`, `SINTERCARD`, `SISMEMBER`, `SMEMBERS`, `SMISMEMBER`, `SUNION`, `SDIFFCARD`, `SUNIONCARD` |
 | Sorted sets | `ZCARD`, `ZCOUNT`, `ZDIFF`, `ZINTER`, `ZINTERCARD`, `ZLEXCOUNT`, `ZMSCORE`, `ZRANGE` and the legacy range aliases, `ZRANK`, `ZREVRANK`, `ZSCORE`, `ZUNION` |
-| Streams | `XLEN`, `XRANGE`, `XREVRANGE`, summary-form `XPENDING`, `XINFO STREAM`, `XINFO GROUPS` |
+| Streams | `XLEN`, `XRANGE`, `XREVRANGE` |
 | Bitmaps | `GETBIT`, `BITCOUNT`, `BITPOS`, `BITFIELD_RO` |
 | Geospatial | `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH` (without `COUNT ... ANY`), `GEORADIUS_RO`, `GEORADIUSBYMEMBER_RO` |
 | Arrays | every read-only command, including `ARSCAN` |
@@ -62,9 +63,12 @@ A read is cached only when Redis marks it cacheable and Respire can name every k
 Everything else goes to Redis:
 
 - Time-varying replies: `DUMP`, relative TTLs (`TTL`, `PTTL`), cursor scans (`SCAN`, `HSCAN`,
-  `SSCAN`, `ZSCAN`), random commands, and detailed `XPENDING`.
+  `SSCAN`, `ZSCAN`), and random commands.
 - Reads with unknowable or arbitrary results: `SORT_RO` with `BY` or `GET`, `GEOSEARCH` with
-  `COUNT ... ANY`, and sampled `MEMORY USAGE`.
+  `COUNT ... ANY`.
+- `XPENDING`, `XINFO GROUPS`, `XINFO STREAM` (including `FULL`), and `MEMORY USAGE` (including
+  `SAMPLES 0`). Stream consumer-group changes can affect these replies without sending a tracking
+  invalidation.
 - `TOUCH`, probabilistic structures, blocking reads, scripts and functions, time series, Search, and
   unkeyed server state.
 - Batches and transactions, which never consult the local cache.

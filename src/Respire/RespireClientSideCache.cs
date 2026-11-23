@@ -1274,12 +1274,13 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
                    || query.GetArgument(0).EqualsAsciiIgnoreCase(ClientCacheCommandMetadata.TrackingSubcommand));
     }
 
-    // Mirrors Redis client-side-cache eligibility: keyed, read-only, deterministic, non-blocking,
-    // and not a script/function, probabilistic structure, time series, or Search command.
+    // Cache only reads whose replies can be kept fresh by tracking their key dependencies.
+    // Redis can change stream consumer-group state without a tracking invalidation, so
+    // XPENDING, XINFO STREAM, XINFO GROUPS, and MEMORY USAGE must go to the server.
     private static bool IsCacheableRead(string operation)
         => operation is
             "GET" or "MGET" or "STRLEN" or "GETRANGE" or "SUBSTR" or "DIGEST" or "LCS" or
-            "EXISTS" or "EXPIRETIME" or "PEXPIRETIME" or "TYPE" or "OBJECT ENCODING" or "MEMORY USAGE" or
+            "EXISTS" or "EXPIRETIME" or "PEXPIRETIME" or "TYPE" or "OBJECT ENCODING" or
             "HGET" or "HMGET" or "HGETALL" or "HEXISTS" or "HLEN" or "HSTRLEN" or
             "HKEYS" or "HVALS" or "HEXPIRETIME" or "HPEXPIRETIME" or
             "LLEN" or "LRANGE" or "LINDEX" or "LPOS" or
@@ -1289,8 +1290,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             "ZRANGE" or "ZRANGEBYLEX" or "ZRANGEBYSCORE" or
             "ZREVRANGE" or "ZREVRANGEBYLEX" or "ZREVRANGEBYSCORE" or
             "ZINTER" or "ZUNION" or "ZDIFF" or "ZINTERCARD" or
-            "XLEN" or "XRANGE" or "XREVRANGE" or "XPENDING" or
-            "XINFO STREAM" or "XINFO GROUPS" or
+            "XLEN" or "XRANGE" or "XREVRANGE" or
             "GETBIT" or "BITCOUNT" or "BITPOS" or "BITFIELD_RO" or
             "GEODIST" or "GEOHASH" or "GEOPOS" or "GEOSEARCH" or
             "GEORADIUS_RO" or "GEORADIUSBYMEMBER_RO" or
@@ -1309,12 +1309,6 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             return query.ArgumentCount >= 2;
         }
 
-        if (operation == "XPENDING")
-        {
-            // The summary form is stable; range replies contain a time-varying idle duration.
-            return query.ArgumentCount == 2;
-        }
-
         if (operation == "JSON.MGET")
         {
             return query.ArgumentCount >= 2;
@@ -1323,14 +1317,6 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         if (operation == "GEOSEARCH")
         {
             return !ContainsGeoSearchAny(in query);
-        }
-
-        if (operation == "MEMORY USAGE")
-        {
-            return query.ArgumentCount == 3
-                   && query.GetArgument(1).EqualsAsciiIgnoreCase("SAMPLES")
-                   && query.GetArgument(2).TryGetInt64(out var samples)
-                   && samples == 0;
         }
 
         if (operation == "SORT_RO")
