@@ -5,6 +5,15 @@ namespace Respire.DependencyInjection;
 internal sealed record RespireOptionsRegistration(
     string Name, Func<IServiceProvider, RespireOptions> Create);
 
+internal sealed class RespireDefaultOptions(IOptionsMonitor<RespireOptions> monitor) : IOptions<RespireOptions>
+{
+    private RespireOptions? _value;
+    private object? _syncLock;
+
+    // ValidateOnStart populates the monitor. Keep the first successful read for IOptions and the client.
+    public RespireOptions Value => LazyInitializer.EnsureInitialized(ref _value, ref _syncLock, () => monitor.CurrentValue);
+}
+
 // OptionsFactory still invokes configure/post-configure/validate callbacks. Init-only settings
 // must be changed by returning a new record from the configuration registration callback.
 internal sealed class RespireOptionsFactory(

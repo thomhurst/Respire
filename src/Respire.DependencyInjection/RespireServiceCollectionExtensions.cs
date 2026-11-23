@@ -14,7 +14,8 @@ public static class RespireServiceCollectionExtensions
     /// Registers a lazy singleton client and default <see cref="IOptions{TOptions}"/> from
     /// configuration. Options are validated at host startup without connecting to Redis.
     /// The optional callback runs after binding and can supply serializers, credentials, and logging.
-    /// Configuration is captured when options are first resolved; clients do not reload live.
+    /// The singleton client and the registered default <see cref="IOptions{TOptions}"/> accessor
+    /// share the settings captured on first access.
     /// </summary>
     public static IServiceCollection AddRespire(this IServiceCollection services,
         IConfigurationSection configuration,
@@ -64,11 +65,15 @@ public static class RespireServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<RespireOptions>, RespireOptionsValidator>());
         services.AddOptions<RespireOptions>(name).ValidateOnStart();
 
-        RespireOptions GetOptions(IServiceProvider provider) => provider.GetRequiredService<IOptionsMonitor<RespireOptions>>().Get(name);
+        if (serviceKey is null)
+        {
+            services.AddSingleton<RespireDefaultOptions>();
+            services.TryAddSingleton<IOptions<RespireOptions>>(provider => provider.GetRequiredService<RespireDefaultOptions>());
+            return AddRespireCore(services, provider => provider.GetRequiredService<RespireDefaultOptions>().Value);
+        }
 
-        return serviceKey is null
-            ? AddRespireCore(services, GetOptions)
-            : AddKeyedRespireCore(services, serviceKey, GetOptions);
+        return AddKeyedRespireCore(services, serviceKey,
+            provider => provider.GetRequiredService<IOptionsMonitor<RespireOptions>>().Get(name));
     }
 
     /// <summary>
