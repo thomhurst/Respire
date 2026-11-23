@@ -6,6 +6,124 @@ namespace Respire.Analyzers.Tests;
 public class PendingReadBeforeFlushAnalyzerTests
 {
     [Test]
+    [Arguments("execution.IsCompletedSuccessfully", false)]
+    [Arguments("pending.HasResult", false)]
+    [Arguments("other.HasResult", true)]
+    [Arguments("!pending.HasResult", true)]
+    [Arguments("pending.HasResult || skip", true)]
+    [Arguments("skip && pending.HasResult", false)]
+    [Arguments("pending.IsCompleted", true)]
+    [Arguments("execution.IsCompleted", true)]
+    public Task ReadsInsideSuccessGuards(string condition, bool warning)
+    {
+        string read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        return Verify.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task<string> RunAsync(RespireClient client, bool skip)
+                {
+                    var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    var other = batch.GetStringAsync("other");
+                    var execution = batch.ExecuteAsync();
+                    try
+                    {
+                        if ({{condition}})
+                        {
+                            return {{read}};
+                        }
+
+                        return "";
+                    }
+                    finally
+                    {
+                        await execution;
+                    }
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("batch", false, false, false)]
+    [Arguments("batch", false, true, false)]
+    [Arguments("batch", true, false, true)]
+    [Arguments("other", false, false, true)]
+    public Task SuccessRequiresAnExecutionThatIncludesThePending(
+        string flushBatch, bool flushFirst, bool asTask, bool warning)
+    {
+        string queue = "var pending = batch.GetStringAsync(\"key\");";
+        string adapter = asTask ? ".AsTask()" : "";
+        string flush = $"var execution = {flushBatch}.ExecuteAsync(){adapter};";
+        string read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        return Verify.VerifyAsync($$"""
+            using Respire;
+            class Caller
+            {
+                string Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var other = client.CreateBatch();
+                    {{(flushFirst ? flush : queue)}}
+                    {{(flushFirst ? queue : flush)}}
+                    if (execution.IsCompletedSuccessfully)
+                    {
+                        return {{read}};
+                    }
+
+                    return "";
+                }
+            }
+            """);
+    }
+
+    [Test]
+    public Task ReplacingTheCheckedExecutionStillWarns()
+    {
+        return Verify.VerifyAsync("""
+            using Respire;
+            class Caller
+            {
+                string Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var other = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    var execution = batch.ExecuteAsync();
+                    execution = other.ExecuteAsync();
+                    return execution.IsCompletedSuccessfully ? {|RESP002:pending.Result|} : "";
+                }
+            }
+            """);
+    }
+
+    [Test]
+    public Task ReplacingTheCheckedPendingStillWarns()
+    {
+        return Verify.VerifyAsync("""
+            using Respire;
+            class Caller
+            {
+                string Run(RespireClient client)
+                {
+                    var first = client.CreateBatch();
+                    var second = client.CreateBatch();
+                    var pending = first.GetStringAsync("key");
+                    if (pending.HasResult)
+                    {
+                        pending = second.GetStringAsync("key");
+                        return {|RESP002:pending.Result|};
+                    }
+
+                    return "";
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("class", false)]
     [Arguments("class", true)]
     [Arguments("struct", false)]

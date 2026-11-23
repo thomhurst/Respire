@@ -13,8 +13,8 @@ namespace Respire.Analyzers;
 /// </summary>
 /// <remarks>
 /// Pragmatic and same-method only: the pending must come from a local batch/transaction in this
-/// scope, and neither the pending nor the batch may leave it. The flush must be awaited on every
-/// control-flow path to the read.
+/// scope, and neither the pending nor the batch may leave it. The flush or a successful status
+/// check must establish that the result is ready before it is read.
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
@@ -137,6 +137,20 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return;
         }
 
+        IPropertyReferenceOperation[] checks = CompletionGuards.FindChecks(
+            context.SemanticModel, scope, read, context.CancellationToken).ToArray();
+
+        if (checks.Length > 0
+            && context.SemanticModel.GetSymbolInfo(ScopeWalker.Unwrap(pending), context.CancellationToken).Symbol
+                is ILocalSymbol { RefKind: RefKind.None } pendingLocal
+            && checks.Any(check => check.Property.Name == "HasResult"
+                && SymbolEqualityComparer.Default.Equals(check.Property.ContainingType.OriginalDefinition, known.Pending)
+                && CompletionGuards.ChecksLocal(check, pendingLocal))
+            && ScopeWalker.IsUnchangedLocal(scope, pendingLocal, context.SemanticModel, context.CancellationToken))
+        {
+            return;
+        }
+
         foreach (var origin in origins)
         {
             if (ScopeWalker.GetReceiver(origin.Expression) is not { } batchExpression
@@ -163,7 +177,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     allowNamedFlushExtension: true,
                     before: read,
                     origin: origin)
-                || HasFlushBefore(context, scope, batch, origin, read))
+                || HasFlushBefore(context, scope, batch, origin, read)
+                || checks.Any(check => IsSuccessfulFlushCheck(context, scope, check, batch, origin, read)))
             {
                 continue;
             }
@@ -641,6 +656,50 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                    context.SemanticModel, scope, origin, read, context.CancellationToken)
                && !ScopeWalker.CanReachWithoutCrossing(
                    context.SemanticModel, scope, origin, read, completions, context.CancellationToken);
+    }
+
+    private static bool IsSuccessfulFlushCheck(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        IPropertyReferenceOperation check,
+        ILocalSymbol batch,
+        InvocationExpressionSyntax origin,
+        ExpressionSyntax read)
+    {
+        if (!CompletionGuards.IsSuccessfulTaskCheck(check))
+        {
+            return false;
+        }
+
+        IOperation? execution = check.Instance;
+
+        if (execution is ILocalReferenceOperation { Local: { RefKind: RefKind.None } local })
+        {
+            if (IsDeclaredOutside(scope, local)
+                || local.DeclaringSyntaxReferences[0].GetSyntax(context.CancellationToken)
+                    is not VariableDeclaratorSyntax { Initializer.Value: { } initializer }
+                || !ScopeWalker.IsUnchangedLocal(scope, local, context.SemanticModel, context.CancellationToken))
+            {
+                return false;
+            }
+
+            execution = context.SemanticModel.GetOperation(ScopeWalker.Unwrap(initializer), context.CancellationToken);
+        }
+
+        if (execution is IInvocationOperation { TargetMethod.Name: "AsTask" } asTask
+            && SyncOverAsyncAnalyzer.IsTask(asTask.TargetMethod.ContainingType))
+        {
+            execution = asTask.Instance;
+        }
+
+        // A successful operation can only complete commands queued before that flush.
+        return execution?.Syntax is InvocationExpressionSyntax flush
+            && origin.Span.End <= flush.SpanStart
+            && IsFlushInvocation(context, flush, batch)
+            && !IsReassignedBetween(context, scope, batch, origin, flush)
+            && ScopeWalker.CanReach(context.SemanticModel, scope, origin, read, context.CancellationToken)
+            && !ScopeWalker.CanReachWithoutCrossing(
+                context.SemanticModel, scope, origin, read, [flush], context.CancellationToken);
     }
 
     private static bool DominatesRead(

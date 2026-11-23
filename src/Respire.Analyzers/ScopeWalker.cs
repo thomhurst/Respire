@@ -65,6 +65,31 @@ internal static partial class ScopeWalker
         }
     }
 
+    public static bool IsUnchangedLocal(
+        SyntaxNode scope, ILocalSymbol local, SemanticModel model, CancellationToken cancellationToken)
+    {
+        foreach (IdentifierNameSyntax reference in FindReferences(scope, local, model, cancellationToken))
+        {
+            SyntaxNode node = reference;
+            // Parentheses and tuple elements can wrap a write to the local. A local used as
+            // a member receiver or index is read, not reassigned.
+            while (node.Parent is ParenthesizedExpressionSyntax
+                || node.Parent is ArgumentSyntax { Parent: TupleExpressionSyntax })
+            {
+                node = node.Parent is ArgumentSyntax ? node.Parent.Parent! : node.Parent;
+            }
+
+            if (node.Parent is RefExpressionSyntax or MakeRefExpressionSyntax
+                || node.Parent is ArgumentSyntax argument && argument.RefKindKeyword.RawKind != 0
+                || node.Parent is AssignmentExpressionSyntax assignment && assignment.Left == node)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// True when the node sits in a lambda or local function nested inside <paramref name="scope"/>:
     /// the value may then be used at a time this rule cannot see, so the caller should stay silent.

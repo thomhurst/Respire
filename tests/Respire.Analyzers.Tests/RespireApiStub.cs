@@ -34,6 +34,7 @@ internal static class RespireApiStub
             public sealed class RespirePending<T>
             {
                 public bool IsCompleted => true;
+                public bool HasResult => true;
                 public T Result => default(T);
             }
 

@@ -7,6 +7,54 @@ namespace Respire.Analyzers.Tests;
 public class SyncOverAsyncAnalyzerTests
 {
     [Test]
+    [Arguments("command.IsCompletedSuccessfully", false)]
+    [Arguments("!command.IsCompletedSuccessfully", true)]
+    [Arguments("command.IsCompletedSuccessfully || skip", true)]
+    [Arguments("skip && command.IsCompletedSuccessfully", false)]
+    [Arguments("other.IsCompletedSuccessfully", true)]
+    public Task ReadsInsideSuccessGuards(string condition, bool warning)
+    {
+        string read = warning ? "{|RESP009:command.Result|}" : "command.Result";
+        return Verify.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task<RespireResult> RunAsync(RespireClient client, bool skip)
+                {
+                    var command = client.ExecuteAsync("PING");
+                    var other = client.ExecuteAsync("PING");
+                    if ({{condition}})
+                    {
+                        return {{read}};
+                    }
+
+                    return await command;
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("command.IsCompletedSuccessfully ? command.Result : await command")]
+    [Arguments("!command.IsCompletedSuccessfully ? await command : command.Result")]
+    public Task ReadsInConditionalExpressions(string expression)
+    {
+        return Verify.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task<RespireResult> RunAsync(RespireClient client)
+                {
+                    var command = client.ExecuteAsync("PING");
+                    return {{expression}};
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("task /* explanation */.Result", "await task /* explanation */")]
     [Arguments("task // explanation\n            .Result", "await task // explanation\n            ")]
     [Arguments("task. /* member */ Result", "await task /* member */ ")]
