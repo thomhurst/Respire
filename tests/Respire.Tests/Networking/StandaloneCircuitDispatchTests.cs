@@ -1184,11 +1184,15 @@ public partial class StandaloneCircuitDispatchTests
     }
 
     [Test]
-    public async Task StreamFrameCompletionRacesCancellationAndDisposalWithoutCompletingReplacementProbes()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StreamFrameCompletionRacesCancellationAndDisposalWithoutCompletingReplacementProbes(
+        bool finishFrameBeforeCancellation)
     {
         await using var server = Server();
 #pragma warning disable RESP010 // Test-owned client isolates stream completion races and replacement circuit probe generations.
-        await using var client = await RespireClient.ConnectAsync(Options(server));
+        await using var client = await RespireClient.ConnectAsync(
+            Options(server) with { CommandTimeout = TimeSpan.FromSeconds(10) });
 #pragma warning restore RESP010
         var (circuit, clock) = await Prepare(client, server);
         server.SuppressReply = command => command.StartsWith("GET stream-", StringComparison.Ordinal);
@@ -1200,25 +1204,48 @@ public partial class StandaloneCircuitDispatchTests
             var key = $"stream-{i}";
             var streamCommand = $"GET {key}";
             var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var releaseReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            // Park the server's normal reply path while the test sends the frame itself.
-            server.GateCommand(streamCommand, releaseReply.Task, id => received.TrySetResult(id));
+            server.GateCommand(streamCommand, Task.CompletedTask, id => received.TrySetResult(id));
             using var cancellation = new CancellationTokenSource();
             var pending = client.Strings.GetStreamAsync(key, cancellation.Token).AsTask();
             int connectionId = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await server.SendRawAsync("$2\r\nx"u8.ToArray(), connectionId);
             await using var stream = await pending;
-            await Task.WhenAll(server.SendRawAsync("y\r\n"u8.ToArray(), connectionId), Task.Run(async () =>
+            await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(1);
+
+            // Fail the other probe while the stream still owns a permit in this generation.
+            Open(client, server);
+            clock.Advance(TimeSpan.FromMinutes(1));
+            var firstKey = $"race-full-1-{i}";
+            var firstReceived = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseFirstReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            server.GateCommand($"GET {firstKey}", releaseFirstReply.Task, id => firstReceived.TrySetResult(id));
+            var first = client.GetStringAsync(firstKey).AsTask();
+            await Assert.That(await firstReceived.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(connectionId);
+            await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(1);
+
+            var sendTail = server.SendRawAsync("y\r\n"u8.ToArray(), connectionId);
+
+            if (finishFrameBeforeCancellation)
+            {
+                await sendTail;
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await stream!.CopyToAsync(Stream.Null, deadline.Token);
+            }
+
+            await Task.WhenAll(sendTail, Task.Run(async () =>
             {
                 cancellation.Cancel();
                 await stream!.DisposeAsync();
             }));
-            await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
-            releaseReply.SetResult();
 
-            // A completed frame may already have satisfied one probe. Check reply alignment
-            // and circuit recovery regardless of whether completion or cancellation won.
-            await Assert.That(await client.GetStringAsync("race-full-1")).IsEqualTo("race-full-1");
+            // FIFO makes the first replacement reply a fence for the old frame's completion.
+            releaseFirstReply.SetResult();
+            await Assert.That(await first).IsEqualTo(firstKey);
+            var snapshot = circuit.Snapshot();
+            await Assert.That(snapshot.State).IsEqualTo(EndpointCircuitState.HalfOpen);
+            await Assert.That(snapshot.ActiveProbes).IsEqualTo(0);
+            await Assert.That(snapshot.SuccessfulProbes).IsEqualTo(1);
+
             using var reply = await client.ExecuteAsync("GET", "race-full-2");
             await Assert.That(reply.AsString()).IsEqualTo("race-full-2");
             await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
