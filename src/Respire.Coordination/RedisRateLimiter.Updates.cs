@@ -241,7 +241,7 @@ internal sealed partial class RedisRateLimiter
 
     // Read/validate/compute before the first write. This script runs with local acquisitions drained;
     // the application coordinates other processes, electing exactly one Migrate caller per change.
-    private static readonly RespireScript UpdateScript = RespireScript.Create("""
+    private static readonly RespireScript UpdateScript = RespireScript.Create(RespireCoordination.EffectsReplicationPrelude + """
         local function decode(value)
             local values = {}
             if value then

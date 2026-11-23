@@ -7,6 +7,10 @@ namespace Respire.Coordination;
 /// <summary>Coordination primitives using a caller-owned Redis client.</summary>
 public sealed class RespireCoordination
 {
+    // Redis 6 and older can reject writes after TIME or TTL reads in verbatim replication mode.
+    // Redis 7 always replicates effects. The guard also works on compatible servers without this API.
+    internal const string EffectsReplicationPrelude = "if redis.replicate_commands then redis.replicate_commands() end\n";
+
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
     private readonly TimeProvider _fencedLockClock;
@@ -260,7 +264,7 @@ public sealed class RespireCoordination
         return new RespireCountdownLatch(_client, snapshot, generation, channel);
     }
 
-    internal static readonly RespireScript AcquireFencedLock = RespireScript.Create("""
+    internal static readonly RespireScript AcquireFencedLock = RespireScript.Create(EffectsReplicationPrelude + """
         -- Keep the invariant even when this script is invoked without the managed entry point.
         if KEYS[1] == KEYS[2] then
             return redis.error_reply('ERR lock and fencing counter keys must differ')
@@ -285,7 +289,7 @@ public sealed class RespireCoordination
 
     // Shared by every read/write script: read Redis server time, prune expired owners, and
     // keep the key's expiry at its latest owner deadline (or delete it once no owner remains).
-    private const string ReadWritePrelude = """
+    private const string ReadWritePrelude = EffectsReplicationPrelude + """
         local t = redis.call('TIME')
         local now = t[1] * 1000 + math.floor(t[2] / 1000)
         local deadlineNow = t[1] * 1000 + math.ceil(t[2] / 1000)
