@@ -144,6 +144,7 @@ Key-prefixed views can reject commands they cannot prefix; use typed facets with
 
 - Null bulk strings keep `Resp2Type.BulkString`; null arrays keep `Resp2Type.Array`. `RespireResult.NullWireType` exposes the original null framing.
 - Empty strings and aggregates stay non-null. Maps are flattened key/value elements.
+- RESP3 doubles are converted from their parsed numeric values. Casts to `string` or `byte[]` can produce different text from native StackExchange.Redis, such as `+inf` for a wire value of `inf`.
 - Error elements, bulk errors, verbatim strings, pushes, and attributes throw `NotSupportedException`. Errors are never converted to values. Top-level server errors throw `RespireServerException`.
 - With `ToStackExchangeResult`, you dispose the native reply. `ExecuteStackExchangeAsync` disposes it for you, but never disposes the client.
 

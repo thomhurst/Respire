@@ -388,7 +388,7 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
                 return owner.Attach(ValueTask.FromCanceled<bool>(cancellationToken));
             }
 
-            var args = PathHashCodec.Set(path, [(field, client.SerializeRawCompatible(value))], when);
+            var args = PathHashCodec.Set(path, [(field, client.SerializeTypedScalar(value))], when);
             return owner.Attach(client.ConvertResponseAsync("PHSET",
                 new Cmd1N(RespireCommands.PathHash.PHSET.Verb, client.Key(in key), args), cancellationToken,
                 client, static (RespireClient client, in RespValue reply) => PathHashCodec.Applied(in reply), observation: owner.Observation));

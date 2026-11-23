@@ -285,7 +285,7 @@ internal sealed partial class ArrayCommands(RespireClient client) : IRespireArra
     {
         ArrayCommandArguments.ValidateIndex(index);
         return client.ConvertResponseAsync("ARSET", new Cmd3(RespireCommands.Array.ARSET.Verb, client.Key(in key), index,
-            client.SerializeRawCompatible(value)), cancellationToken, 0,
+            client.SerializeTypedScalar(value)), cancellationToken, 0,
             static (int _, in RespValue reply) => ArrayResponseReader.Unsigned(in reply));
     }
 

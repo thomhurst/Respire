@@ -131,7 +131,12 @@ type, such as `(string?)null` or `(byte[]?)null`, to select the intended overloa
 writes still reject null payloads. Existing compiled callers keep their original methods
 and payload encoding.
 
-Specify the type argument explicitly, such as `SetAsync<string>(key, text)`, to select the generic overload. Generic byte-memory and `char` writes keep their `RespireValue` encoding. Collection-member overloads also preserve raw non-finite floating-point values; generic string writes reject them. The payload overloads do not change numeric, `Guid`, date, or duration serialization.
+Specify the type argument explicitly, such as `SetAsync<string>(key, text)`, to select the generic overload. Generic byte-memory and `char` writes keep their `RespireValue` encoding. The payload overloads do not change numeric, `Guid`, date, or duration serialization.
+
+Generic string, hash, path-hash, and array writes reject non-finite floating-point values
+before sending or queuing the command. Pass an explicit `RespireValue` to store them
+as raw scalars and read them back as text or bytes. Collection-member overloads treat
+non-finite `float` and `double` inputs as raw member text.
 
 Typed reads, including `GetAndSetAsync<T>` and `GetAndSetConditionalAsync<T>`, retain their generic return types and serializer warnings. Use their `RespireValue` overloads for raw writes that return the previous string.
 

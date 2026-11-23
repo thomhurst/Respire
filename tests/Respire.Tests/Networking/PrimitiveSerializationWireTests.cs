@@ -56,6 +56,66 @@ public class PrimitiveSerializationWireTests
     }
 
     [Test]
+    [Arguments(float.NaN, double.NaN)]
+    [Arguments(float.PositiveInfinity, double.PositiveInfinity)]
+    [Arguments(float.NegativeInfinity, double.NegativeInfinity)]
+    public async Task TypedScalarWrites_RejectNonFiniteValuesBeforeSending(float single, double number)
+    {
+        await using var server = new FakeRespServer(Enumerable.Repeat(":1\r\n"u8.ToArray(), 4).ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(async () => await client.Hashes.SetAsync<float>("hash", "field", single))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await client.Hashes.SetAsync<double>("hash", "field", number, RespireSetWhen.Exists))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await client.Arrays.SetAsync<double>("array", 0, number))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await client.PathHashes.SetAsync<float>("hash", "/path", "field", single))
+            .ThrowsExactly<ArgumentException>();
+
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TypedScalarWrites_RejectNonFiniteValuesBeforeEnqueuing(bool transactional)
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var batch = transactional ? null : client.CreateBatch();
+        await using var transaction = transactional ? client.CreateTransaction() : null;
+        var queue = (IRespireCommandQueue?)transaction ?? batch!;
+
+        _ = Assert.Throws<ArgumentException>(() => queue.Hashes.Set<double>("hash", "field", double.PositiveInfinity));
+        _ = Assert.Throws<ArgumentException>(() => queue.Hashes.Set<float>("hash", "field", float.NaN, RespireSetWhen.Exists));
+        _ = Assert.Throws<ArgumentException>(() => queue.Arrays.Set<double>("array", 0, double.NegativeInfinity));
+        _ = Assert.Throws<ArgumentException>(() => queue.PathHashes.Set<float>("hash", "/path", "field", float.NaN));
+
+        await Assert.That(transaction?.Count ?? batch!.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task NonFiniteRawScalars_KeepTheirWireEncoding()
+    {
+        await using var server = new FakeRespServer(
+            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await client.Hashes.SetAsync("hash", "field", (RespireValue)float.NaN);
+        await client.Arrays.SetAsync("array", 0, (RespireValue)double.NegativeInfinity, CancellationToken.None);
+        await client.PathHashes.SetAsync("hash", "/path", "field", (RespireValue)double.PositiveInfinity);
+        await client.SortedSets.AddAsync<double>("sorted", double.PositiveInfinity, 1);
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "HSET hash field NaN",
+            "ARSET array 0 -Infinity",
+            "PHSET hash /path FIELDS 1 field Infinity",
+            "ZADD sorted 1 Infinity",
+        ]);
+    }
+
+    [Test]
     public async Task BooleanWrites_UseSameEncodingAcrossOverloadShapes()
     {
         await using var server = new FakeRespServer(

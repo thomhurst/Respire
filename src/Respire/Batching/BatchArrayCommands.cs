@@ -144,7 +144,7 @@ internal sealed partial class BatchArrayCommands(IPendingSink sink) : IRespireBa
     {
         ArrayCommandArguments.ValidateIndex(index);
         return sink.Add<Cmd3, ulong>("ARSET", new Cmd3(RespireCommands.Array.ARSET.Verb, sink.Client.Key(in key), index,
-            sink.Client.SerializeRawCompatible(value)), static (c, v) => ArrayResponseReader.Unsigned(in v));
+            sink.Client.SerializeTypedScalar(value)), static (c, v) => ArrayResponseReader.Unsigned(in v));
     }
 
     public RespirePending<ulong> Count(RespireKey key)
