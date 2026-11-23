@@ -290,6 +290,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 connection.ExecutingReply = false;
                 FlushDeferredPushesLocked(connection);
                 ServeReadyListMovesLocked();
+                ServeReadyStreamReadsLocked();
             }
         }
     }
@@ -502,12 +503,18 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
 
     private bool DeleteEntry(byte[] key)
     {
-        if (!_entries.Remove(key))
+        if (!_entries.Remove(key, out Entry? entry))
         {
             return false;
         }
 
         TouchWatchedKey(key);
+
+        if (entry.Data is FakeStream)
+        {
+            MarkStreamReadyLocked(key, groupOnly: true);
+        }
+
         return true;
     }
 

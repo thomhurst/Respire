@@ -161,4 +161,138 @@ public class FakeStreamReadTests
         var empty = await client.Streams.ReadAsync(options with { WaitFor = TimeSpan.FromMilliseconds(1) }, "missing", cancellationToken: timeout.Token);
         await Assert.That(empty).IsEmpty();
     }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task BlockedGroupReadersReceiveEntriesInRegistrationOrder(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var options = new RespireStreamReadOptions { Count = 1, WaitFor = Timeout.InfiniteTimeSpan };
+        using var observed = server.InjectFault("XREADGROUP", RespireFakeFault.Delay(TimeSpan.Zero), occurrences: null);
+        await client.Streams.CreateGroupAsync("events", "g", "0", createStream: true);
+        await client.Streams.CreateGroupAsync("other", "g", "0", createStream: true);
+
+        for (int round = 0; round < 10; round++)
+        {
+            var first = client.Streams.ReadGroupAsync([("other", ">"), ("events", ">")], "g", "first", options,
+                deadline.Token).AsTask();
+            await WaitForExecutionCountAsync(observed, round * 2 + 1, deadline.Token);
+            var second = client.Streams.ReadGroupOnceAsync("events", "g", "second", options,
+                cancellationToken: deadline.Token).AsTask();
+            await WaitForExecutionCountAsync(observed, round * 2 + 2, deadline.Token);
+
+            RespireStreamId firstId = await client.Streams.AddAsync("events", ("f", "first"));
+            RespireStreamId secondId = await client.Streams.AddAsync("events", ("f", "second"));
+
+            var firstPage = await first;
+            await Assert.That(firstPage.Single().Entries.Single().Id).IsEqualTo(firstId);
+            await Assert.That((await second).Single().Id).IsEqualTo(secondId);
+        }
+    }
+
+    [Test]
+    public async Task UnrelatedAppendLeavesBlockingReadPending()
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var observed = server.InjectFault("XREAD", RespireFakeFault.Delay(TimeSpan.Zero));
+        var waiting = client.Streams.ReadAsync(new RespireStreamReadOptions { WaitFor = Timeout.InfiniteTimeSpan },
+            "events", "$", deadline.Token).AsTask();
+        await WaitForExecutionCountAsync(observed, 1, deadline.Token);
+
+        await client.SetAsync("events", "temporary", cancellationToken: deadline.Token);
+        await client.Streams.AddAsync("other", ("f", "unrelated"));
+        await Assert.That(async () => await waiting.WaitAsync(TimeSpan.FromMilliseconds(250), deadline.Token))
+            .ThrowsExactly<TimeoutException>();
+
+        await client.Keys.DeleteAsync("events");
+        RespireStreamId id = await client.Streams.AddAsync("events", ("f", "intended"));
+        await Assert.That((await waiting).Single().Id).IsEqualTo(id);
+    }
+
+    [Test]
+    public async Task DeletingStreamWakesBlockedGroupReader()
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var observed = server.InjectFault("XREADGROUP", RespireFakeFault.Delay(TimeSpan.Zero));
+        await client.Streams.CreateGroupAsync("events", "g", "0", createStream: true);
+        var waiting = client.Streams.ReadGroupOnceAsync("events", "g", "worker",
+            new RespireStreamReadOptions { WaitFor = Timeout.InfiniteTimeSpan },
+            cancellationToken: deadline.Token).AsTask();
+        await WaitForExecutionCountAsync(observed, 1, deadline.Token);
+
+        await client.Keys.DeleteAsync("events");
+        await Assert.That(async () => await waiting.WaitAsync(TimeSpan.FromSeconds(2), deadline.Token))
+            .ThrowsExactly<RespireServerException>().WithMessage("NOGROUP No such consumer group");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task GroupReadOnlyRegistersConsumersOnVisitedStreams(bool limitBySize)
+    {
+        await using var server = new RespireFakeServer(null, createConsumersOnEmptyReads: true);
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+
+#pragma warning restore RESP010
+        foreach (string key in new[] { "first", "second" })
+        {
+            await client.Streams.AddAsync(key, ("f", "value"));
+            await client.Streams.CreateGroupAsync(key, "g", "0");
+        }
+
+        var options = limitBySize ? new RespireStreamReadOptions { MaxSize = 1 }
+            : new RespireStreamReadOptions { Count = 1, MaxCount = 1 };
+        var reply = await client.Streams.ReadGroupAsync([("first", ">"), ("second", ">")], "g", "worker", options);
+        await Assert.That(reply.Single().Entries.Length).IsEqualTo(1);
+        var skipped = (await client.Streams.GroupInfoAsync("second")).Single();
+        await Assert.That(skipped.Consumers).IsEqualTo(0);
+        await Assert.That(skipped.Pending).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task AutoClaimAcceptsBareBoundariesButRejectsExclusiveBoundaries()
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+#pragma warning restore RESP010
+        await client.Streams.AddAsync("events", new RespireStreamAddOptions { Id = "1-0" }, ("f", "value"));
+        await client.Streams.CreateGroupAsync("events", "g", "0");
+        await client.Streams.ReadGroupOnceAsync("events", "g", "worker");
+
+        using var minimum = await client.ExecuteAsync("XAUTOCLAIM", "events", "g", "next", 0, "-", "JUSTID");
+        await Assert.That(minimum[1][0].AsString()).IsEqualTo("1-0");
+        using var maximum = await client.ExecuteAsync("XAUTOCLAIM", "events", "g", "next", 0, "+", "JUSTID");
+        await Assert.That(maximum[1].Count).IsEqualTo(0);
+
+        foreach (string cursor in new[] { "(-", "(+" })
+        {
+            await Assert.That(async () =>
+            {
+                using var reply = await client.ExecuteAsync("XAUTOCLAIM", "events", "g", "next", 0, cursor, "JUSTID");
+            }).ThrowsExactly<RespireServerException>();
+        }
+    }
+
+    private static async Task WaitForExecutionCountAsync(RespireFakeFaultScope scope, int count, CancellationToken cancellationToken)
+    {
+        while (scope.ExecutionCount < count)
+        {
+            await Task.Delay(1, cancellationToken);
+        }
+    }
 }
