@@ -30,7 +30,7 @@ public sealed record RespireSearchProfileNode(
     /// <summary>Execution time in milliseconds, when this node reports Time.</summary>
     public double? TimeMilliseconds => Metrics.TryGetValue("Time", out var value) ? value : null;
 
-    internal static RespireSearchProfileNode Parse(RespireResult result, bool inlineResp3 = false)
+    internal static RespireSearchProfileNode Parse(RespireResult result, bool limited, bool inlineResp3 = false)
     {
         // Bound every collection before the owned-value copier or typed reader recurses.
         ValidateNesting(result, 0);
@@ -39,10 +39,10 @@ public sealed record RespireSearchProfileNode(
 
         if (owned.Type == RespireDataType.Array && owned.Items.Count > 0 && owned.Items[0].Type == RespireDataType.Array)
         {
-            return Parse(owned, "Profile", ProfileLayout.GroupedResp2, groupedFields: true);
+            return Parse(owned, "Profile", ProfileLayout.GroupedResp2, limited, groupedFields: true);
         }
 
-        return Parse(owned, "Profile", layout);
+        return Parse(owned, "Profile", layout, limited);
     }
 
     private static void ValidateNesting(RespireResult value, int depth)
@@ -64,7 +64,7 @@ public sealed record RespireSearchProfileNode(
     }
 
     private static RespireSearchProfileNode Parse(
-        RespireSearchValue value, string name, ProfileLayout layout, bool groupedFields = false)
+        RespireSearchValue value, string name, ProfileLayout layout, bool limited, bool groupedFields = false)
     {
         if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
         {
@@ -90,7 +90,7 @@ public sealed record RespireSearchProfileNode(
                 string field = ReadFieldName(group.Items[0]);
                 // Processors and warnings follow the field name directly in the same group.
                 var fieldValue = group.Items.Count == 2 && field is not ("Result processors profile" or "Warning")
-                    ? group.Items[1] : CopyListTail(group.Items, 1);
+                    ? group.Items[1] : CopyList(group.Items, 1, group.Items.Count);
                 AddField(field, fieldValue, missingValue: group.Items.Count == 1);
                 continue;
             }
@@ -100,9 +100,16 @@ public sealed record RespireSearchProfileNode(
             if (layout == ProfileLayout.GroupedResp2 && fieldName == "Child iterators" &&
                 (i == items.Count || items[i].Type is RespireDataType.Array or RespireDataType.Null))
             {
-                // Legacy RESP2 nodes put their child arrays after the label without a list wrapper.
-                AddField(fieldName, CopyListTail(items, i));
-                break;
+                // Legacy RESP2 nodes put child arrays and depth-limit nulls directly after the label.
+                int childStart = i;
+
+                while (i < items.Count && items[i].Type is RespireDataType.Array or RespireDataType.Null)
+                {
+                    i++;
+                }
+
+                AddField(fieldName, CopyList(items, childStart, i));
+                continue;
             }
 
             if (i == items.Count)
@@ -140,7 +147,7 @@ public sealed record RespireSearchProfileNode(
 
             if (kind == ProfileFieldKind.ListNode)
             {
-                if (field == "Child iterators" && IsText(fieldValue))
+                if (field == "Child iterators" && limited && IsLimitedIteratorSummary(fieldValue))
                 {
                     return;
                 }
@@ -160,7 +167,7 @@ public sealed record RespireSearchProfileNode(
                         continue;
                     }
 
-                    children.Add(Parse(item, field + " #" + (j + 1).ToString(CultureInfo.InvariantCulture), layout));
+                    children.Add(Parse(item, field + " #" + (j + 1).ToString(CultureInfo.InvariantCulture), layout, limited));
                 }
             }
             else if (kind == ProfileFieldKind.ObjectNode || fieldValue.Type == RespireDataType.Map)
@@ -174,7 +181,7 @@ public sealed record RespireSearchProfileNode(
                 var node = layout == ProfileLayout.InlineResp3 && field == "Iterators profile" &&
                     fieldValue.Type == RespireDataType.Array && fieldValue.Items.Count == 1
                     ? fieldValue.Items[0] : fieldValue;
-                children.Add(Parse(node, field, layout));
+                children.Add(Parse(node, field, layout, limited));
             }
         }
     }
@@ -259,9 +266,29 @@ public sealed record RespireSearchProfileNode(
             !string.IsNullOrEmpty(value.Scalar);
     }
 
-    private static RespireSearchValue CopyListTail(IReadOnlyList<RespireSearchValue> items, int start)
+    private static bool IsLimitedIteratorSummary(RespireSearchValue value)
     {
-        return new(RespireDataType.Array, null, items.Skip(start).ToArray());
+        const string Prefix = "The number of iterators in the union is ";
+
+        if (!IsText(value) || !value.Scalar!.StartsWith(Prefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        ReadOnlySpan<char> count = value.Scalar.AsSpan(Prefix.Length);
+        return !count.IsEmpty && count.IndexOfAnyExceptInRange('0', '9') == -1;
+    }
+
+    private static RespireSearchValue CopyList(IReadOnlyList<RespireSearchValue> items, int start, int end)
+    {
+        var copy = new RespireSearchValue[end - start];
+
+        for (int i = 0; i < copy.Length; i++)
+        {
+            copy[i] = items[start + i];
+        }
+
+        return new(RespireDataType.Array, null, copy);
     }
 
     private static InvalidOperationException Unexpected(string detail) => RespireSearchReply.Unexpected("FT.PROFILE", detail);

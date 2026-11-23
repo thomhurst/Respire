@@ -14,7 +14,7 @@ public sealed partial class RespireSearchClient
         return await ExecuteAsync<RespireSearchProfileResult<RespireSearchResult>>(RespireSearchCommands.Profile,
             [RequireName(index), "SEARCH", .. ProfileOptions(limited), query.Expression.Value, .. options.ToArguments()], cancellationToken, reply =>
         {
-            var parts = ReadProfileEnvelope(reply);
+            var parts = ReadProfileEnvelope(reply, limited);
             return new(RespireSearchResult.Parse(parts.Result, options), parts.Profile);
         }).ConfigureAwait(false);
     }
@@ -29,7 +29,7 @@ public sealed partial class RespireSearchClient
         return await ExecuteAsync<RespireSearchProfileResult<RespireSearchAggregateResult>>(RespireSearchCommands.Profile,
             [RequireName(index), "AGGREGATE", .. ProfileOptions(limited), expression.Value, .. (options ?? RespireSearchAggregateOptions.Default).ToArguments()], cancellationToken, reply =>
         {
-            var parts = ReadProfileEnvelope(reply);
+            var parts = ReadProfileEnvelope(reply, limited);
             return new(RespireSearchAggregateResult.Parse(parts.Result), parts.Profile);
         }).ConfigureAwait(false);
     }
@@ -57,27 +57,27 @@ public sealed partial class RespireSearchClient
                     }
                 }
 
-                return new(RespireSearchResult.ParseHybrid(reply, reply.Count - 1), RespireSearchProfileNode.Parse(reply[^1]));
+                return new(RespireSearchResult.ParseHybrid(reply, reply.Count - 1), RespireSearchProfileNode.Parse(reply[^1], limited));
             }
 
             if (reply.Type == RespireDataType.Map && TryReadProfileField(reply, "Profile", out var profile) &&
                 !TryReadProfileField(reply, "Results", out _))
             {
-                return new(RespireSearchResult.ParseHybrid(reply), RespireSearchProfileNode.Parse(profile));
+                return new(RespireSearchResult.ParseHybrid(reply), RespireSearchProfileNode.Parse(profile, limited));
             }
 
-            var parts = ReadProfileEnvelope(reply);
+            var parts = ReadProfileEnvelope(reply, limited);
             return new(RespireSearchResult.ParseHybrid(parts.Result), parts.Profile);
         }).ConfigureAwait(false);
     }
 
     private static RespireValue[] ProfileOptions(bool limited) => limited ? ["LIMITED", "QUERY"] : ["QUERY"];
 
-    private static (RespireResult Result, RespireSearchProfileNode Profile) ReadProfileEnvelope(RespireResult reply)
+    private static (RespireResult Result, RespireSearchProfileNode Profile) ReadProfileEnvelope(RespireResult reply, bool limited)
     {
         if (reply.Type == RespireDataType.Array && reply.Count == 2)
         {
-            return (reply[0], RespireSearchProfileNode.Parse(reply[1]));
+            return (reply[0], RespireSearchProfileNode.Parse(reply[1], limited));
         }
 
         if (reply.Type == RespireDataType.Map)
@@ -86,14 +86,14 @@ public sealed partial class RespireSearchClient
 
             if (hasNestedResult && TryReadProfileField(reply, "Profile", out var profile))
             {
-                return (result, RespireSearchProfileNode.Parse(profile));
+                return (result, RespireSearchProfileNode.Parse(profile, limited));
             }
 
             if (!hasNestedResult && TryReadProfileField(reply, "profile", out var inlineProfile) &&
                 TryReadProfileField(reply, "results", out _) && TryReadProfileField(reply, "total_results", out _))
             {
                 // RediSearch 2.10 adds profile to the ordinary RESP3 query map.
-                return (reply, RespireSearchProfileNode.Parse(inlineProfile, inlineResp3: true));
+                return (reply, RespireSearchProfileNode.Parse(inlineProfile, limited, inlineResp3: true));
             }
         }
 
