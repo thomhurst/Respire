@@ -4097,16 +4097,22 @@ public partial class ErrorMetricsTests
     }
 
     [Test]
-    public async Task FunctionScalarReadersKeepTheirPermissiveReplyContract()
+    public async Task FunctionIntegerReplyMismatchRecordsOneFailure()
     {
         using var configuration = new MetricConfigurationScope(new() { Groups = RespireMetricGroups.Resiliency });
-        await using var server = new FakeRespServer("*0\r\n"u8.ToArray());
+        byte[] array = "*0\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(array, array);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var capture = new Capture();
         var function = RespireFunction.Create("function");
-        await Assert.That(await client.Functions.ExecuteIntegerAsync(function)).IsEqualTo(0L);
+
+        await Assert.That(async () => await client.Functions.ExecuteIntegerAsync(function))
+            .ThrowsExactly<RespireProtocolException>();
         await Assert.That(await client.Functions.ExecuteStringAsync(function)).IsEqualTo(string.Empty);
-        await Assert.That(capture.Items).IsEmpty();
+
+        var failure = capture.Items.Single();
+        await Assert.That(failure.Tags["error.type"]).IsEqualTo(typeof(RespireProtocolException).FullName);
+        await Assert.That((bool)failure.Tags["redis.client.errors.internal"]!).IsFalse();
     }
 
     [Test]

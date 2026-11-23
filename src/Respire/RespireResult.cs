@@ -102,6 +102,18 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     /// <summary>Reads an integer result.</summary>
     public long AsInteger() => Value.AsInteger();
 
+    internal long ReadRequiredInteger()
+    {
+        var value = Value;
+
+        if (value.Type != RespireDataType.Integer)
+        {
+            throw new RespireProtocolException($"Expected a RESP integer reply but received {value.Type}.");
+        }
+
+        return value.AsInteger();
+    }
+
     /// <summary>
     /// The reply as a double. RESP doubles are returned as-is. Other replies are parsed from their
     /// text using the invariant culture, with support for Redis's inf, +inf, and -inf spellings.
