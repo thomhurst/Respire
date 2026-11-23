@@ -21,6 +21,48 @@ public class SemaphoreWireTests
         => server.ReceivedCommands.Where(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)).ToArray();
 
     [Test]
+    public async Task AcquireAccountsForRedisClockRounding()
+    {
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            ":1000\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var semaphore = new RespireSemaphore(client, "{acquire}:rounded", capacity: 1);
+        var expiry = TimeSpan.FromSeconds(60);
+
+        await using var attempt = await semaphore.TryAcquireAsync(expiry);
+
+        await Assert.That(attempt.Acquired).IsTrue();
+        await Assert.That(attempt.Permit.Expiry).IsEqualTo(expiry);
+        await Assert.That(attempt.Permit.RemainingEstimate.GetValueOrDefault())
+            .IsGreaterThan(TimeSpan.Zero).And.IsLessThanOrEqualTo(expiry - TimeSpan.FromMilliseconds(1));
+    }
+
+    [Test]
+    public async Task RenewalAccountsForRedisClockRounding()
+    {
+        await using var server = new FakeRespServer(
+            ClientIdReply,
+            ClientKillReply,
+            ":1\r\n"u8.ToArray(),
+            ":1000\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var semaphore = new RespireSemaphore(client, "{renew}:rounded", capacity: 1);
+        await using var attempt = await semaphore.TryAcquireAsync();
+        var expiry = TimeSpan.FromSeconds(60);
+
+        bool renewed = await attempt.Permit.ResetExpiryAsync(expiry);
+
+        await Assert.That(renewed).IsTrue();
+        await Assert.That(attempt.Permit.Expiry).IsEqualTo(expiry);
+        await Assert.That(attempt.Permit.RemainingEstimate.GetValueOrDefault())
+            .IsGreaterThan(TimeSpan.Zero).And.IsLessThanOrEqualTo(expiry - TimeSpan.FromMilliseconds(1));
+    }
+
+    [Test]
     public async Task OptionalClusterCorrectionOrderingAllowsAcquireWithoutClientIdPermission()
     {
         await using var target = new FakeRespServer(":1\r\n"u8.ToArray())

@@ -40,6 +40,18 @@ public class SemaphoreTimingTests
     }
 
     [Test]
+    public async Task LocalDeadlineDeductsRedisClockRoundingFromDispatch()
+    {
+        long sent = Stopwatch.GetTimestamp();
+
+        await Assert.That(RespireSemaphorePermit.GetLocalValidUntil(sent, TimeSpan.FromMilliseconds(1001), 1000))
+            .IsEqualTo(sent + Stopwatch.Frequency);
+        await Assert.That(RespireSemaphorePermit.GetLocalValidUntil(sent, TimeSpan.FromMilliseconds(1), 1000))
+            .IsEqualTo(sent);
+        await Assert.That(RespireSemaphorePermit.GetLocalValidUntil(sent, null, 1000)).IsEqualTo(long.MaxValue);
+    }
+
+    [Test]
     public async Task CleanupRetryStopsOnSuccess()
     {
         var attempts = 0;

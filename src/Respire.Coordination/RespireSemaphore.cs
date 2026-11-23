@@ -128,7 +128,7 @@ public sealed class RespireSemaphore
         // so only the acquisition itself counts against a short expiry.
         var started = Stopwatch.GetTimestamp();
         RespireClient.TrackedScriptExecution? trackedExecution = null;
-        bool acquired;
+        long roundingMicroseconds;
 
         try
         {
@@ -138,7 +138,7 @@ public sealed class RespireSemaphore
             {
                 using var response = await _client.Scripts.ExecuteLeaseAsync(
                     AcquireScript, [Key], args, cancellationToken).ConfigureAwait(false);
-                acquired = response.AsInteger() == 1;
+                roundingMicroseconds = response.AsInteger();
             }
             else
             {
@@ -155,7 +155,7 @@ public sealed class RespireSemaphore
                     state: (Semaphore: this, Wire: trackedWire, Execution: trackedExecution, Owner: owner, Observation: observation),
                     correct: static (state, _) => state.Semaphore.CleanupUncertainAcquisitionAsync(
                         state.Wire, state.Execution, state.Owner, state.Observation)).ConfigureAwait(false);
-                acquired = response.AsInteger() == 1;
+                roundingMicroseconds = response.AsInteger();
             }
         }
         catch (RespireScriptingEngineUnavailableException)
@@ -187,7 +187,7 @@ public sealed class RespireSemaphore
             throw;
         }
 
-        if (!acquired)
+        if (roundingMicroseconds == 0)
         {
             return default;
         }
@@ -199,13 +199,10 @@ public sealed class RespireSemaphore
             started = Math.Max(started, sent.StartedTimestamp);
         }
 
-        var completed = Stopwatch.GetTimestamp();
         var expiry = FromMilliseconds(milliseconds);
-        // Conservative: Redis applies the expiry no earlier than the send, and the whole round
-        // trip is deducted from it.
-        var remaining = expiry - Stopwatch.GetElapsedTime(started, completed);
+        long validUntil = RespireSemaphorePermit.GetLocalValidUntil(started, expiry, roundingMicroseconds);
 
-        if (remaining is { } left && left <= TimeSpan.Zero)
+        if (Stopwatch.GetTimestamp() >= validUntil)
         {
             // The finite expiry is the fallback if this release attempt fails.
             await ReleaseAcquiredAsync(owner, retryInBackground: false, observation).ConfigureAwait(false);
@@ -220,7 +217,7 @@ public sealed class RespireSemaphore
         }
 
         return new RespireSemaphorePermitAttempt(
-            new RespireSemaphorePermit(_client, Key, owner, Capacity, expiry, remaining, completed));
+            new RespireSemaphorePermit(_client, Key, owner, Capacity, expiry, validUntil));
     }
 
     // The acquire reply (success or error) has arrived, so no delayed acquire can follow this
@@ -444,6 +441,8 @@ public sealed class RespireSemaphore
 
     // Capacity is compared as a string: the marker stores 'C:' plus the canonical decimal integer
     // that RespireValue writes for an int, so every client formats the same capacity identically.
+    // Acquire and renew reply with the discarded microseconds plus one, allowing for TIME's
+    // microsecond precision and reserving zero for a denied acquire or a missing permit.
     internal static readonly RespireScript AcquireScript = RespireScript.Create(ScriptPrelude + $$"""
         local requestedCapacity = 'C:' .. ARGV[1]
         local storedCapacity = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', '-inf', 'LIMIT', 0, 1)[1]
@@ -468,7 +467,7 @@ public sealed class RespireSemaphore
             return 0
         end
         refreshTtl()
-        return 1
+        return 1 + tonumber(t[2]) % 1000
         """);
 
     internal static readonly RespireScript RenewScript = RespireScript.Create(ScriptPrelude + """
@@ -481,7 +480,7 @@ public sealed class RespireSemaphore
         local score = expiry == 0 and math.huge or now + expiry
         redis.call('ZADD', KEYS[1], 'XX', score, member)
         refreshTtl()
-        return 1
+        return 1 + tonumber(t[2]) % 1000
         """);
 
     internal static readonly RespireScript ReleaseScript = RespireScript.Create(ScriptPrelude + """
@@ -556,6 +555,7 @@ public readonly struct RespireSemaphorePermitAttempt : IAsyncDisposable
 /// <summary>A uniquely owned semaphore permit with optional Redis expiry.</summary>
 public sealed class RespireSemaphorePermit : IAsyncDisposable
 {
+    private const int MaxClockRoundingMicroseconds = 1_000;
     private static readonly TimeSpan DisposeReleaseTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
     private readonly RespireLockToken _owner;
@@ -573,15 +573,13 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
 
     internal RespireSemaphorePermit(
         IRespireClient client, RespireKey key, RespireLockToken owner, int capacity,
-        TimeSpan? expiry, TimeSpan? remaining, long completed)
+        TimeSpan? expiry, long validUntil)
     {
         _client = client;
         Key = key;
         _owner = owner;
         _capacity = capacity;
-        _lease = new Lease(
-            expiry?.Ticks ?? 0,
-            remaining.HasValue ? AddTimestampDuration(completed, remaining.Value) : long.MaxValue);
+        _lease = new Lease(expiry?.Ticks ?? 0, validUntil);
     }
 
     [Flags]
@@ -639,10 +637,9 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
 
     /// <summary>Conservative local estimate; null means permit has no expiry.</summary>
     /// <remarks>
-    /// The estimate is conservative because it counts from when the acquire or renewal command was
-    /// sent, before Redis applied the expiry, and subtracts the whole round trip. It is zero after a
-    /// release, after a failed or canceled renewal, after a failed release outcome, or after
-    /// disposal schedules its background release.
+    /// The estimate counts from when the acquire or renewal command was sent and accounts for Redis
+    /// rounding its clock down to whole milliseconds. It is zero after a release, after a failed or
+    /// canceled renewal, after a failed release outcome, or after disposal schedules its background release.
     /// </remarks>
     public TimeSpan? RemainingEstimate
     {
@@ -790,7 +787,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
             var confirmedLease = Volatile.Read(ref _lease);
             RespireClient.TrackedScriptExecution? trackedExecution = null;
-            bool renewed;
+            long roundingMicroseconds;
             long completed;
 
             try
@@ -824,7 +821,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 using (response)
                 {
                     completed = Stopwatch.GetTimestamp();
-                    renewed = response.AsInteger() == 1;
+                    roundingMicroseconds = response.AsInteger();
                 }
             }
             catch (Exception)
@@ -851,7 +848,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 }
             }
 
-            if (!renewed)
+            if (roundingMicroseconds == 0)
             {
                 // Redis confirmed this owner holds no permit; no release is needed to prove it.
                 Set(PermitState.Released);
@@ -864,18 +861,13 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 started = Math.Max(started, sent.StartedTimestamp);
             }
 
-            var remaining = requestedExpiry - Stopwatch.GetElapsedTime(started, completed);
-            var stillValid = remaining is not { } left || left > TimeSpan.Zero;
+            long validUntil = GetLocalValidUntil(started, requestedExpiry, roundingMicroseconds);
             // Record the confirmed lifetime before clearing the pending flag, so disposal cleanup
             // never sees the old lifetime without the flag.
-            Volatile.Write(ref _lease, new Lease(
-                requestedExpiry?.Ticks ?? 0,
-                remaining is not { } validRemaining ? long.MaxValue
-                    : validRemaining > TimeSpan.Zero ? AddTimestampDuration(completed, validRemaining)
-                    : completed));
+            Volatile.Write(ref _lease, new Lease(requestedExpiry?.Ticks ?? 0, validUntil));
             Clear(pending);
 
-            if (stillValid && !Has(PermitState.DisposeReleaseScheduled))
+            if (completed < validUntil && !Has(PermitState.DisposeReleaseScheduled))
             {
                 return true;
             }
@@ -1183,16 +1175,10 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
             return;
         }
 
-        var validUntil = AddTimestampDuration(sentAt, expiry);
-
-        if (validUntil > confirmedLease.ValidUntil)
-        {
-            validUntil = confirmedLease.ValidUntil;
-        }
-
         // A shortening renewal may already have taken effect even while its reply is pending.
-        // Keep the local estimate no later than its possible server-side expiry. Keep Expiry at
-        // its last confirmed value until Redis confirms the renewal.
+        // Assume the largest clock rounding until Redis replies. Keep Expiry at its last confirmed value.
+        long validUntil = Math.Min(confirmedLease.ValidUntil,
+            GetLocalValidUntil(sentAt, expiry, MaxClockRoundingMicroseconds));
         Volatile.Write(ref _lease, new Lease(confirmedLease.ExpiryTicks, validUntil));
     }
 
@@ -1206,6 +1192,13 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         }
 
         Volatile.Write(ref _lease, confirmedLease);
+    }
+
+    internal static long GetLocalValidUntil(long started, TimeSpan? expiry, long roundingMicroseconds)
+    {
+        return expiry is { } duration
+            ? AddTimestampDuration(started, duration - TimeSpan.FromMicroseconds(roundingMicroseconds))
+            : long.MaxValue;
     }
 
     // Saturates below long.MaxValue, which means "no expiry", so a centuries-long expiry cannot
