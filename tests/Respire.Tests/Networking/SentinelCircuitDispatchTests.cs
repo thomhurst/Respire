@@ -280,11 +280,11 @@ public sealed class SentinelCircuitDispatchTests
         await using var second = Primary();
         var firstReply = first.ReplyOverride!;
         var secondReply = second.ReplyOverride!;
-        first.ReplyOverride = (connection, command) => command.StartsWith("PHSCAN ", StringComparison.Ordinal)
-            ? "*2\r\n$7\r\nopaque!\r\n*1\r\n*2\r\n$2\r\n/a\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n"u8.ToArray()
+        first.ReplyOverride = (connection, command) => command.StartsWith("PHPATHSCAN ", StringComparison.Ordinal)
+            ? "*2\r\n$7\r\nopaque!\r\n*1\r\n$2\r\n/a\r\n"u8.ToArray()
             : firstReply(connection, command);
-        second.ReplyOverride = (connection, command) => command.StartsWith("PHSCAN ", StringComparison.Ordinal)
-            ? "*2\r\n$1\r\n0\r\n*1\r\n*2\r\n$2\r\n/b\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n"u8.ToArray()
+        second.ReplyOverride = (connection, command) => command.StartsWith("PHPATHSCAN ", StringComparison.Ordinal)
+            ? "*2\r\n$1\r\n0\r\n*1\r\n$2\r\n/b\r\n"u8.ToArray()
             : secondReply(connection, command);
         var port = first.Port;
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
@@ -332,15 +332,15 @@ public sealed class SentinelCircuitDispatchTests
         {
             await Assert.That(await Failure(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5))))
                 .IsTypeOf<RespireConnectionRetiredException>();
-            await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("PHSCAN ", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(second.ReceivedCommands.Any(command => command.StartsWith("PHPATHSCAN ", StringComparison.Ordinal))).IsFalse();
         }
         else
         {
             await pending.WaitAsync(TimeSpan.FromSeconds(5));
-            await Assert.That(second.ReceivedCommands.Count(command => command == "PHSCAN tree 0 COUNT 100 WITHVALUES")).IsEqualTo(1);
+            await Assert.That(second.ReceivedCommands.Count(command => command == "PHPATHSCAN tree 0 COUNT 100")).IsEqualTo(1);
         }
 
-        await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("PHSCAN tree opaque!", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(first.ReceivedCommands.Any(command => command.StartsWith("PHPATHSCAN tree opaque!", StringComparison.Ordinal))).IsFalse();
         await Assert.That(circuit.Snapshot().FailureCount).IsEqualTo(0);
         await Assert.That(circuit.Snapshot().ActiveProbes).IsEqualTo(0);
     }

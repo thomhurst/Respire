@@ -13,13 +13,13 @@ Respire exposes commands in two layers:
 
 ## Catalog sources
 
-The catalog has 666 unique descriptors. Counts overlap because many commands appear in several
+The catalog has 667 unique descriptors. Counts overlap because many commands appear in several
 references.
 
 | Reference | Version audited | Descriptors |
 | --- | --- | ---: |
 | Redis command metadata | 8.10.0 | 598 |
-| Valkey command metadata | 9.2.0-rc1 plus [DELEX](https://github.com/valkey-io/valkey/blob/9.2.0/src/commands/delex.json) and three Path Hash commands from 9.2.0 | 493 |
+| Valkey command metadata | 9.2.0-rc1 plus [DELEX](https://github.com/valkey-io/valkey/blob/9.2.0/src/commands/delex.json) and four Path Hash commands from 9.2.0 | 494 |
 | Redis integrated modules | Redis 8.10 documentation | Included above |
 | Valkey optional Bloom, JSON, and Search modules | Valkey 9.1 documentation | Included above |
 | KeyDB extensions | 6.3.4 command table and command reference, audited 2026-09-30 | 9 |
@@ -45,7 +45,7 @@ and [Dragonfly 2.0.0 Cluster guide](https://github.com/dragonflydb/dragonfly/blo
 ### `IsReadOnly`
 
 - True only when every provider in `Sources` has authoritative core JSON metadata with `READONLY`
-  and without `WRITE`. Conflicting or missing flags give false.
+  and without `WRITE`, or an explicit read audit. Conflicting flags give false.
 - False means write-capable or unknown, not proof of a write.
 - Manual module and compatible-server entries declare no read-only metadata. A repeated manual
   entry does not erase a provider's core flags.
@@ -63,7 +63,10 @@ positions.
 
 - `TOUCH` is excluded (it updates primary access metadata).
 - `ARSCAN` is a cursor read without a supported affinity layout.
-- Valkey `PHSCAN` uses its opaque cursor at argument index 1 and preserves cursor affinity.
+- Valkey 9.2.0 `PHPATHSCAN` uses an opaque path cursor at argument index 1. `PHSCAN` uses a numeric
+  field cursor at argument index 2. Both preserve cursor affinity.
+- `COMMAND INFO` confirms replica eligibility for `JSON.GET` on Redis and Valkey Bundle and
+  `TS.GET` on Redis.
 - Valkey `ACL DIGEST`, `ACL GETROLE`, `ACL ROLES`, and `CONFIG INFO` stay primary-only because
   upstream marks them administrative rather than `READONLY`. Their cache effects are read-only.
 - `MEMORY USAGE` is eligible and reports node-local memory.
@@ -138,8 +141,8 @@ Clone the tagged Redis and Valkey repositories, then run:
 ```
 
 The generator reads official core JSON metadata and owns the module and compatible-server
-extension lists. It adds Valkey's `DELEX` from the 9.2.0 release. Update the lists from their
-command references when you upgrade the pins.
+extension lists. It adds Valkey's `DELEX` and four Path Hash commands from the 9.2.0 release.
+Update the lists from their command references when you upgrade the pins.
 
 ## Verification
 

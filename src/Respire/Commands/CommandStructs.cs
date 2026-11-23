@@ -646,7 +646,7 @@ internal readonly struct DynamicCommand(
 
     public int CursorArgumentIndex => cursorArgumentIndex;
 
-    public bool HasOpaqueCursor => tokens.Length > 0 && tokens[0].EqualsAsciiIgnoreCase("PHSCAN");
+    public bool HasOpaqueCursor => tokens.Length > 0 && tokens[0].EqualsAsciiIgnoreCase("PHPATHSCAN");
 
     public RespireCacheMutation GetCacheMutation(string operation)
         => cacheMutation == RespireCacheMutation.Unknown && !hasExplicitCacheMutation

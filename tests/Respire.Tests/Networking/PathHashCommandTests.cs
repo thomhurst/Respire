@@ -48,7 +48,7 @@ public class PathHashCommandTests
             "*2\r\n$1\r\nv\r\n$-1\r\n"u8.ToArray(), "*2\r\n$1\r\nv\r\n$-1\r\n"u8.ToArray(),
             Encoding.ASCII.GetBytes(payload), ":1\r\n"u8.ToArray(), ":2\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray(), ":2\r\n"u8.ToArray(), Encoding.ASCII.GetBytes("*1\r\n" + entry),
-            Encoding.ASCII.GetBytes("*1\r\n" + entry), Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + entry));
+            Encoding.ASCII.GetBytes("*1\r\n" + entry), Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + Path));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var paths = client.WithKeyPrefix("tenant:").PathHashes;
         await Assert.That(await paths.SetAsync("tree", "/a", "f", "v")).IsTrue();
@@ -76,6 +76,7 @@ public class PathHashCommandTests
         var page = await paths.ScanPageAsync("tree", prefix: "/a", count: 2);
         await Assert.That(page.IsComplete).IsTrue();
         await Assert.That(page.Entries[0].Path).IsEquivalentTo(longest.Path);
+        await Assert.That(page.Entries[0].Fields).IsEmpty();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
             "PHSET tenant:tree /a FIELDS 1 f v", "PHSET tenant:tree /a FNX FIELDS 1 f v",
             "PHMSET tenant:tree /a FIELDS 1 f v /b FIELDS 1 g w", "PHGET tenant:tree /a f",
@@ -84,7 +85,7 @@ public class PathHashCommandTests
             "PHPATHEXISTS tenant:tree /a", "PHPATHCOUNT tenant:tree", "PHDEL tenant:tree /a f",
             "PHPATHDEL tenant:tree / WITHSUBPATHS", "PHPREFIXES tenant:tree /abc COUNT 1 WITHVALUES",
             "PHPREFIXES tenant:tree /abc WITHVALUES COUNT 2 MAXPATHLEN 3",
-            "PHSCAN tenant:tree 0 PREFIX /a COUNT 2 WITHVALUES"]);
+            "PHPATHSCAN tenant:tree 0 PREFIX /a COUNT 2"]);
     }
 
     [Test]
@@ -132,10 +133,9 @@ public class PathHashCommandTests
     [Test]
     public async Task StreamingPreservesOpaqueCursorAcrossEmptyPagesAndOwnsResults()
     {
-        var entry = "*2\r\n" + Path + Fields;
         await using var server = new FakeRespServer(
             "*2\r\n$7\r\nopaque!\r\n*0\r\n"u8.ToArray(),
-            Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + entry));
+            Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + Path));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var entries = new List<RespirePathHashEntry>();
 
@@ -145,20 +145,20 @@ public class PathHashCommandTests
         }
 
         await Assert.That(entries.Count).IsEqualTo(1);
-        await Assert.That(entries[0].Fields[0].Value).IsEquivalentTo("v"u8.ToArray());
+        await Assert.That(entries[0].Path).IsEquivalentTo("/a"u8.ToArray());
+        await Assert.That(entries[0].Fields).IsEmpty();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
-            "PHSCAN tree 0 PREFIX / COUNT 1 WITHVALUES", "PHSCAN tree opaque! PREFIX / COUNT 1 WITHVALUES"]);
+            "PHPATHSCAN tree 0 PREFIX / COUNT 1", "PHPATHSCAN tree opaque! PREFIX / COUNT 1"]);
     }
 
     [Test]
     public async Task StreamingPinsEachEnumerationAndSpreadsFreshScansAcrossReplicas()
     {
-        var entry = "*2\r\n" + Path + Fields;
-        var firstPage = Encoding.ASCII.GetBytes("*2\r\n$7\r\nopaque!\r\n*1\r\n" + entry);
+        var firstPage = Encoding.ASCII.GetBytes("*2\r\n$7\r\nopaque!\r\n*1\r\n" + Path);
         var lastPage = "*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray();
 
-        byte[]? Pages(string command) => command.StartsWith("PHSCAN tree 0 ", StringComparison.Ordinal) ? firstPage
-            : command.StartsWith("PHSCAN tree opaque! ", StringComparison.Ordinal) ? lastPage : null;
+        byte[]? Pages(string command) => command.StartsWith("PHPATHSCAN tree 0 ", StringComparison.Ordinal) ? firstPage
+            : command.StartsWith("PHPATHSCAN tree opaque! ", StringComparison.Ordinal) ? lastPage : null;
 
         var replicaRole = "*5\r\n$5\r\nslave\r\n$9\r\n127.0.0.1\r\n:6379\r\n$9\r\nconnected\r\n:0\r\n"u8.ToArray();
         await using var primary = new FakeRespServer(FakeRespServer.OkReply);
@@ -191,8 +191,8 @@ public class PathHashCommandTests
 
         foreach (var replica in new[] { first, second })
         {
-            await Assert.That(replica.ReceivedCommands.Where(command => command.StartsWith("PHSCAN ", StringComparison.Ordinal)))
-                .IsEquivalentTo(["PHSCAN tree 0 COUNT 1 WITHVALUES", "PHSCAN tree opaque! COUNT 1 WITHVALUES"]);
+            await Assert.That(replica.ReceivedCommands.Where(command => command.StartsWith("PHPATHSCAN ", StringComparison.Ordinal)))
+                .IsEquivalentTo(["PHPATHSCAN tree 0 COUNT 1", "PHPATHSCAN tree opaque! COUNT 1"]);
         }
 
         await Assert.That(primary.ReceivedCommands).IsEmpty();
@@ -205,7 +205,8 @@ public class PathHashCommandTests
     {
         var entry = "*2\r\n" + Path + Map;
         byte[][] results = [FakeRespServer.OkReply, "*1\r\n$1\r\nv\r\n"u8.ToArray(),
-            Encoding.ASCII.GetBytes("*1\r\n" + entry), Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + entry), ":1\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes("*1\r\n" + entry), Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + Path),
+            ":1\r\n"u8.ToArray(),
             "*1\r\n$1\r\nv\r\n"u8.ToArray(), ":1\r\n"u8.ToArray()];
         var replies = transaction
             ? new[] { FakeRespServer.OkReply }.Concat(Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), results.Length))
@@ -248,15 +249,18 @@ public class PathHashCommandTests
         await Assert.That(read.Result!).IsEquivalentTo("v"u8.ToArray());
         await Assert.That(match.Result!.Path).IsEquivalentTo("/a"u8.ToArray());
         await Assert.That(page.Result.IsComplete).IsTrue();
+        await Assert.That(page.Result.Entries.Single().Path).IsEquivalentTo("/a"u8.ToArray());
         await Assert.That(deleted.Result).IsEqualTo(1);
         await Assert.That(fieldRead.Result.Length).IsEqualTo(1);
         await Assert.That(fieldRead.Result[0]!).IsEquivalentTo("v"u8.ToArray());
         await Assert.That(fieldDeleted.Result).IsEqualTo(1);
-        var scan = server.ReceivedArguments.Single(args => args[0].AsSpan().SequenceEqual("PHSCAN"u8));
+        var scan = server.ReceivedArguments.Single(args => args[0].AsSpan().SequenceEqual("PHPATHSCAN"u8));
         await Assert.That(scan[2].AsSpan().SequenceEqual(new byte[] { 0xff, 0, 0x80 })).IsTrue();
         await Assert.That(server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC")).IsEquivalentTo([
             "PHSET tenant:tree /a FXX FIELDS 1 f v", "PHGET tenant:tree /a f",
-            "PHPREFIXES tenant:tree /abc COUNT 1 WITHVALUES", $"PHSCAN tenant:tree {Encoding.UTF8.GetString(new byte[] { 0xff, 0, 0x80 })} PREFIX /a COUNT 1 WITHVALUES", "PHDEL tenant:tree /a",
+            "PHPREFIXES tenant:tree /abc COUNT 1 WITHVALUES",
+            $"PHPATHSCAN tenant:tree {Encoding.UTF8.GetString(new byte[] { 0xff, 0, 0x80 })} PREFIX /a COUNT 1",
+            "PHDEL tenant:tree /a",
             "PHGET tenant:tree /a f", "PHDEL tenant:tree /a f"]);
     }
 
@@ -291,7 +295,8 @@ public class PathHashCommandTests
     [Arguments("*2\r\n:0\r\n*0\r\n")]
     [Arguments("*2\r\n$0\r\n\r\n*0\r\n")]
     [Arguments("*2\r\n$1\r\n0\r\n$-1\r\n")]
-    [Arguments("*2\r\n$1\r\n0\r\n*1\r\n*2\r\n$1\r\na\r\n*1\r\n$1\r\nf\r\n")]
+    [Arguments("*2\r\n$1\r\n0\r\n*1\r\n:42\r\n")]
+    [Arguments("*2\r\n$1\r\n0\r\n*1\r\n*2\r\n$1\r\na\r\n*0\r\n")]
     public async Task MalformedPageIsRejected(string reply)
     {
         await using var server = new FakeRespServer(Encoding.ASCII.GetBytes(reply));
@@ -302,8 +307,7 @@ public class PathHashCommandTests
     [Test]
     public async Task CancelingEnumerationStopsWithinPage()
     {
-        var entry = "*2\r\n" + Path + Fields;
-        await using var server = new FakeRespServer(Encoding.ASCII.GetBytes("*2\r\n$7\r\nopaque!\r\n*2\r\n" + entry + entry));
+        await using var server = new FakeRespServer(Encoding.ASCII.GetBytes("*2\r\n$7\r\nopaque!\r\n*2\r\n" + Path + Path));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var canceled = new CancellationTokenSource();
         await using var stream = client.PathHashes.ScanAsync("tree").GetAsyncEnumerator(canceled.Token);

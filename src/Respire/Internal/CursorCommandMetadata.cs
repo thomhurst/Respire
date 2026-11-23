@@ -19,7 +19,7 @@ internal static class CursorCommandMetadata
         {
             return false;
         }
-        // PHSCAN compares the exact wire payload; SCAN-family arguments remain numeric.
+        // PHPATHSCAN compares the exact wire payload.
         if (command.HasOpaqueCursor)
         {
             return !cursor.Equals((RespireValue)"0");

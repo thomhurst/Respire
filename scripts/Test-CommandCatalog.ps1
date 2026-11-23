@@ -81,7 +81,7 @@ try {
         CONFLICT = 'Never'; MISSING = 'Never'; EMPTY = 'Never'; CONTRADICTION = 'Never'
         DUPLICATE = 'Never'; INVENTED_RO = 'Never'; 'CUSTOM GET' = 'ReadOnly'
         'EVAL_RO' = 'Never'; 'FT.CURSOR READ' = 'Never'; 'JSON.GET' = 'ReadOnly'
-        'PHSCAN' = 'ReadOnly'; 'ACL DIGEST' = 'Connection'; 'ACL SETROLE' = 'ServerAdmin'
+        'PHSCAN' = 'ReadOnly'; 'PHPATHSCAN' = 'ReadOnly'; 'ACL DIGEST' = 'Connection'; 'ACL SETROLE' = 'ServerAdmin'
         'CONFIG INFO' = 'Connection'
     }
     foreach ($entry in $retryExpectations.GetEnumerator()) {
@@ -117,14 +117,14 @@ try {
             throw "Cache mutation table depends on descriptor initialization: $forbidden."
         }
     }
-    $cursorIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; PHSCAN = 1; ARSCAN = -1 }
+    $cursorIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; PHSCAN = 2; PHPATHSCAN = 1; ARSCAN = -1 }
     foreach ($entry in $cursorIndices.GetEnumerator()) {
         $declaration = '["' + $entry.Key + '"] = (ReadCommandKind.CursorRead, ' + $entry.Value + '),'
         if (-not $first.Contains($declaration)) { throw "Incorrect cursor classification for $($entry.Key)." }
     }
     $mutationExpectations = @{
         GET = 'ReadOnly'; SET = 'Mutation'; 'JSON.GET' = 'ReadOnly'; 'BF.EXISTS' = 'ReadOnly'
-        'KEYDB.NHGET' = 'Mutation'; 'CLUSTER SLOT-STATS' = 'ReadOnly'
+        'KEYDB.NHGET' = 'Mutation'; 'CLUSTER SLOT-STATS' = 'ReadOnly'; 'PHPATHSCAN' = 'ReadOnly'
         'FT.CONFIG GET' = 'ReadOnly'; 'FT.CONFIG SET' = 'Mutation'
         'ACL DIGEST' = 'ReadOnly'; 'ACL SETROLE' = 'Mutation'; 'CONFIG INFO' = 'ReadOnly'
     }

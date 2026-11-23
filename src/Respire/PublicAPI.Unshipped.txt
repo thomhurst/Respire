@@ -1071,6 +1071,7 @@ static readonly Respire.RespireCommands.PathHash.PHMSET -> Respire.RespireComman
 static readonly Respire.RespireCommands.PathHash.PHPATHCOUNT -> Respire.RespireCommand
 static readonly Respire.RespireCommands.PathHash.PHPATHDEL -> Respire.RespireCommand
 static readonly Respire.RespireCommands.PathHash.PHPATHEXISTS -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHPATHSCAN -> Respire.RespireCommand
 static readonly Respire.RespireCommands.PathHash.PHPREFIXES -> Respire.RespireCommand
 static readonly Respire.RespireCommands.PathHash.PHSCAN -> Respire.RespireCommand
 static readonly Respire.RespireCommands.PathHash.PHSET -> Respire.RespireCommand

@@ -126,8 +126,11 @@ if (!page.IsComplete)
     page = await redis.PathHashes.ScanPageAsync("routes", page.Cursor, prefix: "/api", count: 100);
 ```
 
-These traversal methods use the Valkey 9.2.0-rc1 scan protocol. Traversal is lexicographic.
-PHSCAN cursors are owned opaque bytes (`ReadOnlyMemory<byte>`); pass them back unchanged with
+Path traversal uses `PHPATHSCAN` and requires Valkey 9.2.0 or later. It returns paths in byte
+lexicographic order. Each entry has an empty `Fields` array. Use `GetAllAsync` to fetch the fields
+for a path. The `count` parameter limits the number of paths in a page.
+
+Cursors are owned opaque bytes (`ReadOnlyMemory<byte>`); pass them back unchanged with
 the same key and prefix, and stop only when `IsComplete` is true (the single ASCII byte `0`). Omit the cursor or pass empty memory to start a scan. An empty page alone does not end traversal.
 Streamed enumerations pin their cursor to its issuing server, including when reading replicas.
 Each page is a separate read, so concurrent writes can alter the traversal. Cancellation is
