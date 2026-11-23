@@ -4118,6 +4118,7 @@ public class ClusterTests
             Protocol = RespireProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+            CommandTimeout = TimeSpan.FromDays(50),
         });
 #pragma warning restore RESP010
         var script = RespireScript.Create("return redis.call('GET', KEYS[1])");
