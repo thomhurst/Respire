@@ -219,8 +219,8 @@ internal sealed partial class BatchListCommands(IPendingSink sink) : IRespireBat
     public RespirePending<string?> Move(
         RespireKey source, RespireKey destination, RespireListSide from = RespireListSide.Left, RespireListSide to = RespireListSide.Right)
     {
-        RespireValue fromSide = from == RespireListSide.Left ? "LEFT" : "RIGHT";
-        RespireValue toSide = to == RespireListSide.Left ? "LEFT" : "RIGHT";
+        RespireValue fromSide = ListCommands.SideToken(from, nameof(from));
+        RespireValue toSide = ListCommands.SideToken(to, nameof(to));
         return sink.Add<Cmd4, string?>(
             "LMOVE",
             new Cmd4(Verbs.LMove, sink.Client.Key(in source), sink.Client.Key(in destination), fromSide, toSide),
