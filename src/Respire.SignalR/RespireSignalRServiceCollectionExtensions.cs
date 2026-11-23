@@ -18,8 +18,8 @@ public static class RespireSignalRServiceCollectionExtensions
         }
 
         options.Validate(static value => value.ChannelPrefix is not null
-            && value.SubscriptionBufferSize > 0 && value.GroupAckTimeout > TimeSpan.Zero
-            && value.GroupAckTimeout <= TimeSpan.FromMilliseconds(uint.MaxValue - 1), "Invalid Respire SignalR options.");
+            && value.SubscriptionBufferSize > 0
+            && RespireSignalROptions.IsValidGroupAckTimeout(value.GroupAckTimeout), "Invalid Respire SignalR options.");
         builder.Services.AddSingleton(typeof(HubLifetimeManager<>), typeof(RespireHubLifetimeManager<>));
         return builder;
     }

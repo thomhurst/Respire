@@ -21,7 +21,7 @@ public sealed class RespireSignalROptions
         get; set;
     } = 1024;
 
-    /// <summary>Maximum time to await a remote group acknowledgement.</summary>
+    /// <summary>Maximum time to await a remote group acknowledgement. Must be positive and at most 4,294,967,294 milliseconds.</summary>
     public TimeSpan GroupAckTimeout
     {
         get; set;
@@ -33,4 +33,9 @@ public sealed class RespireSignalROptions
     {
         get; set;
     } = TimeSpan.FromSeconds(30);
+
+    internal static bool IsValidGroupAckTimeout(TimeSpan timeout)
+    {
+        return timeout > TimeSpan.Zero && timeout <= TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+    }
 }
