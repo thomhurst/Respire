@@ -50,6 +50,9 @@ public sealed class RespireJsonClient
     /// A null patch itself replaces the target with JSON null; it does not delete the document key.
     /// Argument and serialization failures are reported through the returned task.
     /// </remarks>
+    /// <exception cref="RespireException">
+    /// Redis does not acknowledge the patch with <c>OK</c>. Redis can return null when an intermediate path is missing.
+    /// </exception>
     public ValueTask MergeAsync<T>(
         RespireKey key,
         T patch,
@@ -75,15 +78,16 @@ public sealed class RespireJsonClient
         using var buffer = RentBuffer(jsonTypeInfo.Options);
         var payload = buffer.Serialize(patch, jsonTypeInfo);
         using var result = await DispatchAsync(MergeCommand, [key, path.Value, payload], cancellationToken).ConfigureAwait(false);
+        ExpectWriteAcknowledgment(result, MergeCommand);
     }
 
     /// <summary>Gets one typed JSON value.</summary>
     /// <remarks>
     /// <para>
     /// <see cref="RespireJsonGetResult{T}.Found"/> is false when the key does not exist or when a JSONPath
-    /// matches nothing; the two cases are not distinguished. A stored JSON <c>null</c> returns
-    /// <c>Found = true</c> with a default <see cref="RespireJsonGetResult{T}.Value"/>, even when
-    /// <typeparamref name="T"/> is a non-nullable reference type.
+    /// matches nothing. A stored JSON <c>null</c> returns <c>Found = true</c> with the deserialized
+    /// value if the supplied metadata accepts null. By default, reference types and nullable value
+    /// types deserialize JSON <c>null</c> to null.
     /// </para>
     /// <para>
     /// With the default legacy path, a missing path inside an existing document is reported by Redis as a
@@ -91,6 +95,10 @@ public sealed class RespireJsonClient
     /// To read several paths at once, use <see cref="GetJsonAsync"/> with <see cref="RespireJsonGetOptions.Paths"/>.
     /// </para>
     /// </remarks>
+    /// <exception cref="JsonException">
+    /// The supplied metadata cannot deserialize the value, for example a JSON <c>null</c> read as
+    /// a non-nullable value type with the default converter.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// A JSONPath (<c>$</c>) path matched more than one value. Use <see cref="GetManyAsync{T}"/> for paths
     /// that can match several values, such as wildcards.
@@ -181,7 +189,7 @@ public sealed class RespireJsonClient
     /// <remarks>
     /// The value is serialized directly to UTF-8. A null reference is stored as the JSON literal <c>null</c>.
     /// </remarks>
-    /// <returns>False when <see cref="RespireJsonSetCondition.Nx"/> or <see cref="RespireJsonSetCondition.Xx"/> rejected the write.</returns>
+    /// <returns>False when the path cannot be set or the condition rejects the write.</returns>
     /// <remarks>Argument and serialization failures are reported through the returned task, not thrown synchronously.</remarks>
     public ValueTask<bool> SetAsync<T>(
         RespireKey key,
@@ -239,7 +247,7 @@ public sealed class RespireJsonClient
     /// text, the JSON is not validated on the client: Redis rejects invalid JSON with a
     /// <see cref="RespireServerException"/>. Argument failures are reported through the returned task.
     /// </remarks>
-    /// <returns>False when <see cref="RespireJsonSetCondition.Nx"/> or <see cref="RespireJsonSetCondition.Xx"/> rejected the write.</returns>
+    /// <returns>False when the path cannot be set or the condition rejects the write.</returns>
     public ValueTask<bool> SetJsonAsync(
         RespireKey key,
         string json,
@@ -287,7 +295,7 @@ public sealed class RespireJsonClient
     /// The JSON is not validated on the client: Redis rejects invalid JSON with a
     /// <see cref="RespireServerException"/>. Argument failures are reported through the returned task.
     /// </remarks>
-    /// <returns>False when <see cref="RespireJsonSetCondition.Nx"/> or <see cref="RespireJsonSetCondition.Xx"/> rejected the write.</returns>
+    /// <returns>False when the path cannot be set or the condition rejects the write.</returns>
     public ValueTask<bool> SetJsonAsync(
         RespireKey key,
         ReadOnlyMemory<byte> utf8Json,
@@ -392,11 +400,13 @@ public sealed class RespireJsonClient
         return values;
     }
 
-    /// <summary>Serializes and atomically writes multiple key/path/value triples with JSON.MSET.</summary>
+    /// <summary>Serializes and sends multiple key/path/value triples in one JSON.MSET command.</summary>
     /// <remarks>
     /// Every entry is serialized before anything is sent, so a serialization failure writes nothing.
-    /// JSON.MSET has no conditional form and replies OK or an error, so the method has no result.
+    /// Redis can apply earlier entries before returning null for an entry with a missing intermediate path.
+    /// Earlier writes can remain after an exception.
     /// </remarks>
+    /// <exception cref="RespireException">Redis does not acknowledge the complete write with <c>OK</c>.</exception>
     public ValueTask MultiSetAsync<T>(
         IReadOnlyList<RespireJsonSetEntry<T>> entries,
         JsonTypeInfo<T> jsonTypeInfo,
@@ -425,6 +435,15 @@ public sealed class RespireJsonClient
         using var buffer = RentBuffer(jsonTypeInfo.Options);
         var arguments = SerializeEntries(entries, jsonTypeInfo, buffer);
         using var result = await DispatchAsync(MultiSetCommand, arguments, cancellationToken).ConfigureAwait(false);
+        ExpectWriteAcknowledgment(result, MultiSetCommand);
+    }
+
+    private static void ExpectWriteAcknowledgment(RespireResult result, RespireCommand command)
+    {
+        if (result.Type != RespireDataType.SimpleString || !result.AsSpan().SequenceEqual("OK"u8))
+        {
+            throw new RespireException($"{command.Name} did not acknowledge the write with OK.");
+        }
     }
 
     private static RespireValue[] SerializeEntries<T>(

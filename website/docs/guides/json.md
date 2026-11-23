@@ -49,8 +49,10 @@ internal sealed record Customer(string Name, string Email);
 - `GetAsync` reads one path and throws `InvalidOperationException` on more than one match. Use
   `GetManyAsync` for wildcards, or `GetJsonAsync` to read several paths as text.
 - `RespireJsonGetResult<T>.Found` is false when the key is missing or a JSONPath matches nothing.
-- A stored JSON `null` returns `Found = true` with a default `Value`, even for a non-nullable
-  reference type.
+- When the supplied JSON metadata accepts a stored JSON `null`, `GetAsync` returns
+  `Found = true` with the deserialized value. With the default converters, nullable value types
+  and reference types return a null value. Non-nullable value types such as `int` throw
+  `JsonException`.
 - In `GetAsync`, a missing legacy path inside an existing document is a server error. A `$` path
   with no matches returns `Found = false`.
 
@@ -63,13 +65,16 @@ internal sealed record Customer(string Name, string Email);
   property holds an array of matches, including properties for legacy paths. For the document
   `{"a":1,"b":2}` and `Paths = [".a", "$.b"]`, the result is equivalent to `{".a":[1],"$.b":[2]}`.
 - `SetAsync` serializes typed values straight to UTF-8. `SetJsonAsync` takes pre-serialized JSON as
-  a string or UTF-8 bytes. Both return `false` when `RespireJsonSetCondition.Nx` or `Xx` rejects the
-  write.
+  a string or UTF-8 bytes. Both return `false` if Redis cannot create the path, for example when
+  an intermediate object is missing. They also return `false` when `RespireJsonSetCondition.Nx`
+  or `Xx` rejects the write.
 - `MultiGetAsync` returns one entry per key in input order. A missing key or missing legacy
   path yields `null`. A matching legacy path yields a one-element array. With a `$` path, an
   existing JSON document with no matches yields an empty array.
-- `MultiSetAsync` writes every entry atomically with `JSON.MSET`. It serializes everything first, so
-  a serialization failure writes nothing.
+- `MultiSetAsync` sends the entries in one `JSON.MSET` command. It serializes everything first, so
+  a serialization failure writes nothing. It throws `RespireException` if Redis returns a reply
+  other than `OK`. Redis can apply earlier entries before returning null for an entry with a
+  missing intermediate path. Earlier writes can remain after the exception.
 - `GetMemoryUsageAsync` runs `JSON.DEBUG MEMORY`.
 
 ### Floating point array storage
@@ -107,6 +112,8 @@ supports the raw FPHA arguments and key prefixing; dispose its `RespireResult`.
   null handling deliberately.
 - Arrays and scalars replace the selected value.
 - A null patch replaces the target with JSON `null`; it does not delete the key.
+- `MergeAsync` throws `RespireException` if Redis returns a reply other than `OK`, including when
+  Redis returns null because an intermediate path is missing.
 
 `RespireJsonClient.Commands` exposes generated low-level methods for `JSON.GET`, `JSON.SET`,
 `JSON.MGET`, `JSON.MSET`, `JSON.DEL`, `JSON.FORGET`, `JSON.CLEAR`, array, number, object, string,

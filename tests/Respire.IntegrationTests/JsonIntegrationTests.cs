@@ -80,6 +80,41 @@ public partial class JsonIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task MultiSetReportsAWriteThatRedisOnlyPartiallyApplies(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var prefix = $"json:{{{Guid.NewGuid():N}}}:";
+        var json = new RespireJsonClient(client.WithKeyPrefix(prefix));
+        var info = JsonIntegrationContext.Default.Int32;
+        (await json.SetJsonAsync("first", "1")).Should().BeTrue();
+        (await json.SetJsonAsync("second", "{}")).Should().BeTrue();
+
+        await json.Awaiting(j => j.MultiSetAsync(
+            [new("first", 2), new("second", 2, ".missing.child")], info).AsTask()).Should().ThrowAsync<RespireException>();
+
+        (await json.GetJsonAsync("first")).Should().Be("2");
+        (await json.GetJsonAsync("second")).Should().Be("{}");
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task MergeReportsAnUnappliedPatch(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var key = $"json:{Guid.NewGuid():N}:document";
+        var json = client.Json;
+        (await json.SetJsonAsync(key, "{}")).Should().BeTrue();
+
+        await json.Awaiting(j => j.MergeAsync(key, 2, JsonIntegrationContext.Default.Int32, ".missing.child").AsTask())
+            .Should().ThrowAsync<RespireException>();
+
+        (await json.GetJsonAsync(key)).Should().Be("{}");
+    }
+
+    [Test]
     public async Task LocalWritesInvalidateCachedJsonReads()
     {
         var options = RespireOptions.Parse(fixture.ConnectionString) with

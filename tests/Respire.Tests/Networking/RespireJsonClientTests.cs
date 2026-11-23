@@ -236,6 +236,30 @@ public partial class RespireJsonClientTests
     }
 
     [Test]
+    [Arguments("$-1\r\n")]
+    [Arguments("_\r\n")]
+    [Arguments("+QUEUED\r\n")]
+    public async Task TypedWritesRequireAnOkReply(string reply)
+    {
+        var writeReply = Encoding.UTF8.GetBytes(reply);
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("JSON.", StringComparison.Ordinal) ? writeReply : null,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var json = client.Json;
+        var info = JsonTestContext.Default.Profile;
+
+        var multiSetError = await Assert.That(async () => await json.MultiSetAsync(
+            [new("first", new(1)), new("second", new(2), ".missing.child")], info)).Throws<RespireException>();
+        await Assert.That(multiSetError!.Message).Contains("JSON.MSET");
+
+        var mergeError = await Assert.That(async () => await json.MergeAsync("second", new(2), info, ".missing.child"))
+            .Throws<RespireException>();
+        await Assert.That(mergeError!.Message).Contains("JSON.MERGE");
+    }
+
+    [Test]
     public async Task JsonPathRepliesDeserializeEveryMatchAndLegacyNullIsFound()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply)
