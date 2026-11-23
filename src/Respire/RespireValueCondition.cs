@@ -25,11 +25,13 @@ public sealed class RespireValueCondition
         get;
     }
 
-    /// <summary>Compare the current string bytes for equality. SET: Redis 8.4+ or Valkey 8.1+; DELEX: Redis 8.4+.</summary>
+    /// <summary>Compare the current string bytes for equality.</summary>
+    /// <remarks>SET IFEQ requires Redis 8.4+ or Valkey 8.1+. DELEX IFEQ requires Redis 8.4+ or Valkey 9.2+.</remarks>
     public static RespireValueCondition EqualTo(RespireValue value) => new(EqualToken, value);
 
-    /// <summary>Compare the current string bytes for inequality. SET and DELEX: Redis 8.4+.</summary>
-    /// <remarks>SET creates a missing key; DELEX returns false for a missing key.</remarks>
+    /// <summary>Compare the current string bytes for inequality.</summary>
+    /// <remarks>SET IFNE and DELEX IFNE require Redis 8.4+ or Valkey 9.2+.
+    /// SET creates a missing key. DELEX returns false for a missing key.</remarks>
     public static RespireValueCondition NotEqualTo(RespireValue value) => new(NotEqualToken, value);
 
     /// <summary>Compare the current string digest for equality. SET and DELEX: Redis 8.4+.</summary>

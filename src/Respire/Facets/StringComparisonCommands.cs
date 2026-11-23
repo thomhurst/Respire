@@ -7,8 +7,8 @@ namespace Respire;
 
 public partial interface IRespireStringCommands
 {
-    /// <summary>Sets a raw value only when the comparison succeeds, returning whether it was written. Redis: SET with a comparison condition.</summary>
-    /// <remarks>Binary value buffers must remain unchanged until completion. A failed comparison preserves the old value and expiry.</remarks>
+    /// <summary>Sets a raw value only when the comparison succeeds, returning whether it was written.</summary>
+    /// <remarks>See <see cref="RespireValueCondition"/> for server requirements. Binary value buffers must remain unchanged until completion. A failed comparison preserves the old value and expiry.</remarks>
     ValueTask<bool> SetConditionalAsync(RespireKey key, RespireValue value, RespireValueCondition condition,
         RespireExpiry expiry = default, CancellationToken cancellationToken = default);
 
@@ -18,8 +18,8 @@ public partial interface IRespireStringCommands
     ValueTask<bool> SetConditionalAsync<T>(RespireKey key, T value, RespireValueCondition condition,
         RespireExpiry expiry = default, CancellationToken cancellationToken = default);
 
-    /// <summary>Attempts a conditional SET and returns the old string, including when the comparison fails. Redis: SET with GET.</summary>
-    /// <remarks>A null result means the key was missing. The result is not a write-success flag.</remarks>
+    /// <summary>Attempts a conditional SET with GET and returns the old string, including when the comparison fails.</summary>
+    /// <remarks>See <see cref="RespireValueCondition"/> for server requirements. A null result means the key was missing. The result is not a write-success flag.</remarks>
     ValueTask<string?> GetAndSetConditionalAsync(RespireKey key, RespireValue value, RespireValueCondition condition,
         RespireExpiry expiry = default, CancellationToken cancellationToken = default);
 
@@ -30,12 +30,12 @@ public partial interface IRespireStringCommands
     ValueTask<T?> GetAndSetConditionalAsync<T>(RespireKey key, T value, RespireValueCondition condition,
         RespireExpiry expiry = default, CancellationToken cancellationToken = default);
 
-    /// <summary>Deletes a string only when the comparison succeeds. Returns false for missing keys or failed comparisons. Redis 8.4+: DELEX.</summary>
-    /// <remarks>For Valkey 9.0+ byte equality, use <see cref="DeleteIfEqualAsync"/>. The command is never substituted based on server capabilities.</remarks>
+    /// <summary>Deletes a string only when the comparison succeeds. Returns false for missing keys or failed comparisons.</summary>
+    /// <remarks>Uses DELEX. Byte comparisons require Redis 8.4 or Valkey 9.2. Digest comparisons require Redis 8.4. For byte equality on Valkey 9.0 and 9.1, use <see cref="DeleteIfEqualAsync"/>.</remarks>
     ValueTask<bool> DeleteConditionalAsync(RespireKey key, RespireValueCondition condition, CancellationToken cancellationToken = default);
 
     /// <summary>Deletes a string only when its bytes equal the raw operand. Returns false for missing keys or mismatches. Valkey 9.0+: DELIFEQ.</summary>
-    /// <remarks>This explicitly uses DELIFEQ; use <see cref="DeleteConditionalAsync"/> with <see cref="RespireValueCondition.EqualTo"/> for Redis DELEX. Binary operands are borrowed until completion.</remarks>
+    /// <remarks>Use <see cref="DeleteConditionalAsync"/> with <see cref="RespireValueCondition.EqualTo"/> to send DELEX. Binary operands are borrowed until completion.</remarks>
     ValueTask<bool> DeleteIfEqualAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default);
 
     /// <summary>Returns the owned hexadecimal digest of a string, or null for a missing key. Redis 8.4+: DIGEST.</summary>

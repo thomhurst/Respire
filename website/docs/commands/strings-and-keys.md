@@ -141,15 +141,16 @@ if (digest is not null)
 | API or condition | Command | Minimum supported server |
 | --- | --- | --- |
 | `EqualTo(value)` with conditional SET | `SET ... IFEQ value` | Redis 8.4 or Valkey 8.1 |
-| `NotEqualTo(value)` with conditional SET | `SET ... IFNE value` | Redis 8.4 |
+| `NotEqualTo(value)` with conditional SET | `SET ... IFNE value` | Redis 8.4 or Valkey 9.2 |
 | `DigestEqualTo(digest)` / `DigestNotEqualTo(digest)` with conditional SET | `SET ... IFDEQ` / `IFDNE` | Redis 8.4 |
-| `DeleteConditionalAsync` with any of these four conditions | `DELEX` | Redis 8.4 |
+| `DeleteConditionalAsync` with `EqualTo(value)` / `NotEqualTo(value)` | `DELEX ... IFEQ` / `IFNE` | Redis 8.4 or Valkey 9.2 |
+| `DeleteConditionalAsync` with `DigestEqualTo(digest)` / `DigestNotEqualTo(digest)` | `DELEX ... IFDEQ` / `IFDNE` | Redis 8.4 |
 | `DigestAsync` | `DIGEST` | Redis 8.4 |
 | `DeleteIfEqualAsync(key, value)` | `DELIFEQ` | Valkey 9.0 |
 
-- Commands are sent as is: no version negotiation, script fallback, or substitution between Redis `DELEX` and Valkey `DELIFEQ`. Unsupported commands, malformed digests, and wrong-type keys return server errors.
+- Each API sends its listed command and condition directly to the server. Unsupported commands, malformed digests, and wrong-type keys return server errors.
 - Neither conditional delete works on all Redis and Valkey versions. Check the server flavor and version first. Use `Keys.DeleteAsync` for unconditional deletes.
-- Conditional SET returns `true` when it writes and `false` when the comparison fails. On a missing key, equality conditions fail and Redis inequality conditions create the key.
+- Conditional SET returns `true` when it writes and `false` when the comparison fails. On a missing key, equality conditions fail and supported inequality conditions create the key.
 - Conditional delete returns `false` for a missing key or a mismatch.
 - A failed SET keeps the value and expiry. A successful SET accepts a relative or absolute expiry or `RespireExpiry.Keep`; the default clears the expiry. `RespireExpiry.Persist` is not allowed.
 - Relative expiry truncates to whole milliseconds. A positive duration under 1 ms becomes `PX 0`, which the server rejects without changing anything.
@@ -183,7 +184,8 @@ bool changed = pending.Result;
 
 The client-side cache invalidates the key around immediate comparisons, even failed ones. `DIGEST` does not invalidate.
 
-References: Redis [SET](https://redis.io/docs/latest/commands/set/), [DELEX](https://redis.io/docs/latest/commands/delex/), [DIGEST](https://redis.io/docs/latest/commands/digest/); Valkey [SET](https://valkey.io/commands/set/), [DELIFEQ](https://valkey.io/commands/delifeq/).
+Redis references are [SET](https://redis.io/docs/latest/commands/set/), [DELEX](https://redis.io/docs/latest/commands/delex/), and [DIGEST](https://redis.io/docs/latest/commands/digest/).
+Valkey references are [SET](https://valkey.io/commands/set/), [DELEX](https://valkey.io/commands/delex/), and [DELIFEQ](https://valkey.io/commands/delifeq/).
 
 ## Bulk operations
 

@@ -189,7 +189,8 @@ Respire picks the operation each server connection supports:
 | --- | --- | --- |
 | Redis 8.4+ | `SET key token IFEQ token PX milliseconds` | `DELEX key IFEQ token` |
 | Valkey 8.1–8.x | `SET key token IFEQ token PX milliseconds` | Lua compare-and-delete |
-| Valkey 9.0+ | `SET key token IFEQ token PX milliseconds` | `DELIFEQ key token` |
+| Valkey 9.0–9.1 | `SET key token IFEQ token PX milliseconds` | `DELIFEQ key token` |
+| Valkey 9.2+ | `SET key token IFEQ token PX milliseconds` | `DELEX key IFEQ token` |
 | Older Redis/Valkey | Lua compare-and-`PEXPIRE` | Lua compare-and-delete |
 
 - Release tries `DELEX`, then `DELIFEQ`, then Lua, moving on only after an unknown-command error.
@@ -206,7 +207,7 @@ ACLs must permit the commands for your server:
 | Operation | Commands |
 | --- | --- |
 | Acquire, native renewal | `SET` |
-| Native release | `DELEX` (Redis 8.4+) or `DELIFEQ` (Valkey 9.0+) |
+| Native release | `DELEX` (Redis 8.4+, Valkey 9.2+) or `DELIFEQ` (Valkey 9.0–9.1) |
 | Lua fallback | `EVALSHA`, `EVAL`, plus `GET`, `DEL`, `PEXPIRE` |
 | Managed renewal fencing | `CLIENT ID`, `CLIENT KILL` |
 

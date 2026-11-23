@@ -202,6 +202,10 @@ public class StringLcsIndexTests
         });
 #pragma warning restore RESP010
         var client = root.WithKeyPrefix("tenant:");
+        await Assert.That(async () => await client.Strings.LcsAsync("{a}:first", "{b}:second"))
+            .Throws<RespireCrossSlotException>();
+        await Assert.That(async () => await client.Strings.LcsLengthAsync("{a}:first", "{b}:second"))
+            .Throws<RespireCrossSlotException>();
         await Assert.That(async () => await client.Strings.LcsIndexAsync("{a}:first", "{b}:second"))
             .Throws<RespireCrossSlotException>();
         using var batch = client.CreateBatch();
@@ -210,6 +214,32 @@ public class StringLcsIndexTests
         await Assert.That(() => transaction.Strings.LcsIndex("{a}:first", "{b}:second")).Throws<RespireCrossSlotException>();
         _ = transaction.Strings.LcsIndex("{same}:first", "{same}:second");
         await Assert.That(server.ReceivedCommands.Where(command => command != "CLUSTER SLOTS")).IsEmpty();
+    }
+
+    [Test]
+    public async Task TextAndLength_AcceptKeysWithSharedPrefixSlot()
+    {
+        await using var owner = new FakeRespServer(2, "$3\r\nabc\r\n"u8.ToArray(), ":3\r\n"u8.ToArray());
+        var slot = ClusterHash.GetSlot("{tenant}:{a}:first");
+        var topology = $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n";
+        await using var seed = new FakeRespServer(Encoding.UTF8.GetBytes(topology), "-ERR wrong route\r\n"u8.ToArray());
+        // This client owns the fake topology used to verify LCS routing by prefixed key.
+#pragma warning disable RESP010
+        await using var root = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+#pragma warning restore RESP010
+        var client = root.WithKeyPrefix("{tenant}:");
+
+        await Assert.That(await client.Strings.LcsAsync("{a}:first", "{b}:second")).IsEqualTo("abc");
+        await Assert.That(await client.Strings.LcsLengthAsync("{a}:first", "{b}:second")).IsEqualTo(3);
+        await Assert.That(owner.ReceivedCommands.Where(command => command.StartsWith("LCS")).SequenceEqual([
+            "LCS {tenant}:{a}:first {tenant}:{b}:second",
+            "LCS {tenant}:{a}:first {tenant}:{b}:second LEN"])).IsTrue();
     }
 
     [Test]

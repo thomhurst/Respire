@@ -2075,7 +2075,7 @@ public static class RespireCommands
         public static readonly RespireCommand DECRBY = new("DECRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>DELEX</c>.</summary>
-        public static readonly RespireCommand DELEX = new("DELEX", RespireCommandSource.Redis, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
+        public static readonly RespireCommand DELEX = new("DELEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
 
         /// <summary><c>DELIFEQ</c>.</summary>
         public static readonly RespireCommand DELIFEQ = new("DELIFEQ", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);

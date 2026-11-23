@@ -181,7 +181,7 @@ public class CommandCatalogTests
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Redis)))
             .IsEqualTo(598);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Valkey)))
-            .IsEqualTo(489);
+            .IsEqualTo(490);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.KeyDb)))
             .IsEqualTo(9);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Dragonfly)))
@@ -191,6 +191,13 @@ public class CommandCatalogTests
         await Assert.That(commands.Where(static command =>
                 command.IsCallerSupplied || command.Sources == RespireCommandSource.None))
             .IsEmpty();
+    }
+
+    [Test]
+    public async Task DelexCatalogSources_IncludeRedisAndValkey()
+    {
+        await Assert.That(RespireCommands.String.DELEX.Sources)
+            .IsEqualTo(RespireCommandSource.Redis | RespireCommandSource.Valkey);
     }
 
     [Test]

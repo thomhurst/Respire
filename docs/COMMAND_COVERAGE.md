@@ -19,7 +19,7 @@ references.
 | Reference | Version audited | Descriptors |
 | --- | --- | ---: |
 | Redis command metadata | 8.10.0 | 598 |
-| Valkey command metadata | 9.2.0-rc1 | 489 |
+| Valkey command metadata | 9.2.0-rc1 and [DELEX in 9.2.0](https://github.com/valkey-io/valkey/blob/9.2.0/src/commands/delex.json) | 490 |
 | Redis integrated modules | Redis 8.10 documentation | Included above |
 | Valkey optional Bloom, JSON, and Search modules | Valkey 9.1 documentation | Included above |
 | KeyDB extensions | 6.3.4 command table and command reference, audited 2026-09-30 | 9 |
@@ -138,7 +138,8 @@ Clone the tagged Redis and Valkey repositories, then run:
 ```
 
 The generator reads official core JSON metadata and owns the module and compatible-server
-extension lists. Update those lists from their command references when you upgrade the pins.
+extension lists. It adds Valkey's `DELEX` from the 9.2.0 release. Update the lists from their
+command references when you upgrade the pins.
 
 ## Verification
 

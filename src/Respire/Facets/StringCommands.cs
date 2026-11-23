@@ -327,10 +327,12 @@ public partial interface IRespireStringCommands
     /// <summary>
     /// Returns the longest common subsequence. Use <see cref="LcsIndexAsync"/> for match ranges. Redis: LCS.
     /// </summary>
+    /// <remarks>Both keys must share a Cluster slot after prefixing.</remarks>
     ValueTask<string> LcsAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default);
 
     /// <summary>Returns the length of the longest common subsequence. Redis: LCS LEN.</summary>
+    /// <remarks>Both keys must share a Cluster slot after prefixing.</remarks>
     ValueTask<long> LcsLengthAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default);
 }
@@ -1019,10 +1021,13 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
 
     private ValueTask<string> LcsBorrowedAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => client.StringAsync(
+    {
+        var (first, second) = ResolveLcsKeys(client, in firstKey, in secondKey);
+        return client.StringAsync(
             "LCS",
-            new Cmd2(RespireCommands.String.LCS.Verb, client.Key(in firstKey), client.Key(in secondKey)),
+            new Cmd2(RespireCommands.String.LCS.Verb, first, second),
             cancellationToken, observation: observation);
+    }
 
     public ValueTask<long> LcsLengthAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
@@ -1038,10 +1043,13 @@ internal sealed partial class StringCommands(RespireClient client) : IRespireStr
 
     private ValueTask<long> LcsLengthBorrowedAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => client.IntegerAsync(
+    {
+        var (first, second) = ResolveLcsKeys(client, in firstKey, in secondKey);
+        return client.IntegerAsync(
             "LCS",
-            new Cmd3(RespireCommands.String.LCS.Verb, client.Key(in firstKey), client.Key(in secondKey), "LEN"),
+            new Cmd3(RespireCommands.String.LCS.Verb, first, second, "LEN"),
             cancellationToken, observation: observation);
+    }
 
     /// <summary>MSET key value… — shared with the deferred (batch/transaction) facet.</summary>
     internal static RespireValue[] SetManyArgs(
