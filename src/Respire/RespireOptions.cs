@@ -39,8 +39,17 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
     }
 
     internal static bool IsValidUnixPath(string? path)
-        => !string.IsNullOrWhiteSpace(path) && path.Length > 1 && !path.Contains('\0')
-            && (path.StartsWith('/') || Path.IsPathFullyQualified(path));
+    {
+        if (string.IsNullOrWhiteSpace(path) || path.Contains('\0')
+            || (!path.StartsWith('/') && !Path.IsPathFullyQualified(path)))
+        {
+            return false;
+        }
+
+        ReadOnlySpan<char> pathSpan = path.AsSpan();
+        int rootLength = Path.GetPathRoot(pathSpan).Length;
+        return pathSpan[rootLength..].IndexOfAnyExcept(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) >= 0;
+    }
 
     internal static bool IsUnixScheme(string scheme)
         => scheme.Equals("unix", StringComparison.OrdinalIgnoreCase)
