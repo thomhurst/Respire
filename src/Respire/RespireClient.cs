@@ -6425,13 +6425,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
                 {
                     observation.Handled(ex);
-                    // The script cache is node-local. A fresh read route could rotate away from the miss.
-                    clusterReply = await SendClusterAsync(
-                        script.EvalOperation, cluster,
-                        new MutationCommand<ReadOnlyCommand<Cmd2N>>(ReadOnlyCommand<Cmd2N>.ForAuditedScript(new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments),
-                            script.IsCacheReadOnly), mutationFence),
-                        cancellationToken, script.Sha1, initialConnection: replicaMiss?.Connection, allowReadFrom: true,
-                        suppressTelemetry: true, scriptTelemetry: scriptTelemetry, observation: observation).ConfigureAwait(false);
+                    clusterReply = await SendClusterScriptSourceAsync(cluster, script,
+                        new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments), replicaMiss?.Connection,
+                        mutationFence, scriptTelemetry, observation, cancellationToken).ConfigureAwait(false);
                 }
 
                 scriptTelemetry?.Complete();
@@ -6536,6 +6532,46 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             telemetry.Complete(script.EvalShaOperation, telemetryEndpoint.Host, telemetryEndpoint.Port,
                 core.Options.Database, script.Sha1, ex, telemetryConnection);
             throw;
+        }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
+#endif
+    private async ValueTask<RespValue> SendClusterScriptSourceAsync(ClusterRouter cluster, RespireScript script,
+        Cmd2N source, RespireConnection? missingReplica, ClientSideCacheCoordinator.MutationFence mutationFence,
+        ClusterScriptTelemetry? telemetry, RespireTelemetry.ErrorObservation observation, CancellationToken cancellationToken)
+    {
+        var command = new MutationCommand<ReadOnlyCommand<Cmd2N>>(
+            ReadOnlyCommand<Cmd2N>.ForAuditedScript(source, script.IsCacheReadOnly), mutationFence);
+        CommandDeadline deadline = default;
+
+        // The script cache is node-local. Prefer the replica that missed while it still serves this slot.
+        if (missingReplica is { IsAcceptingCommands: true, Multiplexer: { IsRetired: false } node }
+            && source.TryGetClusterSlot(out int slot) && cluster.RoutingSnapshot[slot].Replicas?.Nodes.Contains(node) == true
+            && !cluster.IsBacklogDraining(slot))
+        {
+            deadline = CreateCircuitDeadline();
+
+            try
+            {
+                return await DispatchAsync(missingReplica).ConfigureAwait(false);
+            }
+            catch (RespireConnectionClosedBeforeSendException error)
+            {
+                // The connection closed before enqueue. Only an unwritten script can fall back here.
+                observation.Handled(error);
+            }
+        }
+
+        return await DispatchAsync(null).ConfigureAwait(false);
+
+        ValueTask<RespValue> DispatchAsync(RespireConnection? initialConnection)
+        {
+            return SendClusterAsync(script.EvalOperation, cluster, command, cancellationToken, script.Sha1,
+                initialConnection: initialConnection, allowReadFrom: true, suppressTelemetry: true,
+                scriptTelemetry: telemetry, observation: observation, retryDeadline: deadline);
         }
     }
 

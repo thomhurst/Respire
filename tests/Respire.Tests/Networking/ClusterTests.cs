@@ -2972,6 +2972,106 @@ public class ClusterTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadFrom_ReadOnlyScriptReroutesWhenMissingReplicaDisconnects(bool closeAtEnqueue)
+    {
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply, "-NOSCRIPT missing\r\n"u8.ToArray());
+        var primaryReplies = new byte[][] { [], "$5\r\nvalue\r\n"u8.ToArray() };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, replica.Port);
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? primaryReplies[0] : primaryReplies[1];
+#pragma warning disable RESP010 // Test-owned client uses a scripted primary and replica.
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero },
+            ConnectTimeout = TestConnectTimeout,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+#pragma warning restore RESP010
+        await using var reads = client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
+        var connection = await client.Core.Cluster!.GetReadConnectionAsync(ClusterHash.GetSlot("key"),
+            RespireReadFrom.Replica, CancellationToken.None, observation: default);
+        var script = RespireScript.Create("return redis.call('GET', KEYS[1])", readOnly: true);
+        var observation = new ScriptMissDisconnect(replica, connection, closeAtEnqueue);
+
+        try
+        {
+            using var result = await DispatchResponseSource.InvokeDecorated((reads, script), new(observation, 1),
+                static state => state.reads.Scripts.ExecuteLeaseAsync(state.script, (RespireKey)"key"));
+            await Assert.That(result.AsString()).IsEqualTo("value");
+        }
+        finally
+        {
+            if (observation.Disconnect is { } disconnect)
+            {
+                await disconnect;
+            }
+        }
+
+        await Assert.That(observation.Disconnect).IsNotNull();
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", $"EVALSHA_RO {script.Sha1} 1 key"]);
+        await Assert.That(primary.ReceivedCommands.Where(command => command != "CLUSTER SLOTS"))
+            .IsEquivalentTo([$"EVAL_RO {script.Source} 1 key"]);
+    }
+
+    private sealed class ScriptMissDisconnect(FakeRespServer replica, RespireConnection connection, bool closeAtEnqueue) : IDispatchObservation
+    {
+        private bool _missed;
+
+        internal Task? Disconnect
+        {
+            get; private set;
+        }
+
+        public bool IsOpen(long generation) => true;
+
+        public int Attempts(long generation) => 0;
+
+        public RespireEndpoint? Endpoint(long generation) => null;
+
+        public void SetAttempts(long generation, int attempts)
+        {
+        }
+
+        public void Retry(long generation)
+        {
+        }
+
+        public void UseEndpoint(long generation, RespireEndpoint? endpoint)
+        {
+            if (_missed && closeAtEnqueue && endpoint?.Port == replica.Port)
+            {
+                CloseReplica();
+            }
+        }
+
+        public bool Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
+        {
+            if (error is RespireServerException { Code: RespireErrorCodes.NoScript })
+            {
+                _missed = true;
+
+                if (!closeAtEnqueue)
+                {
+                    CloseReplica();
+                }
+            }
+
+            return true;
+        }
+
+        private void CloseReplica()
+        {
+            Disconnect ??= Task.WhenAll(connection.DisposeAsync().AsTask(), replica.DisposeAsync().AsTask());
+        }
+    }
+
+    [Test]
     public async Task ReadFrom_RoutesReadOnlyScriptCommandsToReplica()
     {
         var primaryReplies = new byte[][]
