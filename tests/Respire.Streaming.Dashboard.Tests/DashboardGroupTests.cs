@@ -299,6 +299,39 @@ public class DashboardGroupTests(RedisTestContainer redis)
     }
 
     [Test]
+    public async Task EmptyGroupContinuationLetsTheOperatorRestartTheList()
+    {
+        await using var root = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var client = root.WithKeyPrefix("empty-continuation:");
+        const string stream = "{dash}:source";
+        await SeedLease(client, stream, "alpha", false);
+        await SeedLease(client, stream, "omega", false);
+
+        await using var app = await DashboardSecurityTests.CreateApplication(client, jobs: true, entryLimit: 1);
+        using var http = app.GetTestClient();
+        http.DefaultRequestHeaders.Add("X-Test-Role", "operator");
+        using var home = await http.GetAsync("/workers/");
+        string homeHtml = await home.Content.ReadAsStringAsync();
+        await Assert.That(homeHtml).Contains("<td>alpha</td>");
+        await Assert.That(homeHtml).Contains("Next groups");
+        http.DefaultRequestHeaders.Add("Cookie", home.Headers.GetValues("Set-Cookie").First().Split(';')[0]);
+
+        await client.Scripts.ExecuteIntegerAsync(
+            RespireScript.Create("return redis.call('ZREMRANGEBYLEX', KEYS[1], '[' .. ARGV[1], '+')"),
+            [stream + ":group-leases"], [Prefix("omega")]);
+
+        using var next = await SubmitForm(http, homeHtml, "Next groups");
+        await Assert.That(next.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        string html = await next.Content.ReadAsStringAsync();
+        await Assert.That(html).Contains("No further groups");
+        await Assert.That(html).DoesNotContain("No grouped jobs or retained leases");
+        await Assert.That(html).Contains("<a href=\"/workers/0/groups\">Start from the first page</a>");
+
+        using var first = await http.GetAsync("/workers/0/groups");
+        await Assert.That(await first.Content.ReadAsStringAsync()).Contains("<td>alpha</td>");
+    }
+
+    [Test]
     [Arguments("max")]
     [Arguments("burst")]
     public async Task InspectionRejectsPolicyIntegersThatCannotFitThePublicContract(string field)

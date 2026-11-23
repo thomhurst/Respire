@@ -7,7 +7,8 @@ internal sealed record DashboardSnapshot(IReadOnlyList<DashboardStreamSnapshot> 
 
 internal sealed record DashboardJobLogs(string QueueName, string JobId, string[] Lines);
 
-internal sealed record DashboardJobGroups(int Index, string QueueName, IReadOnlyList<RespireJobGroupInfo> Groups, string? NextCursor);
+internal sealed record DashboardJobGroups(int Index, string QueueName, IReadOnlyList<RespireJobGroupInfo> Groups,
+    string? NextCursor, bool IsContinuation = false);
 
 internal sealed record DashboardJobBatch(string Id, RespireJobBatchStatus? Status, bool Unavailable = false);
 
@@ -422,7 +423,7 @@ internal sealed class DashboardState
         }
 
         var page = await RespireJobGroups.ReadAsync(_client, stream.Stream, _limit, cursor, cancellationToken).ConfigureAwait(false);
-        return new(index, stream.Name, page.Groups, page.NextCursor);
+        return new(index, stream.Name, page.Groups, page.NextCursor, IsContinuation: cursor is not null);
     }
 
     internal async ValueTask<bool> SetGroupPausedAsync(int index, string name, bool paused, CancellationToken cancellationToken)
