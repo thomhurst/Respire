@@ -19,7 +19,7 @@
            implementations and tests, even when the requested filter selects other tests. -->
       <_FocusedInfrastructure Include="
         ArgumentFormattingTests.cs;DispatchResponseObservationTests.cs;
-        ConnectionMetricCleanupTests.cs;Networking/AsyncFlushSignalTests.cs;
+        ConnectionMetricCleanupTests.cs;Networking/AsyncFlushSignalTests.cs;Networking/ResponseArrayPoolTests.cs;
         Networking/StandaloneBatchFlushTests.cs;Networking/StandaloneCircuitAllocationTests.cs;
         Networking/StandaloneReplicaReadyTests.cs;Networking/SentinelIdentityTests*.cs" />
       <_FocusedUnselected Include="@(Compile)" Exclude="@(_FocusedSelection)" />
