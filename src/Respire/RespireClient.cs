@@ -3881,7 +3881,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         bool discardServerErrors = false,
         Action<Exception>? onRetry = null,
         RespireTelemetry.ErrorObservation observation = default,
-        CommandDeadline retryDeadline = default)
+        CommandDeadline retryDeadline = default,
+        ClusterScriptReplicaMiss? scriptReplicaMiss = null)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -3921,7 +3922,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     storedProcedureName, noRedirect, firstAttempt, initialRetirement, initialRejection,
                     allowReadFrom, readFromOverride, cursorAffinity, hedgeOriginalRoute, isHedge,
                     cursorReadFromOverride, suppressTelemetry, scriptTelemetry, discardServerErrors,
-                    onRetry, observation, retryDeadline).ConfigureAwait(false);
+                    onRetry, observation, retryDeadline, scriptReplicaMiss).ConfigureAwait(false);
             }
 
             if (initialRetirement is not null && !cursorContinuation && connection is not null
@@ -3936,7 +3937,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     storedProcedureName, noRedirect, firstAttempt, null, initialRejection,
                     allowReadFrom, readFromOverride, cursorAffinity, hedgeOriginalRoute, isHedge,
                     cursorReadFromOverride, suppressTelemetry, scriptTelemetry, discardServerErrors,
-                    onRetry, observation, retryDeadline).ConfigureAwait(false);
+                    onRetry, observation, retryDeadline, scriptReplicaMiss).ConfigureAwait(false);
             }
 
             if (connection is not null)
@@ -3965,7 +3966,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     storedProcedureName, noRedirect, firstAttempt, initialRetirement, initialRejection,
                     allowReadFrom, readFromOverride, cursorAffinity, hedgeOriginalRoute, isHedge,
                     cursorReadFromOverride, suppressTelemetry, scriptTelemetry, discardServerErrors,
-                    onRetry, observation, retryDeadline).ConfigureAwait(false);
+                    onRetry, observation, retryDeadline, scriptReplicaMiss).ConfigureAwait(false);
             }
 
             if (initialRetirement is not null)
@@ -4162,6 +4163,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
                         slot!.Value, fallback, backlogAcquisition.Token, discovery, observation).ConfigureAwait(false);
                     readFrom = fallback.RecoveryPolicy;
+                }
+                catch (RespireServerException error) when (scriptReplicaMiss is not null
+                    && error.Code == RespireErrorCodes.NoScript && ReadFallbackPolicy.IsReplicaConnection(connection))
+                {
+                    scriptReplicaMiss.Connection = connection;
+                    throw;
                 }
             }
         }
@@ -6379,6 +6386,14 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             => command.TryGetClientCacheKey(operation, out key);
     }
 
+    private sealed class ClusterScriptReplicaMiss
+    {
+        internal RespireConnection? Connection
+        {
+            get; set;
+        }
+    }
+
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     [RuntimeAsyncMethodGeneration(false)]
@@ -6397,6 +6412,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             var arguments = tail[1..];
             var scriptTelemetry = started.Timestamp == 0
                 ? null : new ClusterScriptTelemetry(core, script, started);
+            var replicaMiss = script.IsReadOnly && _readFrom != RespireReadFrom.Primary
+                ? new ClusterScriptReplicaMiss() : null;
 
             try
             {
@@ -6409,17 +6426,17 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                         new MutationCommand<ReadOnlyCommand<Cmd2N>>(ReadOnlyCommand<Cmd2N>.ForAuditedScript(new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments),
                             script.IsCacheReadOnly), mutationFence),
                         cancellationToken, script.Sha1, allowReadFrom: true,
-                        suppressTelemetry: true, scriptTelemetry: scriptTelemetry, observation: observation).ConfigureAwait(false);
+                        suppressTelemetry: true, scriptTelemetry: scriptTelemetry, observation: observation,
+                        scriptReplicaMiss: replicaMiss).ConfigureAwait(false);
                 }
                 catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
                 {
                     observation.Handled(ex);
-                    clusterReply = await SendClusterAsync(
-                        script.EvalOperation, cluster,
-                        new MutationCommand<ReadOnlyCommand<Cmd2N>>(ReadOnlyCommand<Cmd2N>.ForAuditedScript(new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments),
-                            script.IsCacheReadOnly), mutationFence),
-                        cancellationToken, script.Sha1, allowReadFrom: true,
-                        suppressTelemetry: true, scriptTelemetry: scriptTelemetry, observation: observation).ConfigureAwait(false);
+                    var source = new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments);
+                    var command = new MutationCommand<ReadOnlyCommand<Cmd2N>>(
+                        ReadOnlyCommand<Cmd2N>.ForAuditedScript(source, script.IsCacheReadOnly), mutationFence);
+                    clusterReply = await SendClusterScriptSourceAsync(cluster, script, command, replicaMiss?.Connection,
+                        scriptTelemetry, observation, cancellationToken).ConfigureAwait(false);
                 }
 
                 scriptTelemetry?.Complete();
@@ -6524,6 +6541,44 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             telemetry.Complete(script.EvalShaOperation, telemetryEndpoint.Host, telemetryEndpoint.Port,
                 core.Options.Database, script.Sha1, ex, telemetryConnection);
             throw;
+        }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    [RuntimeAsyncMethodGeneration(false)]
+#endif
+    private async ValueTask<RespValue> SendClusterScriptSourceAsync(ClusterRouter cluster, RespireScript script,
+        MutationCommand<ReadOnlyCommand<Cmd2N>> command, RespireConnection? missingReplica,
+        ClusterScriptTelemetry? telemetry, RespireTelemetry.ErrorObservation observation, CancellationToken cancellationToken)
+    {
+        CommandDeadline deadline = default;
+
+        // The script cache is node-local. Prefer the replica that missed while it still serves this slot.
+        if (missingReplica is { IsAcceptingCommands: true, Multiplexer: { IsRetired: false } node }
+            && command.TryGetClusterSlot(out int slot) && cluster.RoutingSnapshot[slot].Replicas?.Nodes.Contains(node) == true
+            && !cluster.IsBacklogDraining(slot))
+        {
+            deadline = CreateCircuitDeadline();
+
+            try
+            {
+                return await DispatchAsync(missingReplica).ConfigureAwait(false);
+            }
+            catch (RespireConnectionClosedBeforeSendException error)
+            {
+                // The connection closed before enqueue. Only an unwritten script can fall back here.
+                observation.Handled(error);
+            }
+        }
+
+        return await DispatchAsync(null).ConfigureAwait(false);
+
+        ValueTask<RespValue> DispatchAsync(RespireConnection? initialConnection)
+        {
+            return SendClusterAsync(script.EvalOperation, cluster, command, cancellationToken, script.Sha1,
+                initialConnection: initialConnection, allowReadFrom: true, suppressTelemetry: true,
+                scriptTelemetry: telemetry, observation: observation, retryDeadline: deadline);
         }
     }
 

@@ -2902,6 +2902,176 @@ public class ClusterTests
             $"*2\r\n$9\r\n127.0.0.1\r\n:{primaryPort}\r\n");
 
     [Test]
+    [Arguments(RespireReadFrom.Replica)]
+    [Arguments(RespireReadFrom.ReplicaPreferred)]
+    public async Task ReadFrom_ReadOnlyScriptWarmsBothReplicaCaches(RespireReadFrom policy)
+    {
+        await using var first = CreateScriptReplica();
+        await using var second = CreateScriptReplica();
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = Encoding.ASCII.GetBytes(
+            $"*1\r\n*5\r\n:0\r\n:16383\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n$7\r\nprimary\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n$5\r\nfirst\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n$6\r\nsecond\r\n");
+#pragma warning disable RESP010 // Test-owned client uses a scripted two-replica topology.
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+#pragma warning restore RESP010
+        await using var reads = client.WithReadFrom(policy);
+        var script = RespireScript.Create("return redis.call('GET', KEYS[1])", readOnly: true);
+
+        for (int i = 0; i < 6; i++)
+        {
+            await Assert.That(await reads.Scripts.ExecuteStringAsync(script, ["key"])).IsEqualTo("value");
+        }
+
+        string sha = $"EVALSHA_RO {script.Sha1} 1 key";
+        string source = $"EVAL_RO {script.Source} 1 key";
+
+        foreach (var replica in new[] { first, second })
+        {
+            await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", sha, source, sha, sha]);
+            await Assert.That(replica.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(1);
+        }
+
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+
+        static FakeRespServer CreateScriptReplica()
+        {
+            bool cached = false;
+            var value = "$5\r\nvalue\r\n"u8.ToArray();
+            var miss = "-NOSCRIPT missing\r\n"u8.ToArray();
+
+            return new FakeRespServer(FakeRespServer.OkReply)
+            {
+                ReplyOverride = (_, command) =>
+                {
+                    if (command.StartsWith("EVALSHA_RO ", StringComparison.Ordinal))
+                    {
+                        return cached ? value : miss;
+                    }
+
+                    if (command.StartsWith("EVAL_RO ", StringComparison.Ordinal))
+                    {
+                        cached = true;
+                        return value;
+                    }
+
+                    return null;
+                },
+            };
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadFrom_ReadOnlyScriptReroutesWhenMissingReplicaDisconnects(bool closeAtEnqueue)
+    {
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply, "-NOSCRIPT missing\r\n"u8.ToArray());
+        var primaryReplies = new byte[][] { [], "$5\r\nvalue\r\n"u8.ToArray() };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = ClusterTopology(primary.Port, replica.Port);
+        primary.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? primaryReplies[0] : primaryReplies[1];
+#pragma warning disable RESP010 // Test-owned client uses a scripted primary and replica.
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            ReconnectPolicy = new() { MaxAttempts = 1, InitialDelay = TimeSpan.Zero },
+            ConnectTimeout = TestConnectTimeout,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+#pragma warning restore RESP010
+        await using var reads = client.WithReadFrom(RespireReadFrom.ReplicaPreferred);
+        var connection = await client.Core.Cluster!.GetReadConnectionAsync(ClusterHash.GetSlot("key"),
+            RespireReadFrom.Replica, CancellationToken.None, observation: default);
+        var script = RespireScript.Create("return redis.call('GET', KEYS[1])", readOnly: true);
+        var observation = new ScriptMissDisconnect(replica, connection, closeAtEnqueue);
+
+        try
+        {
+            using var result = await DispatchResponseSource.InvokeDecorated((reads, script), new(observation, 1),
+                static state => state.reads.Scripts.ExecuteLeaseAsync(state.script, (RespireKey)"key"));
+            await Assert.That(result.AsString()).IsEqualTo("value");
+        }
+        finally
+        {
+            if (observation.Disconnect is { } disconnect)
+            {
+                await disconnect;
+            }
+        }
+
+        await Assert.That(observation.Disconnect).IsNotNull();
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", $"EVALSHA_RO {script.Sha1} 1 key"]);
+        await Assert.That(primary.ReceivedCommands.Where(command => command != "CLUSTER SLOTS"))
+            .IsEquivalentTo([$"EVAL_RO {script.Source} 1 key"]);
+    }
+
+    private sealed class ScriptMissDisconnect(FakeRespServer replica, RespireConnection connection, bool closeAtEnqueue) : IDispatchObservation
+    {
+        private bool _missed;
+
+        internal Task? Disconnect
+        {
+            get; private set;
+        }
+
+        public bool IsOpen(long generation) => true;
+
+        public int Attempts(long generation) => 0;
+
+        public RespireEndpoint? Endpoint(long generation) => null;
+
+        public void SetAttempts(long generation, int attempts)
+        {
+        }
+
+        public void Retry(long generation)
+        {
+        }
+
+        public void UseEndpoint(long generation, RespireEndpoint? endpoint)
+        {
+            if (_missed && closeAtEnqueue && endpoint?.Port == replica.Port)
+            {
+                CloseReplica();
+            }
+        }
+
+        public bool Handled(long generation, Exception error, RespireEndpoint? endpoint, bool overrideEndpoint)
+        {
+            if (error is RespireServerException { Code: RespireErrorCodes.NoScript })
+            {
+                _missed = true;
+
+                if (!closeAtEnqueue)
+                {
+                    CloseReplica();
+                }
+            }
+
+            return true;
+        }
+
+        private void CloseReplica()
+        {
+            Disconnect ??= Task.WhenAll(connection.DisposeAsync().AsTask(), replica.DisposeAsync().AsTask());
+        }
+    }
+
+    [Test]
     public async Task ReadFrom_RoutesReadOnlyScriptCommandsToReplica()
     {
         var primaryReplies = new byte[][]
