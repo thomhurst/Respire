@@ -9,7 +9,16 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
     private readonly SemaphoreSlim _dispatch = new(1, 1);
     private readonly Dictionary<RedisChannel, Registration> _subscriptions = [];
 
-    private sealed record Registration(RespireSubscription Subscription, List<Action<RedisChannel, RedisValue>> Handlers);
+    private sealed record Registration(RespireSubscription Subscription, List<Action<RedisChannel, RedisValue>> Handlers)
+    {
+        public void ClearHandlers()
+        {
+            lock (Handlers)
+            {
+                Handlers.Clear();
+            }
+        }
+    }
 
     public IConnectionMultiplexer Multiplexer => owner;
 
@@ -63,10 +72,7 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
                     // Terminal native subscriptions cannot deliver; retry native admission so its failure is not hidden.
                     _subscriptions.Remove(channel);
 
-                    lock (existing.Handlers)
-                    {
-                        existing.Handlers.Clear();
-                    }
+                    existing.ClearHandlers();
                 }
 
                 byte[]? bytes = channel;
@@ -136,25 +142,24 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
                     return true;
                 }
 
-                lock (registration.Handlers)
+                if (handler is not null)
                 {
-                    if (handler is null)
+                    lock (registration.Handlers)
                     {
-                        registration.Handlers.Clear();
-                    }
-                    else
-                    {
-                        registration.Handlers.Remove(handler);
-                    }
+                        if (registration.Handlers.Count > 1)
+                        {
+                            registration.Handlers.Remove(handler);
+                            return true;
+                        }
 
-                    if (registration.Handlers.Count != 0)
-                    {
-                        return true;
+                        if (!registration.Handlers.Contains(handler))
+                        {
+                            return true;
+                        }
                     }
                 }
 
-                _subscriptions.Remove(channel);
-                await registration.Subscription.DisposeAsync().ConfigureAwait(false);
+                await DisposeRegistrationAsync(channel, registration).ConfigureAwait(false);
                 return true;
             }
             finally { _dispatch.Release(); }
@@ -173,33 +178,56 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
 
         return owner.Run(async token =>
         {
-            await DisposeSubscriptionsAsync(token).ConfigureAwait(false);
+            await DisposeSubscriptionsAsync(closing: false, token).ConfigureAwait(false);
             return true;
         });
     }
 
     public void UnsubscribeAll(CommandFlags flags = CommandFlags.None) => owner.Wait(UnsubscribeAllAsync(flags));
 
-    internal async Task DisposeSubscriptionsAsync(CancellationToken token = default)
+    internal async Task DisposeSubscriptionsAsync(bool closing, CancellationToken token = default)
     {
         await _dispatch.WaitAsync(token).ConfigureAwait(false);
 
         try
         {
-            var registrations = _subscriptions.Values.ToArray();
-            _subscriptions.Clear();
-
-            foreach (var registration in registrations)
+            foreach (var (channel, registration) in _subscriptions.ToArray())
             {
-                lock (registration.Handlers)
-                {
-                    registration.Handlers.Clear();
-                }
-
-                await registration.Subscription.DisposeAsync().ConfigureAwait(false);
+                await DisposeRegistrationAsync(channel, registration).ConfigureAwait(false);
             }
         }
-        finally { _dispatch.Release(); }
+        finally
+        {
+            if (closing)
+            {
+                // A closed adapter cannot retry. Detach callbacks from any subscriptions still live on a borrowed client.
+                foreach (var registration in _subscriptions.Values)
+                {
+                    registration.ClearHandlers();
+                }
+
+                _subscriptions.Clear();
+            }
+
+            _dispatch.Release();
+        }
+    }
+
+    private async ValueTask DisposeRegistrationAsync(RedisChannel channel, Registration registration)
+    {
+        try
+        {
+            await registration.Subscription.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            // A command hook can reject disposal before the native subscription ends.
+            if (registration.Subscription.IsDisposed)
+            {
+                _subscriptions.Remove(channel);
+                registration.ClearHandlers();
+            }
+        }
     }
 
     public Task<long> PublishAsync(RedisChannel channel, RedisValue message, CommandFlags flags = CommandFlags.None)

@@ -1,0 +1,129 @@
+using StackExchange.Redis;
+using TUnit.Core;
+using Assert = Xunit.Assert;
+
+namespace Respire.StackExchangeCompat.Tests;
+
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class SubscriptionTeardownTests(RedisTestContainer fixture)
+{
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task RejectedUnsubscribePreservesHandlerAndCanBeRetried(int protocol, bool specifyHandler)
+    {
+        var hook = new RejectNthUnsubscribe(1);
+        await using var native = await RespireClient.ConnectAsync(Options(protocol, hook));
+        await using var connection = RespireConnectionMultiplexer.Wrap(native);
+        using var control = await ConnectionMultiplexer.ConnectAsync(fixture.IsolatedStackExchangeConnectionString);
+        var subscriber = connection.GetSubscriber();
+        var publisher = control.GetSubscriber();
+        var channel = RedisChannel.Literal($"unsubscribe-{Guid.NewGuid():N}");
+        var delivered = new TaskCompletionSource<RedisValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action<RedisChannel, RedisValue> handler = (_, value) => delivered.TrySetResult(value);
+        await subscriber.SubscribeAsync(channel, handler);
+
+        var target = specifyHandler ? handler : null;
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => subscriber.UnsubscribeAsync(channel, target));
+        Assert.Same(hook.Rejection, error);
+        Assert.Equal(1, await publisher.PublishAsync(channel, "after rejection"));
+        Assert.Equal("after rejection", (string?)await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        await subscriber.UnsubscribeAsync(channel, target);
+        Assert.Equal(0, await publisher.PublishAsync(channel, "after retry"));
+        await connection.CloseAsync();
+        Assert.Equal(0, await publisher.PublishAsync(channel, "after close"));
+        Assert.True(native.IsConnected);
+    }
+
+    [Test]
+    [Arguments(2, 1, false)]
+    [Arguments(2, 2, false)]
+    [Arguments(3, 1, false)]
+    [Arguments(3, 2, false)]
+    [Arguments(3, 2, true)]
+    public async Task BulkUnsubscribeKeepsRemainingRegistrationsRetryable(int protocol, int rejectAttempt, bool closeToRetry)
+    {
+        var hook = new RejectNthUnsubscribe(rejectAttempt);
+        await using var native = await RespireClient.ConnectAsync(Options(protocol, hook));
+        await using var connection = RespireConnectionMultiplexer.Wrap(native);
+        using var control = await ConnectionMultiplexer.ConnectAsync(fixture.IsolatedStackExchangeConnectionString);
+        var subscriber = connection.GetSubscriber();
+        var publisher = control.GetSubscriber();
+        var channels = new Dictionary<RedisChannel, TaskCompletionSource<RedisValue>>();
+
+        for (int i = 0; i < 3; i++)
+        {
+            var channel = RedisChannel.Literal($"unsubscribe-all-{Guid.NewGuid():N}");
+            var delivered = new TaskCompletionSource<RedisValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+            await subscriber.SubscribeAsync(channel, (_, value) => delivered.TrySetResult(value));
+            channels.Add(channel, delivered);
+        }
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => subscriber.UnsubscribeAllAsync());
+        Assert.Same(hook.Rejection, error);
+        int active = 0;
+
+        foreach (var (channel, delivered) in channels)
+        {
+            if (await publisher.PublishAsync(channel, "after rejection") == 1)
+            {
+                active++;
+                Assert.Equal("after rejection", (string?)await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+            }
+        }
+
+        Assert.Equal(channels.Count - rejectAttempt + 1, active);
+
+        if (closeToRetry)
+        {
+            await connection.CloseAsync();
+            Assert.True(native.IsConnected);
+        }
+        else
+        {
+            await subscriber.UnsubscribeAllAsync();
+        }
+
+        foreach (var channel in channels.Keys)
+        {
+            Assert.Equal(0, await publisher.PublishAsync(channel, "after retry"));
+        }
+    }
+
+    private RespireOptions Options(int protocol, RespireCommandHook hook)
+    {
+        return RespireOptions.Parse(fixture.IsolatedConnectionString) with
+        {
+            Connections = 1,
+            Protocol = protocol == 2 ? RespireProtocol.Resp2 : RespireProtocol.Resp3,
+            CommandHook = hook,
+        };
+    }
+
+    private sealed class RejectNthUnsubscribe(int rejectAttempt) : RespireCommandHook
+    {
+        private int _attempts;
+
+        internal InvalidOperationException Rejection
+        {
+            get;
+        } = new("Unsubscribe rejected by policy.");
+
+        public override object? OnExecuting(RespireCommandContext context)
+        {
+            if (context.Command == "UNSUBSCRIBE" && Interlocked.Increment(ref _attempts) == rejectAttempt)
+            {
+                throw Rejection;
+            }
+
+            return null;
+        }
+
+        public override void OnCompleted(RespireCommandContext context, object? state, RespireCommandOutcome outcome, Exception? error)
+        {
+        }
+    }
+}

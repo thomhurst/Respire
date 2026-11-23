@@ -333,6 +333,7 @@ Conditions work in trimmed applications.
 
 - `GetSubscriber()` supports callback `Subscribe[Async]`, `Unsubscribe[Async]`, and `UnsubscribeAll[Async]` on literal channels with `None`.
 - Handlers on one channel share a native subscription; duplicate handlers are ignored. Unsubscribing one handler keeps the others.
+- If a command hook rejects an unsubscribe, the active subscription keeps delivering callbacks. Retry the unsubscribe after the hook allows it. For `UnsubscribeAll[Async]`, channels already unsubscribed stay unsubscribed, and the retry handles the remaining channels.
 - Callback exceptions do not stop delivery.
 - Native reconnect and resubscribe apply; messages sent during a gap are lost. If the reconnect limit is exhausted, subscribing throws; recreate the client and adapter.
 - Each native subscription buffers up to `RespireOptions.SubscriptionBufferSize` messages (1,024 by default). When a callback falls behind, `RespireOptions.SubscriptionOverflow` drops either the oldest buffered message (`DropOldest`, the default) or the newest incoming message (`DropNewest`). Compatibility callbacks receive no overflow notification. See [Pub/Sub buffering](pub-sub.md#reconnection-and-pressure).

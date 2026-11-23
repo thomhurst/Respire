@@ -236,7 +236,7 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
             {
                 if (_subscriber is not null)
                 {
-                    await _subscriber.DisposeSubscriptionsAsync().ConfigureAwait(false);
+                    await _subscriber.DisposeSubscriptionsAsync(closing: true).ConfigureAwait(false);
                 }
             }
             finally
