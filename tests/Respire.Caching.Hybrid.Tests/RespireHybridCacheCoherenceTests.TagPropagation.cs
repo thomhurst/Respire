@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Net.Sockets;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,6 +11,64 @@ namespace Respire.Caching.Hybrid.Tests;
 
 public partial class RespireHybridCacheCoherenceTests
 {
+    [Test]
+    public async Task DistributedOnlyRequestsDoNotWaitForTagSubscriberStartup()
+    {
+        var subscriberConnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSubscriber = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connections = 0;
+        await using var source = RespireClient.Create(RespireOptions.Parse(fixture.IsolatedConnectionString) with
+        {
+            Connections = 1,
+            ConnectTimeout = TimeSpan.FromSeconds(30),
+            ConnectionFactory = async (endpoint, token) =>
+            {
+                if (Interlocked.Increment(ref connections) > 1)
+                {
+                    subscriberConnecting.TrySetResult();
+                    await releaseSubscriber.Task.WaitAsync(token);
+                }
+
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
+                try
+                {
+                    await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            },
+        });
+        await using var writer = BuildProvider(false, source);
+        var key = NewKey();
+        var tag = NewKey();
+        var writerCache = writer.GetRequiredService<HybridCache>();
+        await writerCache.SetAsync(key, "seed", LongLived, [tag]);
+        await using var reader = BuildProvider(true, source, configure: TagOptions("tags:" + NewKey()));
+        var cache = Coherent(reader);
+        var distributedOnly = new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableLocalCache };
+
+        try
+        {
+            await subscriberConnecting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await Assert.That(await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("factory"),
+                distributedOnly, [tag], deadline.Token)).IsEqualTo("seed");
+            await cache.SetAsync(key, "updated", distributedOnly, [tag], deadline.Token);
+            await Assert.That(await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("factory"),
+                distributedOnly, [tag], deadline.Token)).IsEqualTo("updated");
+            await Assert.That(cache.ObservationCount).IsEqualTo(0);
+        }
+        finally
+        {
+            releaseSubscriber.TrySetResult();
+        }
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]

@@ -96,13 +96,14 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         cancellationToken.ThrowIfCancellationRequested();
         tags = PrepareTags(tags);
+        var flags = EffectiveFlags(options);
 
-        if (_tagMessage is not null)
+        if (_tagMessage is not null && UsesLocalCache(flags))
         {
             await _tagStarted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        var observation = Acquire(key, options, tags);
+        var observation = Acquire(key, flags, tags);
 
         try
         {
@@ -120,14 +121,15 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         cancellationToken.ThrowIfCancellationRequested();
         tags = PrepareTags(tags);
+        var flags = EffectiveFlags(options);
 
-        if (_tagMessage is not null)
+        if (_tagMessage is not null && UsesLocalCache(flags))
         {
             await _tagStarted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         RetireKey(key);
-        var observation = Acquire(key, options, tags);
+        var observation = Acquire(key, flags, tags);
 
         try
         {
@@ -225,8 +227,14 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     private HybridCacheEntryFlags EffectiveFlags(HybridCacheEntryOptions? options)
         => options?.Flags ?? _hybridOptions.DefaultEntryOptions?.Flags ?? HybridCacheEntryFlags.None;
 
-    private Observation? Acquire(string key, HybridCacheEntryOptions? options, IEnumerable<string>? tags)
+    private static bool UsesLocalCache(HybridCacheEntryFlags flags)
     {
+        return (flags & HybridCacheEntryFlags.DisableLocalCache) != HybridCacheEntryFlags.DisableLocalCache;
+    }
+
+    private Observation? Acquire(string key, HybridCacheEntryFlags flags, IEnumerable<string>? tags)
+    {
+        bool localOnly = (flags & HybridCacheEntryFlags.DisableDistributedCache) == HybridCacheEntryFlags.DisableDistributedCache;
         Observation? acquired = null;
 
         try
@@ -236,17 +244,20 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
                 ThrowIfDisposed();
                 ResetTagContinuityUnderGate();
                 // Let HybridCache itself retain its validation and uncached-factory behavior.
-                if (!CanUseTagLocalCache || _trackingStopped || _tagHistoryExhausted || string.IsNullOrWhiteSpace(key) || key.Length > _hybridOptions.MaximumKeyLength
-                    || HasControlCharacter(key)
-                    || (EffectiveFlags(options) & HybridCacheEntryFlags.DisableLocalCache) == HybridCacheEntryFlags.DisableLocalCache)
+                if (!UsesLocalCache(flags) || !CanUseTagLocalCache || (!localOnly && _trackingStopped)
+                    || _tagHistoryExhausted || string.IsNullOrWhiteSpace(key) || key.Length > _hybridOptions.MaximumKeyLength
+                    || HasControlCharacter(key))
                 {
                     return null;
                 }
 
                 if (_observations.TryGetValue(key, out var current))
                 {
-                    if (_tagMessage is not null && tags is not null
-                        && current.RequestTags!.Count + tags.Distinct(StringComparer.Ordinal).Count(tag => !current.RequestTags.Contains(tag)) > _maxTagsPerEntry)
+                    // A tracked caller cannot rely on a value admitted without a Redis subscription.
+                    if (current.LocalOnly != localOnly
+                        || (_tagMessage is not null && tags is not null
+                            && current.RequestTags!.Count
+                                + tags.Distinct(StringComparer.Ordinal).Count(tag => !current.RequestTags.Contains(tag)) > _maxTagsPerEntry))
                     {
                         Retire(current);
                     }
@@ -267,14 +278,19 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
                     return null;
                 }
 
-                var physicalKey = _distributed.ResolveCoherenceKey(key);
+                RespireKey physicalKey = default;
 
-                if (!RespireDistributedCache.CanTrackCoherenceKey(TrackingClient, in physicalKey))
+                if (!localOnly)
                 {
-                    return null;
+                    physicalKey = _distributed.ResolveCoherenceKey(key);
+
+                    if (!RespireDistributedCache.CanTrackCoherenceKey(TrackingClient, in physicalKey))
+                    {
+                        return null;
+                    }
                 }
 
-                var observation = new Observation(this, key);
+                var observation = new Observation(this, key, localOnly);
 
                 if (_tagMessage is not null)
                 {
@@ -285,41 +301,28 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
 
                 try
                 {
-                    observation.Subscription = TrackingClient.ClientSideCache!.SubscribeInvalidations(
-                        physicalKey, _ => Retire(observation));
-                    observation.Stopped = observation.Subscription.Stopped.UnsafeRegister(
-                        static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
-
-                    if (_distributed.CanObserveCoherenceSourceKey(in physicalKey)
-                        && _distributed.CoherenceSourceCache is { } source)
+                    if (!localOnly)
                     {
-                        observation.SourceSubscription = source.SubscribeInvalidations(physicalKey, invalidation =>
-                        {
-                            // Lua reads conservatively signal LocalMutation on the original
-                            // connection. Actual writes are observed by the independent tracker.
-                            if ((invalidation.Reasons & (RespireClientCacheInvalidationReason.ExplicitClear
-                                | RespireClientCacheInvalidationReason.ContinuityLost)) != 0)
-                            {
-                                Retire(observation);
-                            }
-                        });
-                        observation.SourceStopped = observation.SourceSubscription.Stopped.UnsafeRegister(
-                            static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
+                        SubscribeToTracking(observation, in physicalKey);
                     }
 
                     observation.Cache = CreateContext(observation, new TagReplayBackend(this));
                     var replays = _removedTags.Select(pair => ReplayTagAsync(observation.Cache, pair.Key, pair.Value));
                     observation.TagReplay = Task.WhenAll(_tagMessage is null ? replays
                         : replays.Append(SeedTagMetadataAsync(observation.Cache, tags)));
-                    // HEXISTS is a typed, cache-eligible hash read. It establishes actual OPTIN
-                    // tracking before L2 is read, without duplicating the serialized payload.
-                    observation.Tracking = TrackingClient.Hashes.ExistsAsync(physicalKey, "data").AsTask();
+
+                    if (!localOnly)
+                    {
+                        // HEXISTS establishes OPTIN tracking before L2 reads without copying the payload.
+                        observation.Tracking = TrackingClient.Hashes.ExistsAsync(physicalKey, "data").AsTask();
+                    }
+
                     return acquired = observation;
                 }
-                catch (ObjectDisposedException)
+                catch (ObjectDisposedException) when (!localOnly)
                 {
                     _trackingStopped = true;
-                    RetireAll();
+                    MarkAllRetired(trackedOnly: true);
                     return null;
                 }
                 catch
@@ -343,6 +346,31 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
 
                 ThrowCleanupFailure(cleanupError);
             }
+        }
+    }
+
+    private void SubscribeToTracking(Observation observation, in RespireKey physicalKey)
+    {
+        observation.Subscription = TrackingClient.ClientSideCache!.SubscribeInvalidations(
+            physicalKey, _ => Retire(observation));
+        observation.Stopped = observation.Subscription.Stopped.UnsafeRegister(
+            static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
+
+        if (_distributed.CanObserveCoherenceSourceKey(in physicalKey)
+            && _distributed.CoherenceSourceCache is { } source)
+        {
+            observation.SourceSubscription = source.SubscribeInvalidations(physicalKey, invalidation =>
+            {
+                // Lua reads conservatively signal LocalMutation on the original
+                // connection. Actual writes are observed by the independent tracker.
+                if ((invalidation.Reasons & (RespireClientCacheInvalidationReason.ExplicitClear
+                    | RespireClientCacheInvalidationReason.ContinuityLost)) != 0)
+                {
+                    Retire(observation);
+                }
+            });
+            observation.SourceStopped = observation.SourceSubscription.Stopped.UnsafeRegister(
+                static state => ((Observation)state!).Owner.TrackingStopped((Observation)state!), observation);
         }
     }
 
@@ -461,7 +489,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             }
 
             _trackingStopped = true;
-            RetireAll();
+            MarkAllRetired(trackedOnly: true);
         }
 
         DrainRetiredObservations();
@@ -486,13 +514,16 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         DrainRetiredObservations();
     }
 
-    private void MarkAllRetired()
+    private void MarkAllRetired(bool trackedOnly = false)
     {
         lock (_gate)
         {
             foreach (var observation in _observations.Values.ToArray())
             {
-                Retire(observation);
+                if (!trackedOnly || !observation.LocalOnly)
+                {
+                    Retire(observation);
+                }
             }
         }
     }
@@ -799,7 +830,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         ThrowCleanupFailure(failure);
     }
 
-    private sealed class Observation(RespireCoherentHybridCache owner, string key)
+    private sealed class Observation(RespireCoherentHybridCache owner, string key, bool localOnly)
     {
         internal RespireCoherentHybridCache Owner
         {
@@ -810,6 +841,11 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         {
             get;
         } = key;
+
+        internal bool LocalOnly
+        {
+            get;
+        } = localOnly;
 
         internal object MemoryKey
         {

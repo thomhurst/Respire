@@ -216,13 +216,16 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             throw new InvalidOperationException("HybridCache coherence requires a RespireClient-backed distributed cache.");
         }
 
-        return RespireClient.Create(_wireClient.Core.Options with
+        var sourceOptions = _wireClient.Core.Options;
+        return RespireClient.Create(sourceOptions with
         {
             KeyPrefix = default,
             // Coherence channels are explicitly configured physical names, independent
             // of pub/sub prefixes on the application client's options or views.
             PubSubPrefix = default,
             Connections = 1,
+            MaxInflightCommands = Math.Max(sourceOptions.MaxInflightCommands,
+                sourceOptions.GetMinimumTrackingInflightCommands(trackingOptions.TrackingMode)),
             ReadFrom = RespireReadFrom.Primary,
             ClientSideCache = trackingOptions,
         });
