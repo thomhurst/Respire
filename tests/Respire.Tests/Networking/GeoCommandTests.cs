@@ -76,6 +76,7 @@ public class GeoCommandTests
 
         var options = new RespireGeoSearchOptions
         {
+            Sort = RespireGeoSortOrder.Ascending,
             Count = 2,
             Any = true,
             IncludeDistance = true,
@@ -91,7 +92,7 @@ public class GeoCommandTests
         await Assert.That(await client.Geo.SearchStoreAsync(
             "nearby", "places", RespireGeoSearchOrigin.FromCoordinates(1.5, 2.5),
             RespireGeoSearchShape.Box(10, 20, RespireGeoUnit.Miles),
-            new RespireGeoSearchOptions { Sort = RespireGeoSortOrder.Descending, Count = 3 }, storeDistance: true)).IsEqualTo(4);
+            new RespireGeoSearchOptions { Sort = RespireGeoSortOrder.Descending, Count = 3, Any = true }, storeDistance: true)).IsEqualTo(4);
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
@@ -99,8 +100,8 @@ public class GeoCommandTests
             "GEODIST places cafe park km",
             "GEOHASH places cafe missing",
             "GEOPOS places cafe missing",
-            "GEOSEARCH places FROMMEMBER cafe BYRADIUS 10 km COUNT 2 ANY WITHDIST WITHHASH WITHCOORD",
-            "GEOSEARCHSTORE nearby places FROMLONLAT 1.5 2.5 BYBOX 10 20 mi DESC COUNT 3 STOREDIST",
+            "GEOSEARCH places FROMMEMBER cafe BYRADIUS 10 km ASC COUNT 2 ANY WITHDIST WITHHASH WITHCOORD",
+            "GEOSEARCHSTORE nearby places FROMLONLAT 1.5 2.5 BYBOX 10 20 mi DESC COUNT 3 ANY STOREDIST",
         });
     }
 
@@ -171,8 +172,8 @@ public class GeoCommandTests
             new RespireGeoSearchOptions { Any = true })).Throws<ArgumentException>();
         await Assert.That(async () => await client.Geo.SearchAsync(
             "places", RespireGeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(1),
-            new RespireGeoSearchOptions { Count = 1, Any = true, Sort = RespireGeoSortOrder.Ascending }))
-            .Throws<ArgumentException>();
+            new RespireGeoSearchOptions { Count = 0, Any = true, Sort = RespireGeoSortOrder.Ascending }))
+            .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchStoreAsync(
             "dest", "places", RespireGeoSearchOrigin.FromMember("cafe"), RespireGeoSearchShape.Circle(1),
             new RespireGeoSearchOptions { IncludeDistance = true })).Throws<ArgumentException>();
@@ -203,6 +204,74 @@ public class GeoCommandTests
             "dest", "places", RespireGeoSearchOrigin.FromMember("cafe"),
             RespireGeoSearchShape.Box(1, double.PositiveInfinity)))
             .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task ZeroSizedShapes_KeepTheirWireShape()
+    {
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(),
+            "*0\r\n"u8.ToArray(), "*0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var origin = RespireGeoSearchOrigin.FromMember("center");
+
+        await client.Geo.SearchAsync("places", origin, RespireGeoSearchShape.Circle(0));
+        await client.Geo.SearchStoreAsync("nearby", "places", origin, RespireGeoSearchShape.Box(0, 0));
+        using var batch = client.CreateBatch();
+        var zeroWidth = batch.Geo.Search("places", origin, RespireGeoSearchShape.Box(0, 1));
+        var zeroHeight = batch.Geo.Search("places", origin, RespireGeoSearchShape.Box(1, 0));
+        await batch.ExecuteAsync();
+        await Assert.That(zeroWidth.Result).IsEmpty();
+        await Assert.That(zeroHeight.Result).IsEmpty();
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "GEOSEARCH places FROMMEMBER center BYRADIUS 0 m",
+            "GEOSEARCHSTORE nearby places FROMMEMBER center BYBOX 0 0 m",
+            "GEOSEARCH places FROMMEMBER center BYBOX 0 1 m",
+            "GEOSEARCH places FROMMEMBER center BYBOX 1 0 m",
+        });
+        Assert.Throws<ArgumentOutOfRangeException>(() => RespireGeoSearchShape.Circle(-1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => RespireGeoSearchShape.Box(1, -1));
+    }
+
+    [Test]
+    public async Task GeoSearchStore_RejectsCrossSlotKeysBeforeDispatchOrQueueing()
+    {
+        await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // A lazy Cluster client verifies rejection before discovery.
+        await using var root = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+#pragma warning restore RESP010
+        var client = root.WithKeyPrefix("tenant:");
+        var origin = RespireGeoSearchOrigin.FromCoordinates(2, 48);
+        var shape = RespireGeoSearchShape.Circle(10);
+        using var batch = client.CreateBatch();
+        await using var transaction = client.CreateTransaction();
+
+        var error = await Assert.That(async () =>
+            await client.Geo.SearchStoreAsync("{dest}:result", "{source}:places", origin, shape))
+            .ThrowsExactly<RespireCrossSlotException>();
+        await Assert.That(error!.CommandName).IsEqualTo("GEOSEARCHSTORE");
+        await Assert.That(error.ExpectedSlot).IsEqualTo(((RespireKey)"{dest}:result").ClusterSlot);
+        await Assert.That(error.ConflictingSlot).IsEqualTo(((RespireKey)"{source}:places").ClusterSlot);
+        Assert.Throws<RespireCrossSlotException>(() =>
+            batch.Geo.SearchStore("{dest}:result", "{source}:places", origin, shape));
+        Assert.Throws<RespireCrossSlotException>(() =>
+            transaction.Geo.SearchStore("{dest}:result", "{source}:places", origin, shape));
+        await Assert.That(batch.Count).IsEqualTo(0);
+        await Assert.That(transaction.Count).IsEqualTo(0);
+
+        var tagged = root.WithKeyPrefix("{tenant}:");
+        using var taggedBatch = tagged.CreateBatch();
+        await using var taggedTransaction = tagged.CreateTransaction();
+        _ = taggedBatch.Geo.SearchStore("{dest}:result", "{source}:places", origin, shape);
+        _ = taggedTransaction.Geo.SearchStore("{dest}:result", "{source}:places", origin, shape);
+        await Assert.That(taggedBatch.Count).IsEqualTo(1);
+        await Assert.That(taggedTransaction.Count).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 

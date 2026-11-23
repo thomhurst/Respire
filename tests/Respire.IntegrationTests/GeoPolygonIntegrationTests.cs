@@ -71,8 +71,9 @@ public class GeoPolygonIntegrationTests
             var stored = await geo.Geo.SearchAsync(key, open, cancellationToken: token);
             stored.Select(result => result.Member).Should().Equal("inside");
         }
-        // ANY uses the same polygon frame without sorting or details.
-        (await geo.Geo.SearchAsync("{places}:source", open, new() { Count = 1, Any = true }, token))
+
+        var earlyStop = new RespireGeoSearchOptions { Sort = RespireGeoSortOrder.Descending, Count = 1, Any = true };
+        (await geo.Geo.SearchAsync("{places}:source", open, earlyStop, token))
             .Select(result => result.Member).Should().Equal("inside");
     }
 

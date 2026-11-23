@@ -729,7 +729,7 @@ public class ClientSideCacheTests
             "*1\r\n$3\r\none\r\n"u8.ToArray(),
             "*1\r\n$3\r\ntwo\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server);
-        var options = new RespireGeoSearchOptions { Count = 1, Any = true };
+        var options = new RespireGeoSearchOptions { Sort = RespireGeoSortOrder.Ascending, Count = 1, Any = true };
 
         await Assert.That((await client.Geo.SearchAsync(
             "places",
@@ -743,9 +743,40 @@ public class ClientSideCacheTests
             options))[0].Member).IsEqualTo("two");
 
         await Assert.That(server.ReceivedCommands.Count(static command =>
-            command == "GEOSEARCH places FROMMEMBER origin BYRADIUS 1 m COUNT 1 ANY"))
+            command == "GEOSEARCH places FROMMEMBER origin BYRADIUS 1 m ASC COUNT 1 ANY"))
             .IsEqualTo(2);
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task GeoSearchStore_InvalidatesOnlyTheDestination(bool any)
+    {
+        await using var server = new FakeRespServer(
+            HelloReply, FakeRespServer.OkReply,
+            FakeRespServer.OkReply, "$1\r\n7\r\n"u8.ToArray(),
+            FakeRespServer.OkReply, "$1\r\n9\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(),
+            FakeRespServer.OkReply, "$1\r\n0\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        var view = client.WithKeyPrefix("prefix:");
+
+        await Assert.That(await view.SortedSets.ScoreAsync("source", "center")).IsEqualTo(7);
+        await Assert.That(await view.SortedSets.ScoreAsync("dest", "center")).IsEqualTo(9);
+        await Assert.That(await view.SortedSets.ScoreAsync("dest", "center")).IsEqualTo(9);
+
+        var options = any ? new RespireGeoSearchOptions { Count = 1, Any = true } : default;
+        await Assert.That(await view.Geo.SearchStoreAsync("dest", "source",
+            RespireGeoSearchOrigin.FromMember("center"), RespireGeoSearchShape.Circle(1),
+            options, storeDistance: true)).IsEqualTo(1);
+
+        await Assert.That(await view.SortedSets.ScoreAsync("dest", "center")).IsEqualTo(0);
+        await Assert.That(await view.SortedSets.ScoreAsync("source", "center")).IsEqualTo(7);
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "ZSCORE prefix:source center"))
+            .IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "ZSCORE prefix:dest center"))
+            .IsEqualTo(2);
     }
 
     [Test]

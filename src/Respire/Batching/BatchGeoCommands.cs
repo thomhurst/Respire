@@ -119,13 +119,11 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IRespireBatchGeoComm
         RespireKey destination, RespireKey source, RespireGeoSearchOrigin origin, RespireGeoSearchShape shape,
         RespireGeoSearchOptions options = default, bool storeDistance = false)
     {
-        GeoCommands.Validate(origin, shape, options);
-        GeoCommands.ValidateSearchStore(options);
+        var command = GeoCommands.CreateSearchStoreCommand(sink.Client, destination, source, origin, shape, options,
+            storeDistance);
         return sink.Add<GeoSearchCommand, long>(
             "GEOSEARCHSTORE",
-            new GeoSearchCommand(
-                RespireCommands.Geo.GEOSEARCHSTORE.Verb, sink.Client.Key(in source), origin, shape, options,
-                sink.Client.Key(in destination), storeDistance),
+            command,
             destination, source,
             static (c, v) => ResponseReader.Integer(in v));
     }

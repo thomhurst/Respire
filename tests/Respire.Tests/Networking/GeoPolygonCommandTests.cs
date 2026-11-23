@@ -23,7 +23,8 @@ public class GeoPolygonCommandTests
         await Assert.That(await view.Geo.SearchStoreAsync("dest", "places", polygon,
             new RespireGeoSearchOptions { Sort = RespireGeoSortOrder.Ascending }, storeDistance: true)).IsEqualTo(1);
         using var batch = view.CreateBatch();
-        var search = batch.Geo.Search("places", polygon);
+        var search = batch.Geo.Search("places", polygon,
+            new RespireGeoSearchOptions { Sort = RespireGeoSortOrder.Descending, Count = 1, Any = true });
         var store = batch.Geo.SearchStore("dest", "places", polygon);
         await batch.ExecuteAsync();
         await Assert.That(search.Result[0].Member).IsEqualTo("cafe");
@@ -32,7 +33,7 @@ public class GeoPolygonCommandTests
         {
             "GEOSEARCH prefix:places BYPOLYGON 3 -1.5 50 0.5 50 0.5 52 COUNT 1 ANY",
             "GEOSEARCHSTORE prefix:dest prefix:places BYPOLYGON 3 -1.5 50 0.5 50 0.5 52 ASC STOREDIST",
-            "GEOSEARCH prefix:places BYPOLYGON 3 -1.5 50 0.5 50 0.5 52",
+            "GEOSEARCH prefix:places BYPOLYGON 3 -1.5 50 0.5 50 0.5 52 DESC COUNT 1 ANY",
             "GEOSEARCHSTORE prefix:dest prefix:places BYPOLYGON 3 -1.5 50 0.5 50 0.5 52",
         });
     }
