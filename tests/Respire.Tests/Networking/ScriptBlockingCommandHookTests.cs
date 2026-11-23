@@ -244,7 +244,7 @@ public class ScriptBlockingCommandHookTests
     [Arguments(false, true)]
     [Arguments(true, false)]
     [Arguments(true, true)]
-    public async Task SingleStreamCancellationDrainsTheCurrentBatchThenEndsQuietly(bool configured, bool pending)
+    public async Task SingleStreamCancellationStopsBeforeNextBufferedEntry(bool configured, bool pending)
     {
         await using var server = new FakeRespServer(4,
             "*1\r\n*2\r\n$6\r\nstream\r\n*2\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n*2\r\n$3\r\n2-0\r\n*2\r\n$1\r\nf\r\n$1\r\nv\r\n"u8.ToArray());
@@ -266,7 +266,7 @@ public class ScriptBlockingCommandHookTests
 
         await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
         cancellation.Cancel();
-        await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        await Assert.That(async () => await enumerator.MoveNextAsync()).ThrowsExactly<OperationCanceledException>();
         await Assert.That(await enumerator.MoveNextAsync()).IsFalse();
 
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
