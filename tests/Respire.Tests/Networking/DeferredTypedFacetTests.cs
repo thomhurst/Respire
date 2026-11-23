@@ -20,8 +20,12 @@ public class DeferredTypedFacetTests
             .ThrowsExactly<RespireProtocolException>();
         await Assert.That(async () => await client.Lists.PositionAsync("list", "value"))
             .ThrowsExactly<RespireProtocolException>();
+
+        // The first reply is an array with a non-integer element.
         await Assert.That(async () => await client.Lists.PositionsAsync("list", "value", count: 2))
             .ThrowsExactly<RespireProtocolException>();
+
+        // The next reply is a scalar where an array is required.
         await Assert.That(async () => await client.Lists.PositionsAsync("list", "value", count: 2))
             .ThrowsExactly<RespireProtocolException>();
 
