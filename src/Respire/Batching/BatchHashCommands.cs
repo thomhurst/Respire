@@ -142,11 +142,11 @@ public partial interface IRespireBatchHashCommands
     RespirePending<string?[]> GetAndExpire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields);
 
-    /// <summary>Sets fields and applies a relative, absolute, or retained expiry. Redis: HSETEX.</summary>
+    /// <summary>Sets fields and sets, keeps, or clears their TTLs with HSETEX.</summary>
     RespirePending<bool> SetExpire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
-    /// <summary>Sets fields with a FNX/FXX condition and applies an expiry. Redis: HSETEX.</summary>
+    /// <summary>Conditionally sets fields and sets, keeps, or clears their TTLs with HSETEX.</summary>
     RespirePending<bool> SetExpire(
         RespireKey key, RespireExpiry expiry, RespireSetWhen when,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields);
@@ -419,8 +419,13 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IRespireBat
             return SetExpireCore(key, "KEEPTTL", optionValue: 0, hasValue: false, when, fields);
         }
 
+        if (expiry.IsNone)
+        {
+            return SetExpireCore(key, option: null, optionValue: 0, hasValue: false, when, fields);
+        }
+
         throw new ArgumentException(
-            "HSETEX expiry must be relative, absolute, or RespireExpiry.Keep.", nameof(expiry));
+            "HSETEX expiry must be relative, absolute, RespireExpiry.Keep, or RespireExpiry.None.", nameof(expiry));
     }
 
     private RespirePending<RespireHashFieldExpiryResult[]> ExpireCore(
@@ -446,7 +451,7 @@ internal sealed partial class BatchHashCommands(IPendingSink sink) : IRespireBat
             static (c, v) => ResponseReader.NullableStringArray(in v));
 
     private RespirePending<bool> SetExpireCore(
-        RespireKey key, string option, long optionValue, bool hasValue, RespireSetWhen when,
+        RespireKey key, string? option, long optionValue, bool hasValue, RespireSetWhen when,
         ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => sink.Add<Cmd1N, bool>(
             "HSETEX",

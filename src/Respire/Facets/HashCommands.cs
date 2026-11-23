@@ -249,22 +249,22 @@ public partial interface IRespireHashCommands
     ValueTask<string?[]> GetAndExpireAsync(
         RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
-    /// <summary>Sets fields and applies a relative, absolute, or retained expiry. Redis: HSETEX.</summary>
+    /// <summary>Sets fields and sets, keeps, or clears their TTLs with HSETEX.</summary>
     ValueTask<bool> SetExpireAsync(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
-    /// <summary>Sets fields and applies a relative, absolute, or retained expiry. Redis: HSETEX.</summary>
+    /// <summary>Sets fields and sets, keeps, or clears their TTLs with HSETEX.</summary>
     ValueTask<bool> SetExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken);
 
-    /// <summary>Sets fields with a FNX/FXX condition and applies an expiry. Redis: HSETEX.</summary>
+    /// <summary>Conditionally sets fields and sets, keeps, or clears their TTLs with HSETEX.</summary>
     ValueTask<bool> SetExpireAsync(
         RespireKey key, RespireExpiry expiry, RespireSetWhen when, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
-    /// <summary>Sets fields with a FNX/FXX condition and applies an expiry. Redis: HSETEX.</summary>
+    /// <summary>Conditionally sets fields and sets, keeps, or clears their TTLs with HSETEX.</summary>
     ValueTask<bool> SetExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
@@ -1273,8 +1273,13 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
             return SetExpireCore(key, "KEEPTTL", optionValue: 0, hasValue: false, when, fields, cancellationToken, observation);
         }
 
+        if (expiry.IsNone)
+        {
+            return SetExpireCore(key, option: null, optionValue: 0, hasValue: false, when, fields, cancellationToken, observation);
+        }
+
         throw new ArgumentException(
-            "HSETEX expiry must be relative, absolute, or RespireExpiry.Keep.", nameof(expiry));
+            "HSETEX expiry must be relative, absolute, RespireExpiry.Keep, or RespireExpiry.None.", nameof(expiry));
     }
 
     private ValueTask<string?[]> GetExpireCore(
@@ -1294,7 +1299,7 @@ internal sealed partial class HashCommands(RespireClient client) : IRespireHashC
 
     private ValueTask<bool> SetExpireCore(
         RespireKey key,
-        string option,
+        string? option,
         long optionValue,
         bool hasValue,
         RespireSetWhen when,

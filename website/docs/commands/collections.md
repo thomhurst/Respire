@@ -68,6 +68,16 @@ string? name = await redis.Hashes.GetStringAsync("user:42", "name");
 Dictionary<string, string> profile = await redis.Hashes.GetAllAsync("user:42");
 ```
 
+Use `Hashes.SetExpireAsync` with `RespireExpiry.None` to set multiple fields in one command and clear their field TTLs. Pass `RespireSetWhen.Exists` to write only if every listed field exists, or `RespireSetWhen.NotExists` to write only if none exists. The method returns `false` if the condition fails. A failed condition leaves the values and TTLs unchanged. Use `RespireExpiry.Keep` to preserve TTLs on a successful write.
+
+```csharp
+bool applied = await redis.Hashes.SetExpireAsync(
+    "user:42", RespireExpiry.None, RespireSetWhen.Exists,
+    ("role", "editor"), ("region", "eu-central"));
+```
+
+`SetExpireAsync` and its queued form `Hashes.SetExpire` use `HSETEX`. It requires [Redis 8.0+](https://redis.io/docs/latest/commands/hsetex/) or [Valkey 9.0+](https://valkey.io/commands/hsetex/).
+
 - Methods that remove fields or stream entries are `RemoveAsync` and `Hashes.GetAndRemoveAsync`. `Delete` names mean whole-key deletion or stream group/consumer lifecycle.
 - `LengthAsync(key, field)` returns the value's byte length (`HSTRLEN`), or zero for an empty or missing field.
 - `RandomFieldAsync` returns one field, or null for a missing hash.

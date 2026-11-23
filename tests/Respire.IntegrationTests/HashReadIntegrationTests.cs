@@ -136,6 +136,42 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
     [Arguments(RespireProtocol.Resp3, 1)]
     [Arguments(RespireProtocol.Resp2, 2)]
     [Arguments(RespireProtocol.Resp3, 2)]
+    public async Task SetExpire_NoneClearsFieldExpiryOnlyWhenConditionMatches(RespireProtocol protocol, int mode)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var key = $"hash-set-expire:{Guid.NewGuid():N}";
+        var expiry = TimeSpan.FromMinutes(5);
+        await client.Hashes.SetExpireAsync(key, expiry, ("first", "old"), ("second", "old"));
+        var originalExpiry = await client.Hashes.ExpiryTimeAsync(key, "first", "second");
+        originalExpiry.Should().OnlyContain(result => result.HasExpiry);
+
+        var rejected = await ExecuteAsync(client, mode,
+            () => client.Hashes.SetExpireAsync(
+                key, RespireExpiry.None, RespireSetWhen.Exists, ("first", "new"), ("missing", "new")),
+            hashes => hashes.SetExpire(
+                key, RespireExpiry.None, RespireSetWhen.Exists, ("first", "new"), ("missing", "new")));
+        rejected.Should().BeFalse();
+        (await client.Hashes.GetManyAsync(key, "first", "second", "missing")).Should().Equal("old", "old", null);
+        (await client.Hashes.ExpiryTimeAsync(key, "first", "second")).Should().Equal(originalExpiry);
+
+        var applied = await ExecuteAsync(client, mode,
+            () => client.Hashes.SetExpireAsync(
+                key, RespireExpiry.None, RespireSetWhen.Exists, ("first", "one"), ("second", "two")),
+            hashes => hashes.SetExpire(
+                key, RespireExpiry.None, RespireSetWhen.Exists, ("first", "one"), ("second", "two")));
+        applied.Should().BeTrue();
+        (await client.Hashes.GetManyAsync(key, "first", "second")).Should().Equal("one", "two");
+        (await client.Hashes.ExpiryTimeAsync(key, "first", "second"))
+            .Should().HaveCount(2).And.OnlyContain(result => result.Exists && !result.HasExpiry);
+    }
+
+    [Test]
+    [Arguments(RespireProtocol.Resp2, 0)]
+    [Arguments(RespireProtocol.Resp3, 0)]
+    [Arguments(RespireProtocol.Resp2, 1)]
+    [Arguments(RespireProtocol.Resp3, 1)]
+    [Arguments(RespireProtocol.Resp2, 2)]
+    [Arguments(RespireProtocol.Resp3, 2)]
     public async Task WrongType_PropagatesServerErrors(RespireProtocol protocol, int mode)
     {
         await using var root = await ConnectAsync(protocol);

@@ -352,6 +352,28 @@ public class BatchFacetWireTests
     }
 
     [Test]
+    [Arguments(RespireSetWhen.Always, "HSETEX hash FIELDS 2 first one second two")]
+    [Arguments(RespireSetWhen.Exists, "HSETEX hash FXX FIELDS 2 first one second two")]
+    [Arguments(RespireSetWhen.NotExists, "HSETEX hash FNX FIELDS 2 first one second two")]
+    public async Task HashSetExpire_NoneOmitsExpiryTokens(RespireSetWhen when, string command)
+    {
+        var applied = ":1\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(applied, applied);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var immediate = await client.Hashes.SetExpireAsync(
+            "hash", RespireExpiry.None, when, ("first", "one"), ("second", "two"));
+        using var batch = client.CreateBatch();
+        var queued = batch.Hashes.SetExpire(
+            "hash", RespireExpiry.None, when, ("first", "one"), ("second", "two"));
+        await batch.ExecuteAsync();
+
+        await Assert.That(immediate).IsTrue();
+        await Assert.That(queued.Result).IsTrue();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { command, command }, CollectionOrdering.Matching);
+    }
+
+    [Test]
     public async Task DeferredTryGet_SeparatesMissingKeysFromStoredDefaults()
     {
         await using var server = new FakeRespServer(
