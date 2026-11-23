@@ -7,9 +7,11 @@ namespace Respire.Analyzers;
 
 internal static class CompletionGuards
 {
+    internal const string SuccessPropertyName = "IsCompletedSuccessfully";
+
     public static bool IsSuccessfulTaskCheck(IPropertyReferenceOperation check)
     {
-        return check.Property.Name == "IsCompletedSuccessfully"
+        return check.Property.Name == SuccessPropertyName
             && SyncOverAsyncAnalyzer.IsTask(check.Property.ContainingType);
     }
 

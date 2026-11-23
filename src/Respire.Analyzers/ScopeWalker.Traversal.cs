@@ -102,9 +102,12 @@ internal static partial class ScopeWalker
 
         internal bool Search()
         {
+            bool[]? blocksReachingTarget = null;
+
             if (completionLocal is not null)
             {
                 _completionFlag = _conditions.ReserveCompletionFlag(completionLocal);
+                blocksReachingTarget = FindBlocksReachingTarget();
             }
 
             foreach (var barrier in barriers)
@@ -151,14 +154,20 @@ internal static partial class ScopeWalker
             while (_pending.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var pending = _pending.Pop();
+                var block = pending.Block;
+
+                if (blocksReachingTarget is not null && !blocksReachingTarget[block.Ordinal])
+                {
+                    continue;
+                }
+
                 // Exhaustion is a possible path, never a proof of safety.
                 if (--remaining == 0)
                 {
                     return true;
                 }
 
-                var pending = _pending.Pop();
-                var block = pending.Block;
                 var entryPosition = int.MinValue;
                 var continuation = pending.Continuation;
                 var started = pending.Started;
@@ -219,6 +228,55 @@ internal static partial class ScopeWalker
 
             // A completion proof needs a reachable guarded read.
             return completionLocal is not null && !reachedGuardedRead;
+        }
+
+        private bool[] FindBlocksReachingTarget()
+        {
+            var reachable = new bool[graph.Blocks.Length];
+            var pending = new Stack<BasicBlock>();
+            var expandedRegions = new HashSet<ControlFlowRegion>();
+            Mark(targetBlock);
+
+            while (pending.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                BasicBlock block = pending.Pop();
+
+                foreach (ControlFlowBranch predecessor in block.Predecessors)
+                {
+                    Mark(predecessor.Source);
+
+                    foreach (ControlFlowRegion finalizer in predecessor.FinallyRegions)
+                    {
+                        Mark(graph.Blocks[finalizer.FirstBlockOrdinal]);
+                    }
+                }
+
+                // CFG predecessors omit exception dispatch. If a handler, filter or finalizer
+                // can reach the read, retain its enclosing exception region as a conservative bound.
+                ControlFlowRegion? region = FlowConditions.EnumerateRegionsWithin(graph, block.EnclosingRegion)
+                    .LastOrDefault(static enclosing => enclosing.Kind is ControlFlowRegionKind.Catch
+                        or ControlFlowRegionKind.FilterAndHandler or ControlFlowRegionKind.Finally)?.EnclosingRegion;
+
+                if (region is not null && expandedRegions.Add(region))
+                {
+                    for (int ordinal = region.FirstBlockOrdinal; ordinal <= region.LastBlockOrdinal; ordinal++)
+                    {
+                        Mark(graph.Blocks[ordinal]);
+                    }
+                }
+            }
+
+            return reachable;
+
+            void Mark(BasicBlock block)
+            {
+                if (!reachable[block.Ordinal])
+                {
+                    reachable[block.Ordinal] = true;
+                    pending.Push(block);
+                }
+            }
         }
 
         private (BasicBlock? Block, int Position) FindBarrierLocation(SyntaxNode barrier)

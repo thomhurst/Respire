@@ -97,6 +97,59 @@ public class SyncOverAsyncAnalyzerTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task LaterBranchesDoNotInvalidateACompletionGuard(bool inTry)
+    {
+        const int BranchCount = 16;
+        string parameters = string.Join(", ", Enumerable.Range(0, BranchCount).Select(index => $"bool flag{index}"));
+        string branches = string.Join("\n", Enumerable.Range(0, BranchCount).Select(index =>
+            $$"""
+            if (flag{{index}})
+            {
+                System.Console.WriteLine({{index}});
+            }
+            """));
+
+        string statements = $$"""
+            var command = client.ExecuteAsync("PING");
+            if (command.IsCompletedSuccessfully)
+            {
+                _ = command.Result;
+            }
+
+            {{branches}}
+            await Task.Yield();
+            """;
+
+        if (inTry)
+        {
+            statements = $$"""
+                try
+                {
+                    {{statements}}
+                }
+                finally
+                {
+                    System.Console.WriteLine("done");
+                }
+                """;
+        }
+
+        return Verify.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task RunAsync(RespireClient client, {{parameters}})
+                {
+                    {{statements}}
+                }
+            }
+            """);
+    }
+
+    [Test]
     public Task LoopInitializerDiscardsPreviousCompletion()
     {
         return Verify.VerifyAsync("""

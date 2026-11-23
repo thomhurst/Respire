@@ -329,7 +329,8 @@ internal static partial class ScopeWalker
         SemanticModel model, SyntaxNode scope, IOperation read, ILocalSymbol local, CancellationToken cancellationToken)
     {
         // Avoid constructing a graph for the usual unguarded read.
-        if (!scope.DescendantNodes().Any(static node => node is IdentifierNameSyntax { Identifier.ValueText: "IsCompletedSuccessfully" })
+        if (!scope.DescendantNodes().Any(static node =>
+                node is IdentifierNameSyntax { Identifier.ValueText: CompletionGuards.SuccessPropertyName })
             || CreateControlFlowGraph(model, scope, cancellationToken) is not { } graph)
         {
             return false;
