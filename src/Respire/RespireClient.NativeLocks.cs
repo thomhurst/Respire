@@ -426,7 +426,8 @@ public sealed partial class RespireClient
     private static bool IsUnknownLockCommand(RespireServerException error, string command)
         => IsBareUnknownCommand(error)
             || (error.Code == "ERR"
-                && error.Message.StartsWith($"ERR unknown command '{command}',", StringComparison.OrdinalIgnoreCase));
+                && (error.Message.StartsWith($"ERR unknown command '{command}',", StringComparison.OrdinalIgnoreCase)
+                    || error.Message.StartsWith($"ERR unknown command `{command}`,", StringComparison.OrdinalIgnoreCase)));
 
     // Garnet rejects unsupported commands and options before execution with this exact reply.
     private static bool IsBareUnknownCommand(RespireServerException error)
