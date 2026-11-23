@@ -5,13 +5,14 @@ description: Share a Respire client between FusionCache's distributed cache, bac
 
 # FusionCache
 
-`Respire.FusionCache` provides a FusionCache 2.9.0+ backplane (`IFusionCacheBackplane`) and
+`Respire.FusionCache` provides a FusionCache 2.10.0+ backplane (`IFusionCacheBackplane`) and
 distributed locker (`IFusionCacheDistributedLocker`). `Respire.Caching` supplies the
 `IDistributedCache` L2. All three can share one `IRespireClient` that you own.
 
 ```bash
 dotnet add package Respire.FusionCache
 dotnet add package Respire.Caching
+dotnet add package Microsoft.Extensions.DependencyInjection
 dotnet add package ZiggyCreatures.FusionCache.Serialization.SystemTextJson
 ```
 
@@ -19,6 +20,7 @@ dotnet add package ZiggyCreatures.FusionCache.Serialization.SystemTextJson
 
 ```csharp
 using Microsoft.Extensions.DependencyInjection;
+using Respire;
 using Respire.Caching;
 using Respire.FusionCache;
 using ZiggyCreatures.Caching.Fusion;
@@ -57,8 +59,11 @@ await cache.GetOrSetAsync("product:42", _ => Task.FromResult(42));
 - The backplane uses regular `SUBSCRIBE`/`PUBLISH` (not sharded) on the channel FusionCache
   chooses, over RESP2 or RESP3.
 - It interoperates with `ZiggyCreatures.FusionCache.Backplane.StackExchangeRedis` 2.9.0.
-- Communicating nodes need the same cache name, channel prefix, L2 key prefix, and serializer.
-  Give unrelated applications distinct names and prefixes.
+- FusionCache uses the cache name as the channel prefix by default. Set a nonblank
+  `BackplaneChannelPrefix` to override it. For independent named caches, use distinct
+  cache names with the default channels or give each logical cache a distinct explicit prefix.
+- Nodes sharing a logical cache need the same effective channel prefix, L2 key prefix, and
+  serializer.
 
 Pub/sub ignores the database number, and `WithKeyPrefix` does not prefix channels. A database
 or L2 key prefix alone does not isolate backplane traffic.
