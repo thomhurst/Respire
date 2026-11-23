@@ -72,6 +72,7 @@ public sealed class RespireProbabilisticClient
 
     /// <summary>Adds multiple items to a Bloom filter.</summary>
     /// <exception cref="RespireBloomBatchException">Redis rejected an item in the batch.</exception>
+    /// <exception cref="RespireProtocolException">The server returned an invalid batch reply.</exception>
     public ValueTask<bool[]> BloomMultiAddAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "BF.MADD", cancellationToken,
@@ -104,6 +105,7 @@ public sealed class RespireProbabilisticClient
 
     /// <summary>Creates a Bloom filter when needed and inserts multiple items.</summary>
     /// <exception cref="RespireBloomBatchException">Redis rejected an item in the batch.</exception>
+    /// <exception cref="RespireProtocolException">The server returned an invalid batch reply.</exception>
     public ValueTask<bool[]> BloomInsertAsync(RespireKey key, IReadOnlyList<RespireValue> items, RespireBloomInsertOptions? options = null, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "BF.INSERT", cancellationToken,
@@ -951,7 +953,7 @@ public sealed class RespireProbabilisticClient
                 throw ReadBloomBatchError(result, index, itemCount - values.Length);
             }
 
-            values[index] = ReadBoolean(item);
+            values[index] = ReadBloomBatchOutcome(item, index);
         }
 
         if (values.Length != itemCount)
@@ -977,11 +979,22 @@ public sealed class RespireProbabilisticClient
             }
             else
             {
-                itemResults[index] = ReadBoolean(item);
+                itemResults[index] = ReadBloomBatchOutcome(item, index);
             }
         }
 
         return new RespireBloomBatchException(itemErrors[firstErrorIndex], itemResults, itemErrors, skippedCount);
+    }
+
+    private static bool ReadBloomBatchOutcome(RespireResult item, int index)
+    {
+        return item.Type switch
+        {
+            RespireDataType.Boolean => item.AsBoolean(),
+            RespireDataType.Integer => item.AsInteger() == 1,
+            _ => throw new RespireProtocolException(
+                $"Unexpected Bloom batch reply: outcome at index {index} has type {item.Type}."),
+        };
     }
 
     private static RespireCuckooInsertResult[] ReadCuckooInsertResults(RespireResult result, int itemCount)
