@@ -454,11 +454,13 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         await other.ExpectAsync("connections");
 
         // Remote membership completion acknowledges a live subscription before the next publish.
+        // Join both connections before sending because Microsoft's backplane enumerates live membership during writes.
         await sender.AddToGroupAsync(remote.Id, "group");
         await sender.AddToGroupAsync(remote.Id, "group");
+        await sender.AddToGroupAsync(other.Id, "group");
         await sender.SendGroupAsync("group", "message", ["group"]);
         await remote.ExpectAsync("group");
-        await sender.AddToGroupAsync(other.Id, "group");
+        await other.ExpectAsync("group");
         await sender.SendGroupExceptAsync("group", "message", ["group-except"], [remote.Id]);
         await other.ExpectAsync("group-except");
         await sender.RemoveFromGroupAsync(other.Id, "group");
