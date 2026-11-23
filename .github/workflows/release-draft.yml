@@ -1,0 +1,249 @@
+name: Release Draft
+
+# Keeps one draft release up to date with main. Its tag is one step above the last published
+# release (v2.0.0-rc.2000 -> v2.0.0-rc.2001, v2.0.1 -> v2.0.2), its target is the newest main
+# commit, and its notes list the pull requests merged since that release.
+#
+# To release, edit the draft on GitHub: change the tag to choose the version (for example v2.0.0 to
+# cut the stable release, or v2.1.0 for a minor), adjust the notes, and publish it. Publishing
+# creates the tag on the draft's commit and runs modular-pipeline.yml, which builds, tests and packs
+# that commit with the tag's version and pushes the packages to NuGet.
+#
+# Change the draft's tag to override the version; later pushes keep a higher version you set (by
+# SemVer precedence, so v2.0.0 and v2.0.0-rc.2010 both outrank a suggested v2.0.0-rc.2001), unless
+# that version already exists as a tag. Set it back to the suggestion (or lower) to return to the
+# default.
+#
+# Every push to main regenerates the draft's notes and retargets it to the newest commit, so edits
+# to the notes are lost if main moves before it is published. The draft this workflow owns carries DRAFT_MARKER, a hidden comment at the end of its
+# notes; other drafts are left alone. Keep the marker when editing the notes: without it, the next
+# push creates a second draft. The marker is removed when the release is published.
+#
+# The previous release is the most recently published release, while pipeline builds use the
+# nearest reachable version tag. The two agree as long as version tags come only from published
+# releases.
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - .github/scripts/release-version.sh
+      - .github/scripts/test-release-version.sh
+      - .github/workflows/release-draft.yml
+
+permissions: {}
+
+# Runs queue instead of cancelling each other, so no run stops between reading and writing the
+# draft. A run whose commit is no longer main's tip (an older push, or a re-run of one) leaves the
+# draft alone.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Test release version helper
+        run: bash .github/scripts/test-release-version.sh
+
+  draft:
+    needs: test
+    # Only main may write the draft: a manual run on another branch would point main's draft at an
+    # unmerged commit.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      DRAFT_MARKER: '<!-- release-draft -->'
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Update draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Command substitutions, including calls to the functions below, fail the step as well.
+          shopt -s inherit_errexit
+          repo="repos/$GITHUB_REPOSITORY"
+
+          # Exit 0 when the resource exists, 1 when GitHub answers 404. Any other failure (rate
+          # limit, 5xx, network) fails the step rather than being read as "not found".
+          # On an HTTP error, `gh api -i` exits 1 and still writes the response's status line and
+          # headers, then the JSON error body, to stdout (checked with gh 2.x against a missing
+          # tag: "HTTP/2.0 404 Not Found"). A network failure writes nothing to stdout.
+          exists() {
+            local response status=0 status_line
+            response=$(gh api -i "$1" 2> /dev/null) || status=$?
+            if [ "$status" -eq 0 ]; then
+              return 0
+            fi
+            status_line=${response%%$'\n'*}
+            status_line=${status_line%$'\r'}
+            if [ "$status" -eq 1 ] && [[ "$status_line" =~ ^HTTP/[0-9.]+\ 404(\ |$) ]]; then
+              return 1
+            fi
+            echo "::error::GitHub API request failed (exit $status, '${status_line:-no response}'): $1" >&2
+            exit 1
+          }
+
+          # Exit 0 when this run's commit is still main's tip. A re-run of an older run keeps its
+          # original GITHUB_SHA, so without this it would move the draft back to an old commit.
+          is_main_tip() {
+            local tip
+            # Checked explicitly: errexit does not apply inside a function called from an if.
+            if ! tip=$(git ls-remote --exit-code origin refs/heads/main | cut -f1) || [ -z "$tip" ]; then
+              echo "::error::Could not read main's tip from origin." >&2
+              exit 1
+            fi
+            if [ "$tip" = "$GITHUB_SHA" ]; then
+              return 0
+            fi
+            echo "Main is now at $tip, not $GITHUB_SHA; leaving the draft to that commit's run." | tee -a "$GITHUB_STEP_SUMMARY"
+            return 1
+          }
+
+          if ! is_main_tip; then
+            exit 0
+          fi
+
+          # The last published release, prereleases included: the most recently published release
+          # whose tag is a version. releases/latest would skip prereleases such as v2.0.0-rc.2000.
+          # The list is captured first so that a failed request fails the step instead of looking
+          # like a repository without releases.
+          releases=$(gh api --paginate "$repo/releases?per_page=100" \
+            --jq '.[] | select(.draft | not) | [.published_at, .tag_name] | @tsv')
+          sorted=$(sort -r <<< "$releases")
+          previous=""
+          while IFS=$'\t' read -r _ candidate; do
+            if bash .github/scripts/release-version.sh tag "$candidate" > /dev/null 2>&1; then
+              previous=$candidate
+              break
+            fi
+          done <<< "$sorted"
+
+          if [ -n "$previous" ]; then
+            suggested=$(bash .github/scripts/release-version.sh next "$previous")
+          else
+            suggested=0.1.0
+          fi
+
+          # Exit 0 when a tag exists for the version in any form the release workflow accepts.
+          # Publishing a release creates its tag, so this also covers published releases. (The
+          # releases/tags endpoint is not used: it could match this workflow's own draft.)
+          version_tag_exists() {
+            local existing
+            for existing in "v$1" "V$1" "$1"; do
+              if exists "$repo/git/ref/tags/$existing"; then
+                echo "Tag $existing already exists."
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          drafts=$(gh api --paginate "$repo/releases?per_page=100" \
+            --jq '.[] | select(.draft and ((.body // "") | contains(env.DRAFT_MARKER))) | [.created_at, .id] | @tsv')
+          # Newest first. More than one marked draft means one was copied or created by hand: update
+          # the newest and name them all, so the others can be deleted.
+          drafts=$(sort -r <<< "$drafts")
+          draft_id=$(head -n 1 <<< "$drafts" | cut -f2)
+          if [ "$(grep -c . <<< "$drafts")" -gt 1 ]; then
+            echo "::warning::Several drafts carry $DRAFT_MARKER (ids: $(cut -f2 <<< "$drafts" | paste -sd ' ' -)); updating the newest, $draft_id. Delete the others."
+          fi
+          kept=""
+
+          if [ -n "$draft_id" ]; then
+            draft=$(gh api "$repo/releases/$draft_id")
+            if [ "$(jq -r .draft <<< "$draft")" != true ]; then
+              echo "::warning::Release $draft_id is no longer a draft; leaving it unchanged."
+              exit 0
+            fi
+            # Keep a higher version the owner set on the draft, unless it is already taken.
+            current=$(jq -r '.tag_name // ""' <<< "$draft")
+            if current_version=$(bash .github/scripts/release-version.sh tag "$current" 2> /dev/null) \
+              && bash .github/scripts/release-version.sh gt "$current_version" "$suggested" \
+              && ! version_tag_exists "$current_version"; then
+              kept=$current
+            fi
+          fi
+
+          if [ -n "$kept" ]; then
+            tag=$kept
+            echo "Keeping the draft's tag $tag, which is higher than the suggested v$suggested." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            tag="v$suggested"
+            if version_tag_exists "$suggested"; then
+              echo "::warning::The suggested version $suggested already exists; leaving the draft unchanged."
+              exit 0
+            fi
+            echo "Using the suggested tag $tag." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ -n "$previous" ]; then
+            notes=$(gh api -X POST "$repo/releases/generate-notes" \
+              -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -f previous_tag_name="$previous" \
+              --jq .body)
+          else
+            notes=$(gh api -X POST "$repo/releases/generate-notes" \
+              -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" --jq .body)
+          fi
+          body="$notes"$'\n\n'"$DRAFT_MARKER"
+
+          # Main may have moved while this run worked; the newer run owns the draft then.
+          if ! is_main_tip; then
+            exit 0
+          fi
+
+          if [ -n "$draft_id" ]; then
+            # Re-read the draft just before updating it, and leave it alone if it was published in
+            # the meantime. A publish in the sub-second gap between this read and the PATCH can still
+            # be renamed; the PATCH never sends draft=true, so it cannot turn a release back into a draft.
+            # Captured first: a failed request must fail the step, not read as "published".
+            still_draft=$(gh api "$repo/releases/$draft_id" --jq .draft)
+            if [ "$still_draft" != true ]; then
+              echo "::warning::Release $draft_id is no longer a draft; leaving it unchanged."
+              exit 0
+            fi
+            if [ -n "$kept" ]; then
+              # Only the target and the notes are refreshed; the owner's tag and name stay.
+              url=$(gh api -X PATCH "$repo/releases/$draft_id" \
+                -f target_commitish="$GITHUB_SHA" -f body="$body" --jq .html_url)
+            else
+              prerelease=false
+              if [[ "$suggested" == *-* ]]; then
+                prerelease=true
+              fi
+              url=$(gh api -X PATCH "$repo/releases/$draft_id" \
+                -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -f name="$suggested" \
+                -F prerelease="$prerelease" -f body="$body" --jq .html_url)
+            fi
+          else
+            prerelease=false
+            if [[ "$suggested" == *-* ]]; then
+              prerelease=true
+            fi
+            url=$(gh api -X POST "$repo/releases" \
+              -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -f name="$suggested" \
+              -F draft=true -F prerelease="$prerelease" -f body="$body" --jq .html_url)
+          fi
+
+          echo "Draft release $tag for $GITHUB_SHA (previous release ${previous:-none}): $url" | tee -a "$GITHUB_STEP_SUMMARY"

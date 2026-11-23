@@ -7,23 +7,23 @@ on:
     branches: ["main"]
     # Drafts skip the job before a runner starts; marking the PR ready runs it on the reviewed head.
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  # Publishing the draft release that release-draft.yml keeps for main runs this pipeline on the
+  # release's tag and pushes the packages to NuGet, stamped with the tag's version. NuGet trusted
+  # publishing is bound to this workflow file and the Production environment.
+  release:
+    types: [published]
   workflow_dispatch:
-    inputs:
-      publish-packages:
-        description: Publish packages?    
-        type: boolean
-        required: true
-        default: false
 
 concurrency:
-  # A newer commit on the same PR or branch supersedes older runs. Every main commit still runs.
+  # A newer commit on the same PR or branch supersedes older runs. Every main commit and every
+  # release still runs.
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'release' }}
 
 jobs:
   modularpipeline:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish-packages && 'Production' || 'Pull Requests' }}
+    environment: ${{ github.event_name == 'release' && 'Production' || 'Pull Requests' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -34,27 +34,51 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      
+
+      # The release's tag, which may have been edited on the draft, is the version. The pipeline
+      # reads RESPIRE_RELEASE_VERSION on release runs instead of computing one.
+      - name: Resolve release version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          shopt -s inherit_errexit
+          version=$(bash .github/scripts/release-version.sh tag "$RELEASE_TAG")
+          echo "Release version: $version"
+          echo "RESPIRE_RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+
+      # A release can only ship what main has: the tag must point at a commit on main.
+      - name: Verify release is on main
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Release $RELEASE_TAG points at $GITHUB_SHA, which is not on main."
+            exit 1
+          fi
+
       - name: Set up .NET
         uses: ./.github/actions/setup-dotnet
 
 
       - name: NuGet login
-        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish-packages }}
+        if: github.event_name == 'release'
         uses: NuGet/login@v1
         id: login
         with:
           user: ${{ secrets.NUGET_USER }}
 
       - name: Run Pipeline
+        id: pipeline
         # Directory.Build.props multi-targets every project, so a framework must be picked.
         run: dotnet run -c Release -f net11.0
         working-directory: "Respire.Pipeline"
         env:
-          DOTNET_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish-packages && 'Production' || 'Development' }}
+          DOTNET_ENVIRONMENT: ${{ github.event_name == 'release' && 'Production' || 'Development' }}
           NuGet__ApiKey: ${{ steps.login.outputs.NUGET_API_KEY }}
           PULL_REQUEST_BRANCH: ${{ github.event.pull_request.head.ref }}
-          PUBLISH_PACKAGES: ${{ inputs.publish-packages }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # The pipeline already packed every package, so the package checks consume those
@@ -67,11 +91,73 @@ jobs:
           version=$(basename "$package" .nupkg)
           echo "version=${version#Respire.}" >> "$GITHUB_OUTPUT"
 
+      # The draft was named, and its compare link written, for the suggested version. Follow the tag
+      # if it was edited before publishing, mark prereleases, and list the install commands for the
+      # packages. It runs once the pipeline has pushed the packages, even if a later check fails, and
+      # it is cosmetic, so it never blocks a release.
+      - name: Update release notes
+        if: always() && github.event_name == 'release' && steps.pipeline.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ github.event.release.id }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          shopt -s inherit_errexit
+          # RELEASE_TAG passed the version grammar above, so it is safe in a sed replacement.
+          version=$(bash .github/scripts/release-version.sh tag "$RELEASE_TAG")
+          draft_marker='<!-- release-draft -->'
+          start_marker='<!-- nuget-packages:start -->'
+          end_marker='<!-- nuget-packages:end -->'
+          body=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.body // ""')
+
+          # Drop the draft marker and the install section a previous run of this step wrote between
+          # its markers. Everything else the maintainer wrote is kept.
+          body=$(printf '%s\n' "$body" | awk -v draft="$draft_marker" -v start="$start_marker" -v end="$end_marker" '
+            $0 == start { skipping = 1; next }
+            skipping { if ($0 == end) { skipping = 0 }; next }
+            index($0, draft) == 0 { print }')
+          # Only GitHub's generated "**Full Changelog**: .../compare/A...B" line is rewritten.
+          body=$(printf '%s\n' "$body" | sed -E "/^\*\*Full Changelog\*\*: /s#(/compare/[^ )]+)\.\.\.[^ )]+#\1...$RELEASE_TAG#")
+
+          commands=""
+          packages=$(find artifacts/packages -maxdepth 1 -name "*.$version.nupkg" -exec basename {} ".$version.nupkg" \; | LC_ALL=C sort -f)
+          while read -r package; do
+            if [ -z "$package" ]; then
+              continue
+            fi
+            if [ "$package" = Respire.Templates ]; then
+              commands+="dotnet new install $package@$version"$'\n'
+            else
+              commands+="dotnet add package $package --version $version"$'\n'
+            fi
+          done <<< "$packages"
+
+          if [ -n "$commands" ]; then
+            body+=$'\n\n'"$start_marker"$'\n## NuGet packages\n\n```bash\n'"$commands"$'```\n'"$end_marker"
+          fi
+
+          prerelease=false
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          fi
+
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -f name="$version" -F prerelease="$prerelease" -f body="$body" > /dev/null
+
+      # The packed version comes from a release tag on release runs, so it reaches scripts through env.
+      # Builds between releases pack different code under the same version, so the restore uses its
+      # own packages folder: the cached ~/.nuget/packages could otherwise hold an earlier build's
+      # packages under this version, and NuGet looks there before the package sources.
       - name: Publish generated commands with Native AOT from packed NuGet assets
+        env:
+          PACKAGE_VERSION: ${{ steps.packages.outputs.version }}
         run: >-
           dotnet publish tests/Respire.GeneratedCommands.Smoke -c Release -r linux-x64
-          -p:RespirePackageVersion=${{ steps.packages.outputs.version }}
-          -p:RestoreAdditionalProjectSources=${{ github.workspace }}/artifacts/packages
+          "-p:RespirePackageVersion=$PACKAGE_VERSION"
+          "-p:RestoreAdditionalProjectSources=$GITHUB_WORKSPACE/artifacts/packages"
+          "-p:RestorePackagesPath=$GITHUB_WORKSPACE/artifacts/generated-commands-smoke-packages"
           -o artifacts/generated-commands-smoke
 
       - name: Execute generated commands with RESP2 and RESP3
@@ -88,15 +174,21 @@ jobs:
 
       - name: Compile documentation snippets
         shell: pwsh
-        run: ./scripts/Verify-DocSnippets.ps1 -PackagesPath artifacts/packages -Version ${{ steps.packages.outputs.version }}
+        env:
+          PACKAGE_VERSION: ${{ steps.packages.outputs.version }}
+        run: ./scripts/Verify-DocSnippets.ps1 -PackagesPath artifacts/packages -Version $env:PACKAGE_VERSION
 
       - name: Compile getting-started app on .NET 10 and .NET 11
         shell: pwsh
-        run: ./scripts/Verify-GettingStarted.ps1 -PackagesPath artifacts/packages -Version ${{ steps.packages.outputs.version }}
+        env:
+          PACKAGE_VERSION: ${{ steps.packages.outputs.version }}
+        run: ./scripts/Verify-GettingStarted.ps1 -PackagesPath artifacts/packages -Version $env:PACKAGE_VERSION
 
       - name: Install and run API and Aspire project templates against Redis
         shell: pwsh
-        run: ./scripts/Verify-Templates.ps1 -PackagesPath artifacts/packages -Version ${{ steps.packages.outputs.version }}
+        env:
+          PACKAGE_VERSION: ${{ steps.packages.outputs.version }}
+        run: ./scripts/Verify-Templates.ps1 -PackagesPath artifacts/packages -Version $env:PACKAGE_VERSION
 
       - name: Upload template smoke diagnostics
         if: always()

@@ -46,8 +46,8 @@ public class StableVersionTagTests
         using var repository = new TestRepository();
         await repository.InitializeAsync();
         await repository.Git("tag", "v1.2.3");
-        await repository.CommitAsync("prerelease");
-        await repository.Git("tag", "v2.0.0-preview");
+        await repository.CommitAsync("build metadata");
+        await repository.Git("tag", "v2.0.0+preview");
         var gitDirectory = await repository.Git("rev-parse", "--absolute-git-dir");
         var values = new Dictionary<string, string>
         {
@@ -250,7 +250,7 @@ public class StableVersionTagTests
         await repository.InitializeAsync();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.That(() => GitVersionDetails.GetLatestStableVersionTagAsync(repository.Path, cancellation.Token))
+        await Assert.That(() => GitVersionDetails.GetLatestVersionTagAsync(repository.Path, cancellation.Token))
             .Throws<OperationCanceledException>();
     }
 
@@ -307,11 +307,11 @@ public class StableVersionTagTests
     }
 
     [Test]
-    public async Task GitFailureDoesNotBecomeMissingStableTag()
+    public async Task GitFailureDoesNotBecomeMissingVersionTag()
     {
         using var repository = new TestRepository();
         // An existing directory without a repository is a Git failure, not a tag miss.
-        await Assert.That(() => GitVersionDetails.GetLatestStableVersionTagAsync(repository.Path, CancellationToken.None))
+        await Assert.That(() => GitVersionDetails.GetLatestVersionTagAsync(repository.Path, CancellationToken.None))
             .ThrowsExactly<InvalidOperationException>();
     }
 
@@ -331,8 +331,8 @@ public class StableVersionTagTests
         var updates = string.Join('\n', Enumerable.Range(0, stable ? 1000 : 512)
             .Select(index =>
             {
-                var tag = stable ? $"v2147483647.2147483647.{index:D10}"
-                    : $"v2.0.0-preview.{index:D4}.{new string('x', 64)}";
+                var tag = stable ? $"v{index + 2}.65534.65534"
+                    : $"v2.0.0+preview.{index:D4}.{new string('x', 64)}";
                 return $"create refs/tags/{tag} {head}";
             })) + "\n";
         await repository.GitWithInput(updates, "update-ref", "--stdin");
@@ -381,7 +381,7 @@ public class StableVersionTagTests
         await repository.InitializeAsync();
         await repository.Git("tag", "v1.2.3");
         await repository.CommitAsync("shallow head");
-        await repository.Git("tag", "v2.0.0-beta");
+        await repository.Git("tag", "v2.0.0+beta");
         var source = new Uri(repository.Path + System.IO.Path.DirectorySeparatorChar).AbsoluteUri;
         await repository.Git("clone", "--depth=1", source, shallow.Path);
         await Assert.That(await shallow.Git("rev-parse", "--is-shallow-repository")).IsEqualTo("true");
@@ -443,28 +443,35 @@ public class StableVersionTagTests
     [Test]
     [Arguments(true)]
     [Arguments(false)]
-    public async Task SkipsSuffixedAndIncompleteTags(bool hasStableTag)
+    public async Task SkipsBuildMetadataAndIncompleteTags(bool hasVersionTag)
     {
         using var repository = new TestRepository();
         await repository.InitializeAsync();
 
-        if (hasStableTag)
+        if (hasVersionTag)
         {
             await repository.Git("tag", "V1.2.3");
         }
 
-        foreach (var tag in new[] { "v1.3.0-beta.1", "v1.4.0+build", "v1.5", "v999999999999999.0.0" })
+        foreach (var tag in new[] { "v1.4.0+build", "v1.5", "v999999999999999.0.0", "v65535.0.0", "v1.06.0", "v1.7.0-rc.01", "release-1" })
         {
             await repository.CommitAsync(tag);
             await repository.Git("tag", tag);
         }
 
-        await Assert.That(await repository.SelectAsync()).IsEqualTo(hasStableTag ? "V1.2.3" : null);
-        await repository.CommitAsync("+semver:minor");
-        await repository.Git("commit", "--allow-empty", "--allow-empty-message", "-m", "");
-        var increment = await GitVersionDetails.GetVersionIncrementAsync(repository.Path, "HEAD~2..HEAD", 2, CancellationToken.None);
-        await Assert.That(increment.Increment).IsEqualTo(VersionIncrement.Minor);
-        await Assert.That(increment.PatchHeight).IsEqualTo(1);
+        await Assert.That(await repository.SelectAsync()).IsEqualTo(hasVersionTag ? "V1.2.3" : null);
+    }
+
+    [Test]
+    public async Task PrereleaseTagsAreVersionTags()
+    {
+        using var repository = new TestRepository();
+        await repository.InitializeAsync();
+        await repository.Git("tag", "v0.13.3");
+        await repository.CommitAsync("candidate");
+        await repository.Git("tag", "v2.0.0-rc.2000");
+        await repository.CommitAsync("unreleased");
+        await Assert.That(await repository.SelectAsync()).IsEqualTo("v2.0.0-rc.2000");
     }
 
     private sealed class TestRepository : IDisposable
@@ -490,7 +497,7 @@ public class StableVersionTagTests
         internal Task<string> TagAsync(string name, bool annotated)
             => annotated ? Git("tag", "-a", name, "-m", name) : Git("tag", name);
 
-        internal Task<string?> SelectAsync() => GitVersionDetails.GetLatestStableVersionTagAsync(Path, CancellationToken.None);
+        internal Task<string?> SelectAsync() => GitVersionDetails.GetLatestVersionTagAsync(Path, CancellationToken.None);
 
         public void Dispose()
         {
