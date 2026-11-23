@@ -1068,6 +1068,9 @@ static readonly Respire.RespireCommands.PathHash.PHGETALL -> Respire.RespireComm
 static readonly Respire.RespireCommands.PathHash.PHLONGEST -> Respire.RespireCommand
 static readonly Respire.RespireCommands.PathHash.PHMGET -> Respire.RespireCommand
 static readonly Respire.RespireCommands.PathHash.PHMSET -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHPATHCOUNT -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHPATHDEL -> Respire.RespireCommand
+static readonly Respire.RespireCommands.PathHash.PHPATHEXISTS -> Respire.RespireCommand
 static readonly Respire.RespireCommands.PathHash.PHPREFIXES -> Respire.RespireCommand
 static readonly Respire.RespireCommands.PathHash.PHSCAN -> Respire.RespireCommand
 static readonly Respire.RespireCommands.PathHash.PHSET -> Respire.RespireCommand

@@ -175,13 +175,13 @@ public class CommandCatalogTests
     {
         var commands = RespireCommands.All.ToArray();
 
-        await Assert.That(commands.Length).IsEqualTo(663);
+        await Assert.That(commands.Length).IsEqualTo(666);
         await Assert.That(commands.Select(static command => command.Name).Distinct(StringComparer.Ordinal).Count())
             .IsEqualTo(commands.Length);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Redis)))
             .IsEqualTo(598);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Valkey)))
-            .IsEqualTo(490);
+            .IsEqualTo(493);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.KeyDb)))
             .IsEqualTo(9);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Dragonfly)))
@@ -293,6 +293,9 @@ public class CommandCatalogTests
     [Arguments("PHLONGEST")]
     [Arguments("PHMGET")]
     [Arguments("PHMSET")]
+    [Arguments("PHPATHCOUNT")]
+    [Arguments("PHPATHDEL")]
+    [Arguments("PHPATHEXISTS")]
     [Arguments("PHPREFIXES")]
     [Arguments("PHSCAN")]
     [Arguments("PHSET")]

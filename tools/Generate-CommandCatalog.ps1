@@ -64,7 +64,7 @@ foreach ($entry in @(
     @{ Category = 'ServerAdmin'; Commands = 'ACL SETROLE,ACL DELROLE' },
     @{ Category = 'WriteLastWins'; Commands = 'PHMSET' },
     # PHSET has conditional field updates; deletes can lose their original counts.
-    @{ Category = 'WriteAccumulating'; Commands = 'PHSET,PHDEL,PHDELPREFIX' },
+    @{ Category = 'WriteAccumulating'; Commands = 'PHSET,PHDEL,PHDELPREFIX,PHPATHDEL' },
     @{ Category = 'WriteChecked'; Commands = 'SETNX,MSETNX,HSETNX' },
     @{ Category = 'WriteLastWins'; Commands = 'MSET,HSET,HMSET,LSET,SETRANGE,SETBIT,VSETATTR' },
     # SET GET and ZADD INCR can lose a result or accumulate effects. A future
@@ -126,14 +126,15 @@ function Add-Commands(
     [System.Collections.Generic.List[object]] $Commands,
     [string] $Group,
     [string] $Provider,
-    [string] $Names) {
+    [string] $Names,
+    [string] $CommandFlag) {
     foreach ($name in $Names.Split(',', [StringSplitOptions]::RemoveEmptyEntries)) {
         $Commands.Add([pscustomobject]@{
             Name = $name.Trim()
             Group = $Group
             Provider = $Provider
-            IsReadOnly = $null
-            HasWriteFlag = $false
+            IsReadOnly = if ($CommandFlag) { $CommandFlag -eq 'READONLY' } else { $null }
+            HasWriteFlag = $CommandFlag -eq 'WRITE'
         })
     }
 }
@@ -192,6 +193,11 @@ Add-Commands $commands 'connection' 'Valkey' 'CLIENT MAINT_NOTIFICATIONS'
 
 # Valkey added DELEX in 9.2.0 after the pinned release candidate.
 Add-Commands $commands 'string' 'Valkey' 'DELEX'
+
+# Valkey 9.2.0 Path Hash commands absent from the RC1 input. Keep the RC1 raw descriptors for compatibility.
+# https://github.com/valkey-io/valkey/tree/9.2.0/src/commands
+Add-Commands $commands 'pathhash' 'Valkey' 'PHPATHCOUNT,PHPATHEXISTS' 'READONLY'
+Add-Commands $commands 'pathhash' 'Valkey' 'PHPATHDEL' 'WRITE'
 
 # Redis 8 integrated data structures and processing engines.
 Add-Commands $commands 'bloom' 'Redis' 'BF.ADD,BF.CARD,BF.EXISTS,BF.INFO,BF.INSERT,BF.LOADCHUNK,BF.MADD,BF.MEXISTS,BF.RESERVE,BF.SCANDUMP'

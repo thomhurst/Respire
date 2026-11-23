@@ -7,7 +7,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-/// <summary>Path Hash commands queued in batches and transactions. Requires Valkey 9.2; tested against RC1.</summary>
+/// <summary>Valkey 9.2 Path Hash commands queued in batches and transactions.</summary>
 public partial interface IRespireBatchPathHashCommands
 {
     /// <summary>Sets one field; false when FNX/FXX rejects the complete write. Valkey: PHSET.</summary>
@@ -37,10 +37,10 @@ public partial interface IRespireBatchPathHashCommands
     /// <summary>Gets the owned binary payload; missing paths return an empty array. Valkey: PHGETALL.</summary>
     RespirePending<RespirePathHashField[]> GetAll(RespireKey key, RespireKey path);
 
-    /// <summary>Tests whether an exact logical path exists. Valkey: PHEXISTS.</summary>
+    /// <summary>Tests whether an exact logical path exists. Valkey: PHPATHEXISTS.</summary>
     RespirePending<bool> Exists(RespireKey key, RespireKey path);
 
-    /// <summary>Counts logical paths, returning zero when the key is missing. Valkey: PHCARD.</summary>
+    /// <summary>Counts logical paths, returning zero when the key is missing. Valkey: PHPATHCOUNT.</summary>
     RespirePending<long> Count(RespireKey key);
 
     /// <summary>Deletes specified fields and returns their count; no fields deletes the entire path and returns 0 or 1. Valkey: PHDEL.</summary>
@@ -49,10 +49,10 @@ public partial interface IRespireBatchPathHashCommands
     /// <summary>Deletes one field and returns its count. Valkey: PHDEL.</summary>
     RespirePending<long> Remove(RespireKey key, RespireKey path, RespireKey field);
 
-    /// <summary>Deletes paths whose bytes start with the prefix; empty prefix removes all paths. Valkey: PHDELPREFIX.</summary>
+    /// <summary>Deletes paths whose bytes start with the prefix; empty prefix removes all paths. Valkey: PHPATHDEL WITHSUBPATHS.</summary>
     RespirePending<long> RemovePrefix(RespireKey key, RespireKey prefix);
 
-    /// <summary>Gets the longest stored byte prefix and its owned payload, or null. Valkey: PHLONGEST.</summary>
+    /// <summary>Gets the longest stored byte prefix and its owned payload, or null. Valkey: PHPREFIXES COUNT 1.</summary>
     RespirePending<RespirePathHashEntry?> LongestPrefix(RespireKey key, RespireKey query);
 
     /// <summary>Gets ancestor byte prefixes from shortest to longest; count retains deepest matches after the byte-length limit. Valkey: PHPREFIXES.</summary>
@@ -124,13 +124,13 @@ internal sealed partial class BatchPathHashCommands(IPendingSink sink) : IRespir
             static (client, reply) => PathHashCodec.Fields(in reply));
 
     public RespirePending<bool> Exists(RespireKey key, RespireKey path)
-        => sink.Add<Cmd1N, bool>("PHEXISTS",
-            Command(RespireCommands.PathHash.PHEXISTS, key, [path.AsValue()]),
+        => sink.Add<Cmd1N, bool>("PHPATHEXISTS",
+            Command(RespireCommands.PathHash.PHPATHEXISTS, key, [path.AsValue()]),
             static (client, reply) => ResponseReader.Flag(in reply));
 
     public RespirePending<long> Count(RespireKey key)
-        => sink.Add<Cmd1N, long>("PHCARD",
-            Command(RespireCommands.PathHash.PHCARD, key, []),
+        => sink.Add<Cmd1N, long>("PHPATHCOUNT",
+            Command(RespireCommands.PathHash.PHPATHCOUNT, key, []),
             static (client, reply) => ResponseReader.Integer(in reply));
 
     public RespirePending<long> Remove(RespireKey key, RespireKey path, ReadOnlySpan<RespireKey> fields = default)
@@ -142,19 +142,19 @@ internal sealed partial class BatchPathHashCommands(IPendingSink sink) : IRespir
         => Remove(key, path, [field]);
 
     public RespirePending<long> RemovePrefix(RespireKey key, RespireKey prefix)
-        => sink.Add<Cmd1N, long>("PHDELPREFIX",
-            Command(RespireCommands.PathHash.PHDELPREFIX, key, [prefix.AsValue()]),
+        => sink.Add<Cmd1N, long>("PHPATHDEL",
+            Command(RespireCommands.PathHash.PHPATHDEL, key, [prefix.AsValue(), "WITHSUBPATHS"]),
             static (client, reply) => ResponseReader.Integer(in reply));
 
     public RespirePending<RespirePathHashEntry?> LongestPrefix(RespireKey key, RespireKey query)
-        => sink.Add<Cmd1N, RespirePathHashEntry?>("PHLONGEST",
-            Command(RespireCommands.PathHash.PHLONGEST, key, [query.AsValue(), "WITHVALUES"]),
+        => sink.Add<Cmd1N, RespirePathHashEntry?>("PHPREFIXES",
+            Command(RespireCommands.PathHash.PHPREFIXES, key, [query.AsValue(), "COUNT", 1, "WITHVALUES"]),
             static (client, reply) => PathHashCodec.Match(in reply));
 
     public RespirePending<RespirePathHashEntry[]> Prefixes(RespireKey key, RespireKey query, long? count = null, long? maxPathLength = null)
         => sink.Add<Cmd1N, RespirePathHashEntry[]>("PHPREFIXES",
             Command(RespireCommands.PathHash.PHPREFIXES, key, PathHashCodec.Prefixes(query, count, maxPathLength)),
-            static (client, reply) => PathHashCodec.Entries(in reply));
+            static (client, reply) => PathHashCodec.PrefixEntries(in reply));
 
     public RespirePending<RespirePathHashPage> ScanPage(RespireKey key, ReadOnlyMemory<byte> cursor = default, RespireKey? prefix = null, int count = 100)
         => sink.Add<Cmd1N, RespirePathHashPage>("PHSCAN",

@@ -2,7 +2,6 @@
 
 Valkey 9.2 adds opt-in missing-key replies, ACL roles, configuration metadata, and a new
 Path Hash data type. Respire supports all of them with typed APIs over RESP2 and RESP3.
-They are tested against the Valkey 9.2 release candidate (9.2.0-rc1).
 
 ## Distinguish missing keys
 
@@ -111,7 +110,9 @@ fails it, no fields change and the result is false. Generic `SetAsync<T>`, `GetA
 `TryGetAsync<T>` use the client's serializers. `TryGetAsync<T>` preserves presence for stored
 default values such as zero. `CountAsync` counts paths, `ExistsAsync` checks an exact path,
 `RemoveAsync` removes supplied fields (or the whole path when fields are omitted), and
-`RemovePrefixAsync` deletes descendants of a byte prefix. Empty prefixes match every path.
+`RemovePrefixAsync` deletes every path whose bytes start with the prefix, including an exact
+match. Empty prefixes match every path. Path counts, exact existence, prefix deletion, and
+ancestor lookups require Valkey 9.2.0.
 
 ```csharp
 await foreach (var entry in redis.PathHashes.ScanAsync("routes", prefix: "/api", count: 100,
@@ -125,7 +126,8 @@ if (!page.IsComplete)
     page = await redis.PathHashes.ScanPageAsync("routes", page.Cursor, prefix: "/api", count: 100);
 ```
 
-Traversal is lexicographic. PHSCAN cursors are owned opaque bytes (`ReadOnlyMemory<byte>`); pass them back unchanged with
+These traversal methods use the Valkey 9.2.0-rc1 scan protocol. Traversal is lexicographic.
+PHSCAN cursors are owned opaque bytes (`ReadOnlyMemory<byte>`); pass them back unchanged with
 the same key and prefix, and stop only when `IsComplete` is true (the single ASCII byte `0`). Omit the cursor or pass empty memory to start a scan. An empty page alone does not end traversal.
 Streamed enumerations pin their cursor to its issuing server, including when reading replicas.
 Each page is a separate read, so concurrent writes can alter the traversal. Cancellation is

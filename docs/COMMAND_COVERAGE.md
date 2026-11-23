@@ -13,13 +13,13 @@ Respire exposes commands in two layers:
 
 ## Catalog sources
 
-The catalog has 663 unique descriptors. Counts overlap because many commands appear in several
+The catalog has 666 unique descriptors. Counts overlap because many commands appear in several
 references.
 
 | Reference | Version audited | Descriptors |
 | --- | --- | ---: |
 | Redis command metadata | 8.10.0 | 598 |
-| Valkey command metadata | 9.2.0-rc1 and [DELEX in 9.2.0](https://github.com/valkey-io/valkey/blob/9.2.0/src/commands/delex.json) | 490 |
+| Valkey command metadata | 9.2.0-rc1 plus [DELEX](https://github.com/valkey-io/valkey/blob/9.2.0/src/commands/delex.json) and three Path Hash commands from 9.2.0 | 493 |
 | Redis integrated modules | Redis 8.10 documentation | Included above |
 | Valkey optional Bloom, JSON, and Search modules | Valkey 9.1 documentation | Included above |
 | KeyDB extensions | 6.3.4 command table and command reference, audited 2026-09-30 | 9 |
