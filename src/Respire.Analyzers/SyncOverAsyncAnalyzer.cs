@@ -54,10 +54,26 @@ public sealed class SyncOverAsyncAnalyzer : DiagnosticAnalyzer
         }
 
         if (context.Operation.SemanticModel is { } model
-            && IsRespireOperation(operand, model, unchangedLocals, context.CancellationToken, 0))
+            && IsRespireOperation(operand, model, unchangedLocals, context.CancellationToken, 0)
+            && !HasSuccessfulCompletionGuard(context, model, operand))
         {
             context.ReportDiagnostic(Diagnostic.Create(Rule, context.Operation.Syntax.GetLocation()));
         }
+    }
+
+    private static bool HasSuccessfulCompletionGuard(OperationAnalysisContext context, SemanticModel model, IOperation operand)
+    {
+        while (operand is IInvocationOperation { TargetMethod.Name: "AsTask" or "ConfigureAwait", Instance: { } instance } adapter
+               && IsTask(adapter.TargetMethod.ContainingType))
+        {
+            operand = instance;
+        }
+
+        SyntaxNode read = context.Operation.Syntax;
+        return operand is ILocalReferenceOperation { Local: { RefKind: RefKind.None } local }
+            && ScopeWalker.GetEnclosingScope(read) is { } scope
+            && CompletionGuards.FindChecks(model, scope, read, context.CancellationToken).Any(check =>
+                CompletionGuards.IsSuccessfulTaskCheck(check) && CompletionGuards.ChecksLocal(check, local));
     }
 
     internal static IOperation? GetAwaitable(IOperation operation) => operation switch
@@ -117,7 +133,8 @@ public sealed class SyncOverAsyncAnalyzer : DiagnosticAnalyzer
                 }
                 if (!unchangedLocals.TryGetValue(local.Local, out var unchanged))
                 {
-                    unchanged = IsUnchangedLocal(local.Local, declaration, model, cancellationToken);
+                    var scope = ScopeWalker.GetEnclosingScope(declaration);
+                    unchanged = scope is not null && ScopeWalker.IsUnchangedLocal(scope, local.Local, model, cancellationToken);
                     unchangedLocals.TryAdd(local.Local, unchanged);
                 }
                 if (!unchanged)
@@ -129,56 +146,6 @@ public sealed class SyncOverAsyncAnalyzer : DiagnosticAnalyzer
             default:
                 return false;
         }
-    }
-
-    private static bool IsUnchangedLocal(ILocalSymbol local, VariableDeclaratorSyntax declaration,
-        SemanticModel model, CancellationToken cancellationToken)
-    {
-        // Cache only mutation checks, not depth-dependent alias traversal results.
-        var scope = declaration.Ancestors().FirstOrDefault(n => n is BlockSyntax or GlobalStatementSyntax);
-
-        if (scope is null)
-        {
-            return false;
-        }
-
-        if (scope is GlobalStatementSyntax)
-        {
-            scope = scope.Parent!;
-        }
-
-        foreach (var identifier in scope.DescendantNodes().OfType<IdentifierNameSyntax>())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (identifier.Identifier.ValueText != local.Name)
-            {
-                continue;
-            }
-
-            if (!SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(identifier, cancellationToken).Symbol, local))
-            {
-                continue;
-            }
-
-            var node = (SyntaxNode)identifier;
-            // Parentheses and tuple elements can wrap a write to the local. Member/index
-            // access cannot: a local used as an index is read, not reassigned.
-            while (node.Parent is ParenthesizedExpressionSyntax
-                || node.Parent is ArgumentSyntax { Parent: TupleExpressionSyntax })
-            {
-                node = node.Parent is ArgumentSyntax ? node.Parent.Parent! : node.Parent;
-            }
-
-            if (node.Parent is RefExpressionSyntax
-                || node.Parent is ArgumentSyntax argument && argument.RefKindKeyword.RawKind != 0
-                || node.Parent is AssignmentExpressionSyntax assignment && assignment.Left == node)
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private static bool IsRespireMethod(IMethodSymbol method)

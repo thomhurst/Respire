@@ -7,6 +7,58 @@ namespace Respire.Analyzers.Tests;
 public class SyncOverAsyncAnalyzerTests
 {
     [Test]
+    [Arguments("command.IsCompletedSuccessfully", "command.Result", false)]
+    [Arguments("!command.IsCompletedSuccessfully", "command.Result", true)]
+    [Arguments("command.IsCompletedSuccessfully || skip", "command.Result", true)]
+    [Arguments("skip && command.IsCompletedSuccessfully", "command.Result", false)]
+    [Arguments("other.IsCompletedSuccessfully", "command.Result", true)]
+    [Arguments("command.IsCompletedSuccessfully", "command.ConfigureAwait(false).GetAwaiter().GetResult()", false)]
+    [Arguments("command.IsCompletedSuccessfully", "command.AsTask().Result", false)]
+    [Arguments("command.IsCompletedSuccessfully", "command.AsTask().ConfigureAwait(false).GetAwaiter().GetResult()", false)]
+    [Arguments("other.IsCompletedSuccessfully", "command.ConfigureAwait(false).GetAwaiter().GetResult()", true)]
+    public Task ReadsInsideSuccessGuards(string condition, string expression, bool warning)
+    {
+        string read = warning ? "{|RESP009:" + expression + "|}" : expression;
+        return Verify.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task<RespireResult> RunAsync(RespireClient client, bool skip)
+                {
+                    var command = client.ExecuteAsync("PING");
+                    var other = client.ExecuteAsync("PING");
+                    if ({{condition}})
+                    {
+                        return {{read}};
+                    }
+
+                    return await command;
+                }
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("command.IsCompletedSuccessfully ? command.Result : await command")]
+    [Arguments("!command.IsCompletedSuccessfully ? await command : command.Result")]
+    public Task ReadsInConditionalExpressions(string expression)
+    {
+        return Verify.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task<RespireResult> RunAsync(RespireClient client)
+                {
+                    var command = client.ExecuteAsync("PING");
+                    return {{expression}};
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("task /* explanation */.Result", "await task /* explanation */")]
     [Arguments("task // explanation\n            .Result", "await task // explanation\n            ")]
     [Arguments("task. /* member */ Result", "await task /* member */ ")]
