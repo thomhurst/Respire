@@ -385,6 +385,73 @@ public class RegistrationTests
         await Assert.That(host.Services.GetRequiredService<RespireClient>().Endpoint).IsEqualTo(new RespireEndpoint("localhost", 46291));
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EagerOptionsCallbackRetriesWithRegistrationOptions(bool keyed)
+    {
+        var builder = Builder(new()
+        {
+            ["ConnectionStrings:cache"] = "localhost:46291",
+            ["Aspire:Respire:cache:Options:ReplicaEndpoints:0"] = "localhost:46293",
+            ["Aspire:Respire:cache:Options:NodeAddressMap"] = "advertised:6380=mapped:6381",
+            ["Aspire:Respire:cache:Options:ClientSideCache:KeyPrefixes:0"] = "original:",
+            ["Aspire:Respire:cache:Options:TlsOptions:TargetHost"] = "original",
+            ["Aspire:Respire:cache:Options:SentinelTlsOptions:TargetHost"] = "sentinel",
+        });
+        var failure = new InvalidOperationException("Transient options callback failure.");
+        int attempts = 0;
+
+        RespireOptions ConfigureOptions(IServiceProvider _, RespireOptions options)
+        {
+            if (++attempts == 1)
+            {
+                options.Endpoints.Clear();
+                options.ReplicaEndpoints.Clear();
+                ((IDictionary<RespireEndpoint, RespireEndpoint>)options.NodeAddressMap!).Clear();
+                ((IList<RespireKey>)options.ClientSideCache!.KeyPrefixes)[0] = "modified:";
+                options.TlsOptions!.TargetHost = "modified";
+                options.SentinelTlsOptions!.TargetHost = "modified";
+                throw failure;
+            }
+
+            return options;
+        }
+
+        if (keyed)
+        {
+            builder.AddKeyedRespireClient("cache", configureOptions: ConfigureOptions);
+        }
+        else
+        {
+            builder.AddRespireClient("cache", configureOptions: ConfigureOptions);
+        }
+
+        builder.Configuration["ConnectionStrings:cache"] = "localhost:46292";
+        using var host = builder.Build();
+
+        IRespireClient ResolveClient()
+        {
+            return keyed
+                ? host.Services.GetRequiredKeyedService<IRespireClient>("cache")
+                : host.Services.GetRequiredService<IRespireClient>();
+        }
+
+        var exception = await Assert.That(() => ResolveClient()).Throws<InvalidOperationException>();
+        await Assert.That(exception).IsSameReferenceAs(failure);
+
+        IRespireClient client = ResolveClient();
+        RespireOptions options = ((RespireClient)client).Core.Options;
+        await Assert.That(client.Endpoint).IsEqualTo(new RespireEndpoint("localhost", 46291));
+        await Assert.That(options.ReplicaEndpoints.Single()).IsEqualTo(new RespireEndpoint("localhost", 46293));
+        await Assert.That(options.NodeAddressMap![new RespireEndpoint("ADVERTISED", 6380)]).IsEqualTo(new RespireEndpoint("mapped", 6381));
+        await Assert.That(options.ClientSideCache!.KeyPrefixes.Single()).IsEqualTo((RespireKey)"original:");
+        await Assert.That(options.TlsOptions!.TargetHost).IsEqualTo("original");
+        await Assert.That(options.SentinelTlsOptions!.TargetHost).IsEqualTo("sentinel");
+        await Assert.That(ResolveClient()).IsSameReferenceAs(client);
+        await Assert.That(attempts).IsEqualTo(2);
+    }
+
     /// <summary>Verifies deferral keeps a callback connection string ahead of later configuration and skips registration validation.</summary>
     [Test]
     public async Task DeferredConfigurationKeepsCallbackConnectionStringAndDefersValidation()

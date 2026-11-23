@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net.Security;
 using global::Respire;
+using global::Respire.Networking;
 using Microsoft.Extensions.Configuration;
 
 namespace Respire.DependencyInjection;
@@ -244,24 +245,18 @@ internal static class RespireConfiguration
             return options;
         }
 
-        options ??= new();
         // Connection-string parsing can supply a TLS target host. Preserve it when only another
         // TLS field is overridden; callers configure certificate objects through configureOptions.
-        return new SslClientAuthenticationOptions
-        {
-            TargetHost = section.GetValue("TargetHost", options.TargetHost),
-            EnabledSslProtocols = section.GetValue("EnabledSslProtocols", options.EnabledSslProtocols),
-            CertificateRevocationCheckMode = section.GetValue("CertificateRevocationCheckMode", options.CertificateRevocationCheckMode),
-            EncryptionPolicy = section.GetValue("EncryptionPolicy", options.EncryptionPolicy),
-            AllowRenegotiation = section.GetValue("AllowRenegotiation", options.AllowRenegotiation),
-            AllowTlsResume = section.GetValue("AllowTlsResume", options.AllowTlsResume),
-            RemoteCertificateValidationCallback = options.RemoteCertificateValidationCallback,
-            LocalCertificateSelectionCallback = options.LocalCertificateSelectionCallback,
-            ClientCertificates = options.ClientCertificates,
-            ClientCertificateContext = options.ClientCertificateContext,
-            CertificateChainPolicy = options.CertificateChainPolicy,
-            ApplicationProtocols = options.ApplicationProtocols,
-        };
+        var copy = options is null
+            ? new SslClientAuthenticationOptions()
+            : RespireConnection.CopyTlsOptions(options, options.TargetHost);
+        copy.TargetHost = section.GetValue("TargetHost", copy.TargetHost);
+        copy.EnabledSslProtocols = section.GetValue("EnabledSslProtocols", copy.EnabledSslProtocols);
+        copy.CertificateRevocationCheckMode = section.GetValue("CertificateRevocationCheckMode", copy.CertificateRevocationCheckMode);
+        copy.EncryptionPolicy = section.GetValue("EncryptionPolicy", copy.EncryptionPolicy);
+        copy.AllowRenegotiation = section.GetValue("AllowRenegotiation", copy.AllowRenegotiation);
+        copy.AllowTlsResume = section.GetValue("AllowTlsResume", copy.AllowTlsResume);
+        return copy;
     }
 
     // GetValue with a fallback treats an empty nullable value as absent. Here an empty string

@@ -1,4 +1,7 @@
 using System.Globalization;
+using System.Net.Security;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,6 +19,55 @@ namespace Respire.Caching.Tests;
 
 public class DependencyInjectionOptionsTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CallbackOptionsPreserveTlsSettingsAndIsolateCollections(bool sentinel)
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest("CN=respire.test", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var now = DateTimeOffset.UtcNow;
+        using var certificate = request.CreateSelfSigned(now.AddMinutes(-1), now.AddMinutes(1));
+        var tls = new SslClientAuthenticationOptions
+        {
+            ApplicationProtocols = [SslApplicationProtocol.Http2],
+            CertificateChainPolicy = new X509ChainPolicy { RevocationMode = X509RevocationMode.Offline },
+            ClientCertificates = new X509CertificateCollection { certificate },
+        };
+
+        if (OperatingSystem.IsLinux())
+        {
+            tls.CipherSuitesPolicy = new CipherSuitesPolicy([TlsCipherSuite.TLS_AES_128_GCM_SHA256]);
+        }
+
+        var options = sentinel ? new RespireOptions { SentinelTlsOptions = tls } : new RespireOptions { TlsOptions = tls };
+        var sectionName = sentinel ? "SentinelTlsOptions" : "TlsOptions";
+        var registration = RespireConfiguration.Apply(Section(new() { [$"{sectionName}:TargetHost"] = "original" }), options);
+
+        SslClientAuthenticationOptions CopyTlsOptions()
+        {
+            var attempt = registration.CopyForConfigurationCallback();
+            return (sentinel ? attempt.SentinelTlsOptions : attempt.TlsOptions)!;
+        }
+
+        var first = CopyTlsOptions();
+        first.TargetHost = "modified";
+        first.ApplicationProtocols!.Clear();
+        first.CertificateChainPolicy!.RevocationMode = X509RevocationMode.NoCheck;
+        first.ClientCertificates!.Clear();
+
+        var retry = CopyTlsOptions();
+        await Assert.That(retry.TargetHost).IsEqualTo("original");
+        await Assert.That(retry.ApplicationProtocols!.Single()).IsEqualTo(SslApplicationProtocol.Http2);
+        await Assert.That(retry.CertificateChainPolicy!.RevocationMode).IsEqualTo(X509RevocationMode.Offline);
+        await Assert.That(retry.ClientCertificates![0]).IsSameReferenceAs(certificate);
+
+        if (OperatingSystem.IsLinux())
+        {
+            await Assert.That(retry.CipherSuitesPolicy).IsSameReferenceAs(tls.CipherSuitesPolicy!);
+        }
+    }
+
     [Test]
     public async Task Configuration_InvalidLatencyToleranceIncludesPath()
     {

@@ -74,6 +74,10 @@ public static class AspireRespireExtensions
                 configured = BuildOptions(configuration, connectionName,
                     callbackAssignedConnectionString ? callbackConnectionString : ReadSettings(configuration, connectionName).ConnectionString);
             }
+            else if (configureOptions is not null)
+            {
+                configured = configured.CopyForConfigurationCallback();
+            }
 
             var resolved = configureOptions is null ? configured : configureOptions(provider, configured)
                 ?? throw new InvalidOperationException("The Respire options callback returned null.");

@@ -1122,6 +1122,39 @@ public sealed record RespireOptions
         };
     }
 
+    /// <summary>Copies options built from configuration so each callback attempt can edit its own values.</summary>
+    internal RespireOptions CopyForConfigurationCallback()
+    {
+        return this with
+        {
+            Endpoints = [.. Endpoints],
+            ReplicaEndpoints = [.. ReplicaEndpoints],
+            NodeAddressMap = NodeAddressMap is { } map
+                ? new Dictionary<RespireEndpoint, RespireEndpoint>(map, Internal.RespireEndpointComparer.Instance)
+                : null,
+            ClientSideCache = ClientSideCache is { } cache
+                ? cache with { KeyPrefixes = cache.KeyPrefixes.ToArray() }
+                : null,
+            TlsOptions = CopyTlsOptionsForCallback(TlsOptions),
+            SentinelTlsOptions = CopyTlsOptionsForCallback(SentinelTlsOptions),
+            IgnoredConnectionStringOptions = IgnoredConnectionStringOptions.ToArray(),
+        };
+    }
+
+    private static SslClientAuthenticationOptions? CopyTlsOptionsForCallback(SslClientAuthenticationOptions? options)
+    {
+        if (options is null)
+        {
+            return null;
+        }
+
+        var copy = RespireConnection.CopyTlsOptions(options, options.TargetHost);
+        copy.ApplicationProtocols = options.ApplicationProtocols is { } protocols ? [.. protocols] : null;
+        copy.CertificateChainPolicy = options.CertificateChainPolicy?.Clone();
+        copy.ClientCertificates = options.ClientCertificates is { } certificates ? new X509CertificateCollection(certificates) : null;
+        return copy;
+    }
+
     internal int GetMinimumTrackingInflightCommands(RespireClientTrackingMode trackingMode)
     {
         // Reserve one slot for the read, plus ASKING in Cluster and CACHING for OPTIN/OPTOUT.
