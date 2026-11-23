@@ -17,6 +17,8 @@ internal sealed class RespirePubSub : IAsyncDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly CancellationToken _stopping;
+    // Guarded by _gate.
+    private Task? _unsubscribeRetry;
     private int _disposed;
 
     internal RespirePubSub(RespireClient client, RespireSignalROptions options, ILogger logger, string hub)
@@ -110,12 +112,68 @@ internal sealed class RespirePubSub : IAsyncDisposable
         }
         finally
         {
-            // A rejected command hook leaves the native subscription live. Keep the handle so a
-            // later unsubscribe or subscription replacement can retry its teardown.
             if (receiver.IsUnsubscribed)
             {
                 _subscriptions.TryRemove(channel, out _);
             }
+            else if (!Stopping.IsCancellationRequested)
+            {
+                // A rejected command hook leaves the native subscription live. Keep the
+                // handle and retry even if there is no further activity on this channel.
+                _unsubscribeRetry ??= RetryUnsubscribesAsync();
+            }
+        }
+    }
+
+    private async Task RetryUnsubscribesAsync()
+    {
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), Stopping).ConfigureAwait(false);
+                await _gate.WaitAsync(Stopping).ConfigureAwait(false);
+
+                try
+                {
+                    bool stillPending = false;
+
+                    // SubscribeAsync uses the same gate to replace retiring receivers.
+                    foreach (var (channel, receiver) in _subscriptions)
+                    {
+                        Stopping.ThrowIfCancellationRequested();
+
+                        if (!receiver.UnsubscribeRequested)
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            await UnsubscribeCoreAsync(channel, receiver).ConfigureAwait(false);
+                        }
+                        catch (Exception error)
+                        {
+                            RedisLog.UnsubscribeFailed(_logger, channel, error);
+                        }
+
+                        stillPending |= !receiver.IsUnsubscribed;
+                    }
+
+                    if (!stillPending)
+                    {
+                        _unsubscribeRetry = null;
+                        return;
+                    }
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+            }
+        }
+        catch (OperationCanceledException) when (Stopping.IsCancellationRequested)
+        {
         }
     }
 
@@ -123,7 +181,19 @@ internal sealed class RespirePubSub : IAsyncDisposable
     {
         foreach (var channel in _subscriptions.Keys)
         {
-            await UnsubscribeAsync(channel).ConfigureAwait(false);
+            try
+            {
+                await UnsubscribeAsync(channel).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (Stopping.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception error)
+            {
+                // Finish resetting the other startup channels and preserve the startup error.
+                RedisLog.UnsubscribeFailed(_logger, channel, error);
+            }
         }
     }
 
@@ -137,18 +207,29 @@ internal sealed class RespirePubSub : IAsyncDisposable
         await _lifetime.CancelAsync().ConfigureAwait(false);
         await _gate.WaitAsync().ConfigureAwait(false);
         ChannelSubscription[] receivers;
+        Task unsubscribeRetry;
 
         try
         {
+            unsubscribeRetry = _unsubscribeRetry ?? Task.CompletedTask;
             receivers = _subscriptions.Values.ToArray();
             _subscriptions.Clear();
         }
-        finally { _gate.Release(); }
+        finally
+        {
+            _gate.Release();
+        }
 
-        await Task.WhenAll(receivers.Select(static async receiver => await receiver.DisposeAsync().ConfigureAwait(false)))
-            .ConfigureAwait(false);
-        // The shared client belongs to DI or its caller, not to this hub manager.
-        _lifetime.Dispose();
+        try
+        {
+            // The shared client belongs to DI or its caller.
+            await Task.WhenAll(receivers.Select(static receiver => receiver.DisposeAsync().AsTask()).Append(unsubscribeRetry))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _lifetime.Dispose();
+        }
     }
 
     private void ReportGap(string channel, RespireSubscriptionGap gap)

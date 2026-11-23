@@ -44,4 +44,7 @@ internal static partial class RedisLog
 
     [LoggerMessage(18, LogLevel.Debug, "Remote SignalR client result {InvocationID} expired: {Reason}.", EventName = "RemoteResultExpired")]
     internal static partial void RemoteResultExpired(ILogger logger, string invocationId, string reason);
+
+    [LoggerMessage(19, LogLevel.Debug, "Failed to unsubscribe from SignalR backplane channel {Channel}.")]
+    internal static partial void UnsubscribeFailed(ILogger logger, string channel, Exception error);
 }
