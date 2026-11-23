@@ -89,20 +89,21 @@ await using var fixture = await RespireContainerFixture.StartAsync(new()
 
 - Ports are published only on `127.0.0.1`. Standalone uses Docker-assigned random ports. Cluster and Sentinel use the same port inside and outside the container, so advertised addresses work ([Sentinel and Docker NAT](https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/#sentinel-docker-nat-and-possible-issues)). Cluster bus ports are not published.
 - Ports come from the OS ephemeral range. Other fixtures and services are never stopped.
-- If Docker reports a host-port collision ("port already allocated" or "address already in use"), the fixture removes the container and retries up to twice. Other errors (permissions, reserved ports, images, authentication, readiness) are not retried.
+- If Docker reports a host-port collision or the published standalone port reaches another server, the fixture removes the container and retries up to twice. Other startup errors fail without retrying.
 - The local-engine check runs after startup, so a remote engine can pull and start the container before the fixture rejects and removes it.
 - All processes share one container. Use real deployments to test machine failure, network partitions, durability, or high availability.
 - Servers are unauthenticated. Do not store sensitive data in them.
 
 ## Startup and diagnostics
 
-Startup waits until the topology is ready: PING for standalone, full slot coverage for Cluster,
-or replication plus Sentinel quorum and replica discovery for Sentinel. `StartupTimeout` covers
-the whole startup and is not reset for retries. A timeout error names the stage and last readiness reply.
+Standalone startup waits for PING inside the container, then compares the server run ID reported
+inside the container and through the published port. Cluster startup waits for full slot coverage.
+Sentinel startup waits for replication, quorum, and replica discovery. `StartupTimeout` covers
+the whole startup, including retries. A timeout error names the stage and last readiness reply.
 
 On failure:
 
-- The final Docker exception is thrown. Its `Data` includes `RespireFixture.StartupAttempt`, `RespireFixture.SelectedPorts`, `RespireFixture.ContainerId`, and `RespireFixture.PreviousPortCollisions`.
+- The final startup exception includes `RespireFixture.StartupAttempt`, `RespireFixture.SelectedPorts`, and `RespireFixture.ContainerId` in `Data`. After a retry, `RespireFixture.PreviousPortCollisions` contains the earlier collision errors.
 - If cleanup also fails, all causes are thrown together in an `AggregateException`.
 - Cancellation and timeout exceptions keep the original error as the inner exception. Read the diagnostic entries from `InnerException.Data` for these wrappers.
 - If the container started, the last 4 KiB of each daemon log is stored in `Data["RespireFixture.DaemonLogs"]` (at most 32,768 characters total) and written to standard error. Log collection is best effort and never hides the startup error.
