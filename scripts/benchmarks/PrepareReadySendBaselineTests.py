@@ -100,7 +100,9 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                 strategy.write_text(strategy.read_text().replace('            && !ShouldSkipTracking(operation, in command)\n', ''))
             if before_optout or before_redirect:
                 strategy.write_text(strategy.read_text().replace(
-                    '(!_core.Options.EnableReplicaRedirects || _core.Options.UseCluster)\n            && ', ''))
+                    '(!_core.Options.EnableReplicaRedirects || _core.Options.UseCluster)\n'
+                    '            && CommandRetries is null',
+                    '_core.CommandRetries is null'))
             ready = strategy.read_text()
             environment = git_environment()
 
@@ -140,6 +142,7 @@ class PrepareReadySendBaselineTests(unittest.TestCase):
                 self.assertIn('&& !ShouldSkipTracking(operation, in command)', control)
             if not standalone and not before_optout and not before_redirect:
                 self.assertIn('(!_core.Options.EnableReplicaRedirects || _core.Options.UseCluster)', control)
+                self.assertIn('&& CommandRetries is null && !RespireTelemetry.Source.HasListeners()', control)
             # Compare complete relocated blocks, so ownership behavior cannot drift
             # while the names and interfaces still happen to compile.
             mutation_helpers = ready[ready.index('    // A typed source reports'):
