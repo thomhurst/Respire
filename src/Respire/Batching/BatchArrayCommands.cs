@@ -79,7 +79,11 @@ public partial interface IRespireBatchArrayCommands
     /// <summary>Writes at the insertion cursor; returns the last written index. Redis: ARINSERT.</summary>
     RespirePending<ulong> Insert(RespireKey key, params ReadOnlySpan<RespireValue> values);
 
-    /// <summary>Writes with wrapping and preserves the recent contiguous tail on resize; returns the last written index. Redis: ARRING.</summary>
+    /// <summary>Writes with wrapping and returns the last written index. Redis: ARRING.</summary>
+    /// <remarks>
+    /// Resizing normally preserves the recent contiguous tail. After an explicit <c>Seek(key, 0)</c>,
+    /// growing the ring starts writing at index zero without rearranging existing items and can overwrite a retained item.
+    /// </remarks>
     RespirePending<ulong> Ring(RespireKey key, long size, params ReadOnlySpan<RespireValue> values);
 
     /// <summary>Next insertion index; zero before insertion or when missing, null when exhausted. Redis: ARNEXT.</summary>

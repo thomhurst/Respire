@@ -90,8 +90,10 @@ scan the database, accept Redis keys from requests, or automatically register ho
 This allows a separate operator application to inspect workers running in other processes.
 It uses the application's `IRespireClient`, including any key prefix on that client.
 
-For a reliable queue, use its `StreamKey`, `DeadLetterStreamKey`, and
-`RespireJobQueue<T>.ConsumerGroup` values. The example uses the default keys for queue `email`.
+For either queue type, use its `StreamKey` and `DeadLetterStreamKey`. Use
+`RespireJobQueue<T>.ConsumerGroup` (`respire-jobs`) for a job queue and
+`respire-messages` for a plain `RespireReliableQueue<T>`. The example configures the
+`email` job queue with its default keys.
 If worker options override the dead-letter destination, configure that same destination here.
 Set `IsJobQueue = true` to enable job-specific inspection, group controls, and retry semantics.
 Leave it false for plain streams, including typed stream handlers.

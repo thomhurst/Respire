@@ -104,7 +104,7 @@ On failure:
 
 - The final Docker exception is thrown. Its `Data` includes `RespireFixture.StartupAttempt`, `RespireFixture.SelectedPorts`, `RespireFixture.ContainerId`, and `RespireFixture.PreviousPortCollisions`.
 - If cleanup also fails, all causes are thrown together in an `AggregateException`.
-- Cancellation and timeout exceptions keep the original error as the inner exception.
+- Cancellation and timeout exceptions keep the original error as the inner exception. Read the diagnostic entries from `InnerException.Data` for these wrappers.
 - If the container started, the last 4 KiB of each daemon log is stored in `Data["RespireFixture.DaemonLogs"]` (at most 32,768 characters total) and written to standard error. Log collection is best effort and never hides the startup error.
 
 The [in-memory fake](in-memory-testing.md) runs deterministic tests without Docker.
