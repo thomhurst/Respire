@@ -136,9 +136,9 @@ public sealed class VersionedServerFixture : IAsyncInitializer, IAsyncDisposable
         public static async Task<VersionedServer> StartAsync(string image, int databaseCount)
         {
             // Both the Redis and Valkey entrypoints prepend their server binary to option-only commands.
-            var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithPortBinding(RedisPort, true)
+            var container = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder(image).WithPortBinding(RedisPort, true)
                 .WithCommand("--databases", databaseCount.ToString(System.Globalization.CultureInfo.InvariantCulture))
-                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort)).Build(), [RedisPort]);
+                .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort)).Build(), RedisPort);
             return new VersionedServer(container, databaseCount);
         }
 

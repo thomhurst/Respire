@@ -14,14 +14,14 @@ public class BatchDurabilityIntegrationTests
     {
         await using var network = new NetworkBuilder().Build();
         await network.CreateAsync();
-        await using var primary = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.4-alpine")
+        await using var primary = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder("redis:8.4-alpine")
             .WithNetwork(network).WithNetworkAliases("primary").WithPortBinding(6379, true)
             .WithCommand("redis-server", "--appendonly", "yes", "--appendfsync", "always", "--save", "", "--protected-mode", "no")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
-        await using var replica = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.4-alpine")
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379);
+        await using var replica = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder("redis:8.4-alpine")
             .WithNetwork(network).WithPortBinding(6379, true)
             .WithCommand("redis-server", "--replicaof", "primary", "6379", "--appendonly", "yes", "--appendfsync", "always", "--save", "", "--protected-mode", "no")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
         while (true)
@@ -67,9 +67,9 @@ public class BatchDurabilityIntegrationTests
     [Arguments(3)]
     public async Task InsufficientCountsAreResultsAndDoNotUndoWrites(int protocol)
     {
-        await using var server = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.4-alpine").WithPortBinding(6379, true)
+        await using var server = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder("redis:8.4-alpine").WithPortBinding(6379, true)
             .WithCommand("redis-server", "--appendonly", "yes", "--appendfsync", "always", "--save", "")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(server.Hostname, server.GetMappedPublicPort(6379))],
@@ -101,8 +101,8 @@ public class BatchDurabilityIntegrationTests
     [Arguments("redis:8.4-alpine", 3)]
     public async Task UnsupportedAofConfigurationKeepsServerErrorAndWriteResult(string image, int protocol)
     {
-        await using var server = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+        await using var server = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder(image).WithPortBinding(6379, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379);
         await using var client = await RespireClient.ConnectAsync($"redis://{server.Hostname}:{server.GetMappedPublicPort(6379)}?protocol={protocol}");
         using var batch = client.CreateBatch();
         var write = batch.Set("key", "written");

@@ -20,7 +20,7 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
     public async Task GroupProgressBeforeAndBetweenDeliveriesMatchesRedis(int protocol, bool modern)
     {
         await using var modernServer = modern
-            ? await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.2.11-alpine").Build(), [RedisBuilder.RedisPort])
+            ? await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:7.2.11-alpine").Build(), RedisBuilder.RedisPort)
             : null;
         var options = modernServer is null ? RespireOptions.Parse(fixture.ConnectionString)
             : new RespireOptions { Endpoints = [new(modernServer.Hostname, modernServer.GetMappedPublicPort(6379))] };
@@ -79,7 +79,7 @@ public class StreamWorkerIntegrationTests(RedisTestContainer fixture)
     public async Task EmptyGroupReadsRegisterConsumersLikeRedis(int protocol, bool modern = false)
     {
         await using var modernServer = modern
-            ? await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.2.11-alpine").Build(), [RedisBuilder.RedisPort])
+            ? await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:7.2.11-alpine").Build(), RedisBuilder.RedisPort)
             : null;
         var options = modernServer is null ? RespireOptions.Parse(fixture.ConnectionString)
             : new RespireOptions { Endpoints = [new(modernServer.Hostname, modernServer.GetMappedPublicPort(6379))] };

@@ -214,8 +214,8 @@ public class JobGroupControlIntegrationTests(RedisTestContainer redis)
     public async Task ReleasedNackIsRecoveredAndItsReplacementPermitIsReleased()
     {
         // Keep the native regression active even when the shared test server is Redis 7.
-        await using var native = await ContainerStartRetry.StartAsync(
-            () => new Testcontainers.Redis.RedisBuilder("redis:8.8-alpine").Build(), [6379]);
+        await using var native = await ContainerStartRetry.StartRedisAsync(
+            () => new Testcontainers.Redis.RedisBuilder("redis:8.8-alpine").Build(), 6379);
         await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(native.GetConnectionString()));
         var queue = Queue(client);
         await queue.SetGroupOptionsAsync("a", new() { MaxConcurrency = 1 });

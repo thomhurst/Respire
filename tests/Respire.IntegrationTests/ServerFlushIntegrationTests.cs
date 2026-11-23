@@ -13,7 +13,7 @@ public class ServerFlushIntegrationTests
     public async Task EveryModeAndExecutionFormDeletesTheIntendedDatabases(int protocol)
     {
         // FLUSHALL must never share a container with other tests.
-        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:7.0.15").Build(), 6379);
 
         RespireOptions Options(int database) => new()
         {

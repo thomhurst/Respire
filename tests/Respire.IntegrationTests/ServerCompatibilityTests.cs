@@ -139,7 +139,14 @@ public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
             "kividb" => (KiviDbImage, KiviDbCommand),
             _ => throw new InvalidOperationException($"Unknown RESPIRE_COMPATIBILITY_SERVER '{Name}'."),
         };
-        return ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
+        return (Name, cluster) switch
+        {
+            (_, true) => ContainerStartRetry.StartAsync(CreateContainer, [6379]),
+            ("kividb", false) => ContainerStartRetry.StartAsync(CreateContainer, [6379], verifyStarted: VerifyKiviDbAsync),
+            _ => ContainerStartRetry.StartRedisAsync(CreateContainer, 6379, useReplicationId: Name == "dragonfly"),
+        };
+
+        IContainer CreateContainer() => new ContainerBuilder(image)
             .WithCommand(command)
             .WithPortBinding(6379, true)
             // The distroless image has no shell. Docker can expose its port before KiviDB listens.
@@ -147,7 +154,44 @@ public sealed class CompatibleServer : IAsyncInitializer, IAsyncDisposable
                 ? Wait.ForUnixContainer().UntilMessageIsLogged("Ready to accept connections on")
                     .UntilExternalTcpPortIsAvailable(6379)
                 : Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
-            .Build(), [6379]);
+            .Build();
+    }
+
+    private static async Task VerifyKiviDbAsync(IContainer container, CancellationToken cancellationToken)
+    {
+        // KiviDB ships no shell or client. Share its network namespace to query the private
+        // listener over loopback without relying on a host mapping or Docker bridge address.
+        await using var probe = new ContainerBuilder(RedisTestContainer.ReferenceRedisImage)
+            .WithCreateParameterModifier(parameters => parameters.HostConfig!.NetworkMode = $"container:{container.Id}")
+            .WithEntrypoint("sleep")
+            .WithCommand("infinity")
+            .Build();
+        using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        startup.CancelAfter(TimeSpan.FromSeconds(30));
+
+        try
+        {
+            await probe.StartAsync(startup.Token);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new IOException(
+                $"Could not start the identity probe for {container.Hostname}:{container.GetMappedPublicPort(6379)}.", error);
+        }
+
+        await ContainerStartRetry.VerifyPublishedRedisAsync(container, 6379, cancellationToken, readContainerInfo: ReadInfoAsync);
+
+        async Task<string> ReadInfoAsync(CancellationToken token)
+        {
+            ExecResult result = await probe.ExecAsync(["redis-cli", "--raw", "-e", "INFO", "server"], token);
+
+            if (result.ExitCode != 0)
+            {
+                throw new IOException($"INFO server in the KiviDB network namespace failed: {result.Stderr.Trim()}");
+            }
+
+            return result.Stdout;
+        }
     }
 
     public async ValueTask DisposeAsync()

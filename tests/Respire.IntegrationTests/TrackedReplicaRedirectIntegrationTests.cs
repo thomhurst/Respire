@@ -20,7 +20,7 @@ public class TrackedReplicaRedirectIntegrationTests
     public async Task UncertainRedirectCannotMutateAfterCleanup(string failure, bool cache)
     {
         // PAUSE affects the whole server, so this test owns a separate Redis container.
-        await using var server = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.4.11-alpine").Build(), [6379]);
+        await using var server = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:7.4.11-alpine").Build(), 6379);
         var port = server.GetMappedPublicPort(6379);
         await using var admin = await RespireClient.ConnectAsync(new RespireOptions
         {

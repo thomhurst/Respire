@@ -15,7 +15,7 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
         [Matrix(RespireHotKeysMetrics.Cpu, RespireHotKeysMetrics.Network, RespireHotKeysMetrics.Cpu | RespireHotKeysMetrics.Network)] RespireHotKeysMetrics metrics)
     {
         // HOTKEYS has a single node-wide session, so every case owns its server.
-        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:8.6-alpine").Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:8.6-alpine").Build(), 6379);
         var address = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}&allowAdmin=true&connections=2";
         await using var client = await RespireClient.ConnectAsync(address);
         await using var other = await RespireClient.ConnectAsync(address);
@@ -119,7 +119,7 @@ public class ServerHotKeysIntegrationTests(VersionedServerFixture servers)
     [Arguments(3)]
     public async Task DurationStopsAutomaticallyAndStandaloneSlotsRemainServerErrors(int protocol)
     {
-        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:8.6-alpine").Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:8.6-alpine").Build(), 6379);
         await using var client = await RespireClient.ConnectAsync($"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}&allowAdmin=true");
         var tracker = await client.Server.GetHotKeysTrackerAsync();
         Func<Task> slots = async () => await tracker.StartAsync(new() { Slots = new[] { 1 } });

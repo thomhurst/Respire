@@ -13,7 +13,7 @@ public class ReconnectPolicyIntegrationTests
     [Arguments(3)]
     public async Task KilledCommandConnectionRecoversAndResetsPolicy(int protocol)
     {
-        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.2-alpine").Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:7.2-alpine").Build(), 6379);
         var options = new RespireOptions
         {
             Endpoints = { new RespireEndpoint(container.Hostname, container.GetMappedPublicPort(6379)) },
