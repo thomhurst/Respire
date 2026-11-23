@@ -230,26 +230,46 @@ public class ProbabilisticClientTests
     }
 
     [Test]
-    public async Task CuckooInsertReportsFullFilterSeparatelyFromSuccess()
+    [Arguments(int.MaxValue, 64 * 1024)]
+    [Arguments(1, 16)] // One-byte request reads and a buffer smaller than the 17-byte reply.
+    public async Task CuckooInsertReportsFullFilterSeparatelyFromSuccess(int maximumRequestReadSize, int replyBufferSize)
     {
-        await using var server = Server();
-        server.ReplyOverride = (_, command) => command switch
-        {
-            "HELLO 3" => Hello,
-            "CF.INSERTNX filter ITEMS a b c" => "*3\r\n:1\r\n:0\r\n:-1\r\n"u8.ToArray(),
-            _ => null,
-        };
+        const string ExpectedCommand = "CF.INSERTNX filter ITEMS a b c";
+        await using var server = CuckooServer(
+            ExpectedCommand, "*3\r\n:1\r\n:0\r\n:-1\r\n"u8.ToArray(), maximumRequestReadSize);
 #pragma warning disable RESP010 // This module-command scenario owns its client and isolated argument-validation or scripted reply state.
-        await using var client = await RespireClient.ConnectAsync(Options(server));
+        await using var client = await RespireClient.ConnectAsync(Options(server, replyBufferSize));
 #pragma warning restore RESP010
         var probabilistic = new RespireProbabilisticClient(client);
 
         var results = await probabilistic.CuckooInsertIfAbsentAsync("filter", ["a", "b", "c"]);
 
-        await Assert.That(server.ReceivedCommands).Contains("CF.INSERTNX filter ITEMS a b c");
+        await Assert.That(server.ReceivedCommands).Contains(ExpectedCommand);
         await Assert.That(results).IsEquivalentTo(
             [RespireCuckooInsertResult.Inserted, RespireCuckooInsertResult.AlreadyExists, RespireCuckooInsertResult.FilterFull],
             CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [Arguments(false, "+PONG\r\n")]
+    [Arguments(true, "+PONG\r\n")]
+    [Arguments(true, "*2\r\n:1\r\n:0\r\n")]
+    [Arguments(true, "*3\r\n:1\r\n+unexpected\r\n:-1\r\n")]
+    public async Task CuckooInsertRejectsMalformedPerItemReplies(bool onlyIfAbsent, string reply)
+    {
+        string operation = onlyIfAbsent ? "CF.INSERTNX" : "CF.INSERT";
+        string expectedCommand = $"{operation} filter ITEMS a b c";
+        await using var server = CuckooServer(expectedCommand, Encoding.UTF8.GetBytes(reply));
+#pragma warning disable RESP010 // This module-command scenario owns its client and isolated scripted reply state.
+        await using var client = await RespireClient.ConnectAsync(Options(server));
+#pragma warning restore RESP010
+        var probabilistic = new RespireProbabilisticClient(client);
+        RespireValue[] items = ["a", "b", "c"];
+
+        await Assert.That(async () => await (onlyIfAbsent
+            ? probabilistic.CuckooInsertIfAbsentAsync("filter", items)
+            : probabilistic.CuckooInsertAsync("filter", items))).Throws<RespireProtocolException>();
+        await Assert.That(server.ReceivedCommands).Contains(expectedCommand);
     }
 
     [Test]
@@ -335,10 +355,25 @@ public class ProbabilisticClientTests
             },
         };
 
-    private static RespireOptions Options(FakeRespServer server) => new()
+    private static FakeRespServer CuckooServer(string expectedCommand, byte[] reply, int maximumRequestReadSize = int.MaxValue)
+    {
+        return new FakeRespServer()
+        {
+            MaximumBytesPerRead = maximumRequestReadSize,
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => Hello,
+                _ when command == expectedCommand => reply,
+                _ => Encoding.UTF8.GetBytes($"-ERR Unexpected Cuckoo fixture command: {command.ReplaceLineEndings(" ")}\r\n"),
+            },
+        };
+    }
+
+    private static RespireOptions Options(FakeRespServer server, int receiveBufferSize = 64 * 1024) => new()
     {
         Endpoints = { new("127.0.0.1", server.Port) },
         Protocol = RespireProtocol.Resp3,
+        ReceiveBufferSize = receiveBufferSize,
         ThreadPoolMonitoring = false,
     };
 
