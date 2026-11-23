@@ -103,7 +103,7 @@ public sealed partial class RespireFakeServer
     {
         switch (Token(args[1]))
         {
-            case "LOAD" when args.Length == 3:
+            case "LOAD":
                 var registered = FindRegisteredScript(args[2], sha: false);
                 if (registered is null)
                 {
@@ -111,7 +111,7 @@ public sealed partial class RespireFakeServer
                 }
                 _scriptCache.Add(registered.Script.Sha1);
                 return FakeReply.Text(registered.Script.Sha1);
-            case "EXISTS" when args.Length >= 3:
+            case "EXISTS":
                 return FakeReply.Array(args.Skip(2).Select(sha =>
                     FakeReply.Integer(_scriptCache.Contains(Encoding.ASCII.GetString(sha)) ? 1 : 0)).ToArray());
             case "FLUSH" when args.Length == 2 || args.Length == 3 && Token(args[2]) is "SYNC" or "ASYNC":

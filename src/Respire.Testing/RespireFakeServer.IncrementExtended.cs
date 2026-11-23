@@ -85,12 +85,12 @@ public sealed partial class RespireFakeServer
         var integerLower = !floating && options.TryGetValue("LBOUND", out var integerLowerBytes) ? Integer(integerLowerBytes) : long.MinValue;
         var integerUpper = !floating && options.TryGetValue("UBOUND", out var integerUpperBytes) ? Integer(integerUpperBytes) : long.MaxValue;
         var floatBy = floating ? IncrementFloat(floatBytes!) : 0;
-        var floatLower = floating && options.TryGetValue("LBOUND", out var floatLowerBytes) ? IncrementFloat(floatLowerBytes, allowInfinity: true) : double.NegativeInfinity;
-        var floatUpper = floating && options.TryGetValue("UBOUND", out var floatUpperBytes) ? IncrementFloat(floatUpperBytes, allowInfinity: true) : double.PositiveInfinity;
+        var floatLower = floating && options.TryGetValue("LBOUND", out var floatLowerBytes) ? IncrementFloat(floatLowerBytes, allowInfinity: true) : -double.MaxValue;
+        var floatUpper = floating && options.TryGetValue("UBOUND", out var floatUpperBytes) ? IncrementFloat(floatUpperBytes, allowInfinity: true) : double.MaxValue;
 
         if (integerLower > integerUpper || floatLower > floatUpper)
         {
-            return Syntax("INCREX");
+            return FakeReply.Error("ERR LBOUND can't be greater than UBOUND");
         }
 
         var entry = Find(args[1]);

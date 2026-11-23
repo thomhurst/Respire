@@ -50,6 +50,101 @@ public class FakeTransactionTests
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ScriptSubcommandArityErrorsAbortTheQueue(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol };
+        await using var session = await TestRespSession.ConnectAsync(options);
+
+        string[][] invalid = [["SCRIPT", "LOAD"], ["script", "load", "return 1", "extra"], ["SCRIPT", "EXISTS"]];
+
+        foreach (string[] arguments in invalid)
+        {
+            using var multi = await session.CommandAsync("MULTI");
+            await Assert.That(multi.AsString()).IsEqualTo("OK");
+
+            using var error = await session.CommandAsync(arguments);
+            string name = arguments[1].ToLowerInvariant();
+            await Assert.That(error.GetErrorMessage()).IsEqualTo($"ERR wrong number of arguments for 'script|{name}' command");
+
+            using var queued = await session.CommandAsync("SET", "marker", "written");
+            await Assert.That(queued.AsString()).IsEqualTo("QUEUED");
+
+            using var aborted = await session.CommandAsync("EXEC");
+            await Assert.That(aborted.GetErrorMessage()).StartsWith("EXECABORT");
+
+            using var marker = await session.CommandAsync("GET", "marker");
+            await Assert.That(marker.IsNull).IsTrue();
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ScriptFlushOptionErrorsStayQueued(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol };
+        await using var session = await TestRespSession.ConnectAsync(options);
+
+        using var multi = await session.CommandAsync("MULTI");
+        await Assert.That(multi.AsString()).IsEqualTo("OK");
+
+        using var flush = await session.CommandAsync("SCRIPT", "FLUSH", "SYNC", "extra");
+        await Assert.That(flush.AsString()).IsEqualTo("QUEUED");
+
+        using var write = await session.CommandAsync("SET", "marker", "written");
+        await Assert.That(write.AsString()).IsEqualTo("QUEUED");
+
+        using var executed = await session.CommandAsync("EXEC");
+        await Assert.That(executed.AsArray()[0].IsError).IsTrue();
+        await Assert.That(executed.AsArray()[1].AsString()).IsEqualTo("OK");
+    }
+
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task SetWithElapsedExpiryInvalidatesWatchOnlyWhenItDeletesTheKey(int protocol, bool exists)
+    {
+        var clock = new RespireFakeClock(DateTimeOffset.FromUnixTimeSeconds(100));
+        await using var server = new RespireFakeServer(clock);
+        var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol };
+        await using var watcher = await TestRespSession.ConnectAsync(options);
+        await using var writer = await TestRespSession.ConnectAsync(options);
+
+        if (exists)
+        {
+            using var seeded = await writer.CommandAsync("SET", "watched", "old");
+            await Assert.That(seeded.AsString()).IsEqualTo("OK");
+        }
+
+        using var watch = await watcher.CommandAsync("WATCH", "watched");
+        await Assert.That(watch.AsString()).IsEqualTo("OK");
+
+        using var expired = await writer.CommandAsync("SET", "watched", "new", "PXAT", "1");
+        await Assert.That(expired.AsString()).IsEqualTo("OK");
+
+        using var missing = await writer.CommandAsync("GET", "watched");
+        await Assert.That(missing.IsNull).IsTrue();
+
+        using var multi = await watcher.CommandAsync("MULTI");
+        await Assert.That(multi.AsString()).IsEqualTo("OK");
+
+        using var queued = await watcher.CommandAsync("SET", "marker", "written");
+        await Assert.That(queued.AsString()).IsEqualTo("QUEUED");
+
+        using var executed = await watcher.CommandAsync("EXEC");
+        await Assert.That(executed.IsNull).IsEqualTo(exists);
+
+        using var marker = await writer.CommandAsync("GET", "marker");
+        await Assert.That(marker.IsNull).IsEqualTo(exists);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ExecDisconnectSeparatesAcceptanceWithoutReplay(bool afterExecution)
