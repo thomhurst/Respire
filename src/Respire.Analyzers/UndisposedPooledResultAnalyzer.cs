@@ -153,7 +153,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         if (context.SemanticModel.GetTypeInfo(awaited, context.CancellationToken).Type is not { } type
             || (Match(type, resultType) ?? Match(type, leaseType)) is not { } pooledType
             || !IsRespireAcquisition(context, awaited.Expression)
-            || IsImmediatelyReleasedOrTransferred(context, GetOutermostAcquisitionExpression(awaited)))
+            || IsImmediatelyReleasedOrTransferred(context, GetOutermostAcquisitionExpression(context, awaited)))
         {
             return;
         }
@@ -161,11 +161,12 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         context.ReportDiagnostic(Diagnostic.Create(Rule, awaited.GetLocation(), "This expression", pooledType.Name));
     }
 
-    private static ExpressionSyntax GetOutermostAcquisitionExpression(ExpressionSyntax expression)
+    private static ExpressionSyntax GetOutermostAcquisitionExpression(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
         while (true)
         {
-            expression = ScopeWalker.GetOutermostTransparentExpression(expression);
+            expression = GetOutermostLeaseValue(context, expression);
 
             switch (expression.Parent)
             {
@@ -186,6 +187,61 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         }
     }
 
+    private static ExpressionSyntax GetOutermostLeaseValue(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+    {
+        while (true)
+        {
+            expression = ScopeWalker.GetOutermostTransparentExpression(expression);
+            var wrapper = expression.Parent as ExpressionSyntax;
+
+            if (wrapper is MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax invocation } member
+                && ScopeWalker.IsSame(invocation.Expression, member))
+            {
+                wrapper = invocation;
+            }
+
+            if (wrapper is null || GetLeaseValueOperand(context, wrapper) is not { } operand
+                                || !ScopeWalker.IsSame(operand, expression))
+            {
+                return expression;
+            }
+
+            expression = wrapper;
+        }
+    }
+
+    private static ExpressionSyntax? GetLeaseValueOperand(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+    {
+        SemanticModel semanticModel = context.SemanticModel;
+        CancellationToken cancellationToken = context.CancellationToken;
+
+        switch (expression)
+        {
+            case CastExpressionSyntax cast when semanticModel.GetTypeInfo(cast.Type, cancellationToken).Type is { } target:
+                Conversion conversion = semanticModel.ClassifyConversion(cast.Expression, target, isExplicitInSource: true);
+                return conversion.IsIdentity || conversion.IsNullable && !conversion.IsUserDefined
+                    ? cast.Expression
+                    : null;
+
+            case MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Value" } member when semanticModel.GetSymbolInfo(member, cancellationToken).Symbol
+                    is IPropertySymbol { ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }:
+                return member.Expression;
+
+            case InvocationExpressionSyntax
+            {
+                Expression: MemberAccessExpressionSyntax { Name.Identifier.ValueText: "GetValueOrDefault" } member,
+                ArgumentList.Arguments.Count: 0,
+            } invocation when semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol
+                    is IMethodSymbol { ContainingType.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T }:
+                return member.Expression;
+
+            default:
+                return null;
+        }
+    }
+
     private static bool ContainsRespireAcquisition(
         SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
         => FindAcquisitions(context, expression).Any();
@@ -193,7 +249,14 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     private static IEnumerable<AwaitExpressionSyntax> FindAcquisitions(
         SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
-        switch (ScopeWalker.Unwrap(expression))
+        expression = ScopeWalker.Unwrap(expression);
+
+        while (GetLeaseValueOperand(context, expression) is { } operand)
+        {
+            expression = ScopeWalker.Unwrap(operand);
+        }
+
+        switch (expression)
         {
             case AwaitExpressionSyntax awaited when IsRespireAcquisition(context, awaited.Expression):
                 yield return awaited;
@@ -348,24 +411,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             {
                 // result.AsString(), result.Type, result.Dispose()
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):
-                    if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
-                        && member.Parent is not InvocationExpressionSyntax)
+                    if (GetMemberRelease(context, member) is { } release)
                     {
-                        releases.Add(member);
-                    }
-
-                    if (member.Parent is InvocationExpressionSyntax extensionInvocation
-                        && context.SemanticModel.GetSymbolInfo(extensionInvocation, context.CancellationToken).Symbol
-                            is IMethodSymbol { ReducedFrom: not null })
-                    {
-                        releases.Add(extensionInvocation);
-                    }
-
-                    if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
-                        && member.Parent is InvocationExpressionSyntax invocation
-                        && ScopeWalker.IsSame(invocation.Expression, member))
-                    {
-                        releases.Add(invocation);
+                        releases.Add(release);
                     }
 
                     break;
@@ -375,16 +423,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 case CommonForEachStatementSyntax loop when ScopeWalker.IsSame(loop.Expression, use):
                     break;
 
-                // result?.Dispose()
+                // result?.Dispose() or result?.Consume()
                 case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, use):
-                    var conditionalDispose = conditional.WhenNotNull.DescendantNodesAndSelf()
-                        .OfType<MemberBindingExpressionSyntax>()
-                        .Where(binding => binding.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
-                                          && binding.Parent is InvocationExpressionSyntax invocation
-                                          && ScopeWalker.IsSame(invocation.Expression, binding))
-                        .Select(static binding => (InvocationExpressionSyntax)binding.Parent!)
-                        .FirstOrDefault();
-                    if (conditionalDispose is not null)
+                    if (ReleasesConditionalReceiver(context, conditional))
                     {
                         // A Respire acquisition always supplies a value. Treat the whole conditional
                         // access as the release barrier so nullable flow does not invent a null branch.
@@ -437,27 +478,14 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         switch (use.Parent)
         {
             case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):
-                if (member.Parent is InvocationExpressionSyntax invocation
-                    && ScopeWalker.IsSame(invocation.Expression, member))
-                {
-                    return member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
-                           || context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
-                               is IMethodSymbol { ReducedFrom: not null };
-                }
-
-                return member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
-                       && member.Parent is not InvocationExpressionSyntax;
+                return GetMemberRelease(context, member) is not null;
 
             case ElementAccessExpressionSyntax element when ScopeWalker.IsSame(element.Expression, use):
             case CommonForEachStatementSyntax loop when ScopeWalker.IsSame(loop.Expression, use):
                 return false;
 
             case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, use):
-                return conditional.WhenNotNull.DescendantNodesAndSelf()
-                    .OfType<MemberBindingExpressionSyntax>()
-                    .Any(binding => binding.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
-                                    && binding.Parent is InvocationExpressionSyntax invocation
-                                    && ScopeWalker.IsSame(invocation.Expression, binding));
+                return ReleasesConditionalReceiver(context, conditional);
 
             case AssignmentExpressionSyntax outerAssignment when ScopeWalker.IsSame(outerAssignment.Left, use):
             case ExpressionStatementSyntax:
@@ -471,6 +499,53 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 // using, return, argument, or assignment source transfers or disposes ownership.
                 return true;
         }
+    }
+
+    private static ExpressionSyntax? GetMemberRelease(
+        SyntaxNodeAnalysisContext context, MemberAccessExpressionSyntax member)
+    {
+        if (member.Parent is InvocationExpressionSyntax invocation && ScopeWalker.IsSame(invocation.Expression, member))
+        {
+            return IsReleaseOrTransferInvocation(context, invocation, member.Name) ? invocation : null;
+        }
+
+        return member.Name.Identifier.ValueText == nameof(IDisposable.Dispose) ? member : null;
+    }
+
+    private static bool ReleasesConditionalReceiver(
+        SyntaxNodeAnalysisContext context, ConditionalAccessExpressionSyntax conditional)
+    {
+        // Follow the receiver chain so a call on a projection or argument cannot release the root.
+        ExpressionSyntax? current = conditional.WhenNotNull;
+
+        while (current is not null)
+        {
+            current = ScopeWalker.Unwrap(current);
+
+            if (current is InvocationExpressionSyntax { Expression: MemberBindingExpressionSyntax binding } invocation)
+            {
+                return IsReleaseOrTransferInvocation(context, invocation, binding.Name);
+            }
+
+            current = current switch
+            {
+                InvocationExpressionSyntax call => call.Expression,
+                MemberAccessExpressionSyntax member => member.Expression,
+                ElementAccessExpressionSyntax element => element.Expression,
+                ConditionalAccessExpressionSyntax nested => nested.Expression,
+                _ => null,
+            };
+        }
+
+        return false;
+    }
+
+    private static bool IsReleaseOrTransferInvocation(
+        SyntaxNodeAnalysisContext context, InvocationExpressionSyntax invocation, SimpleNameSyntax name)
+    {
+        return name.Identifier.ValueText == nameof(IDisposable.Dispose)
+               || context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
+                   is IMethodSymbol { ReducedFrom: not null };
     }
 
     private static bool IsDiscardTarget(SyntaxNodeAnalysisContext context, AssignmentExpressionSyntax assignment)

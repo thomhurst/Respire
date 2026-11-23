@@ -57,6 +57,11 @@ public class UndisposedPooledResultAnalyzerTests
     [Arguments("_ = flag switch { true => {|RESP001:await client.ExecuteLeaseAsync(\"PING\")|}, false => existing.GetValueOrDefault() };")]
     [Arguments("_ = (flag ? {|RESP001:await client.ExecuteLeaseAsync(\"PING\")|} : existing)?.AsString();")]
     [Arguments("{|RESP001:await client.ExecuteLeaseAsync(\"PING\")|};")]
+    [Arguments("_ = ((RespireResult?){|RESP001:await client.ExecuteLeaseAsync(\"PING\")|})?.AsString();")]
+    [Arguments("_ = ((RespireResult?){|RESP001:await client.ExecuteLeaseAsync(\"PING\")|}).Value.AsString();")]
+    [Arguments("_ = (flag ? {|RESP001:await client.ExecuteLeaseAsync(\"PING\")|} : existing).GetValueOrDefault();")]
+    [Arguments("_ = (flag ? {|RESP001:await client.ExecuteLeaseAsync(\"PING\")|} : existing)?.AsString()?.Consume();")]
+    [Arguments("_ = ((RespireLease?){|RESP001:await client.GetLeaseAsync(\"app:entry\")|}).GetValueOrDefault().Length;")]
     public async Task AbandonedTemporaryLease_IsFlagged(string statement) => await Verify.VerifyAsync(
         $$"""
         using System.Threading.Tasks;
@@ -68,6 +73,11 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 {{statement}}
             }
+        }
+
+        public static class TextExtensions
+        {
+            public static string Consume(this string value) => value;
         }
         """);
 
@@ -99,6 +109,10 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 (await client.ExecuteLeaseAsync("PING")).Dispose();
                 (flag ? await client.ExecuteLeaseAsync("PING") : (RespireResult?)null)?.Dispose();
+                (flag ? await client.ExecuteLeaseAsync("PING") : (RespireResult?)null)?.Consume();
+                (flag ? await client.ExecuteLeaseAsync("PING") : (RespireResult?)null).GetValueOrDefault().Dispose();
+                ((RespireResult?)await client.ExecuteLeaseAsync("PING")).Value.Dispose();
+                ((RespireLease?)await client.GetLeaseAsync("app:entry")).GetValueOrDefault().Dispose();
                 using (await client.ExecuteLeaseAsync("PING")) { }
                 Consume(await client.ExecuteLeaseAsync("PING"));
                 (await client.ExecuteLeaseAsync("PING")).Consume();
@@ -122,6 +136,32 @@ public class UndisposedPooledResultAnalyzerTests
             }
 
             private static void Consume(RespireResult result) => result.Dispose();
+        }
+
+        public static class LeaseExtensions
+        {
+            public static void Consume(this RespireResult result) => result.Dispose();
+        }
+        """);
+
+    [Test]
+    [Arguments("var {|RESP001:result|} = (RespireResult?)await client.ExecuteLeaseAsync(\"PING\");", "_ = result;")]
+    [Arguments("var {|RESP001:result|} = ((RespireResult?)await client.ExecuteLeaseAsync(\"PING\")).GetValueOrDefault();", "_ = result;")]
+    [Arguments("var {|RESP001:result|} = (RespireResult?)await client.ExecuteLeaseAsync(\"PING\");", "_ = result.Value.AsString();")]
+    [Arguments("var result = ((RespireResult?)await client.ExecuteLeaseAsync(\"PING\")).GetValueOrDefault();", "result.Dispose();")]
+    [Arguments("RespireResult? result = await client.ExecuteLeaseAsync(\"PING\");", "result?.Consume();")]
+    public async Task LocalLease_WrappersPreserveOwnership(string declaration, string use) => await Verify.VerifyAsync(
+        $$"""
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                {{declaration}}
+                {{use}}
+            }
         }
 
         public static class LeaseExtensions
