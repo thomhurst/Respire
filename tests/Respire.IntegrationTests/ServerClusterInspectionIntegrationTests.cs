@@ -120,7 +120,7 @@ public class ServerClusterInspectionIntegrationTests
     [Arguments(3)]
     public async Task StandaloneErrorsRemainServerErrors(int protocol)
     {
-        await using var container = await ContainerStartRetry.StartAsync(() => new Testcontainers.Redis.RedisBuilder("redis:7.0.15").Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new Testcontainers.Redis.RedisBuilder("redis:7.0.15").Build(), 6379);
         await using var client = await RespireClient.ConnectAsync($"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
         Func<Task> operation = async () => await client.Server.ClusterShardsAsync();
         await operation.Should().ThrowAsync<RespireServerException>().WithMessage("*cluster support disabled*");

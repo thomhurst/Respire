@@ -13,10 +13,11 @@ public class ServerExtensionIntegrationTests
     [Arguments(3)]
     public async Task DragonflyRateLimitsAndExpiringMembersUseCatalogDescriptors(int protocol)
     {
-        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.0")
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder("docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.0")
             .WithCommand("--proactor_threads=1", "--maxmemory=256mb", "--logtostderr")
             .WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379,
+            useReplicationId: true);
         await using var client = await RespireClient.ConnectAsync(
             $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
         using var allowed = await client.ExecuteAsync(RespireCommands.Dragonfly.CL_THROTTLE, "user", 0, 1, 3600, 1);
@@ -51,10 +52,10 @@ public class ServerExtensionIntegrationTests
     public async Task KeyDbMemberExpiryAndHashRenameUseCatalogDescriptors(int protocol)
     {
         // This pinned image targets the Linux x64 CI runner; ARM hosts require x64 emulation.
-        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("eqalpha/keydb:x86_64_v6.3.4")
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder("eqalpha/keydb:x86_64_v6.3.4")
             .WithCommand("keydb-server", "--server-threads", "1", "--save", "", "--appendonly", "no")
             .WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379);
         await using var client = await RespireClient.ConnectAsync(
             $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
         byte[] member = [0xff, 0, 0x80];
@@ -62,8 +63,9 @@ public class ServerExtensionIntegrationTests
         added.AsInteger().Should().Be(1);
         using var expires = await client.ExecuteAsync(RespireCommands.KeyDb.EXPIREMEMBER, "members", member, 60);
         expires.AsInteger().Should().Be(1);
+        DateTimeOffset serverTime = await client.Server.TimeAsync();
         using var expiresAt = await client.ExecuteAsync(RespireCommands.KeyDb.PEXPIREMEMBERAT,
-            "members", member, DateTimeOffset.UtcNow.AddMinutes(2).ToUnixTimeMilliseconds());
+            "members", member, serverTime.AddMinutes(2).ToUnixTimeMilliseconds());
         expiresAt.AsInteger().Should().Be(1);
         // KeyDB extends PTTL with a subkey argument; the wire verb uses the shared descriptor.
         using var ttl = await client.ExecuteAsync(RespireCommands.Key.PTTL, "members", member);

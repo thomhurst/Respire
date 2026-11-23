@@ -22,11 +22,11 @@ public sealed class SecuredRedisTestContainer : IAsyncInitializer, IAsyncDisposa
 
     public async Task InitializeAsync()
     {
-        _container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:7.4.11-alpine")
+        _container = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder("redis:7.4.11-alpine")
             .WithPortBinding(RedisPort, true)
             .WithCommand("redis-server", "--requirepass", Password)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort))
-            .Build(), [RedisPort]).ConfigureAwait(false);
+            .Build(), RedisPort, password: Password).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()

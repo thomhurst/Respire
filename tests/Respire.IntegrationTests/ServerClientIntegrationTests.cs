@@ -27,7 +27,7 @@ public class ServerClientIntegrationTests
     public async Task ConnectionControlsStayOnOneSocketAndNode(int protocol, bool caching)
     {
         // PAUSE affects the whole server, so this test owns its container.
-        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:8.10-alpine").Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:8.10-alpine").Build(), 6379);
         var options = new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],

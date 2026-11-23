@@ -184,10 +184,10 @@ public sealed class UnixSocketRedisFixture : IAsyncInitializer, IAsyncDisposable
 
         try
         {
-            _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.4.11-alpine")
+            _container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:7.4.11-alpine")
                 .WithBindMount(_directory, "/sockets")
                 .WithCommand("redis-server", "--unixsocket", "/sockets/redis.sock", "--unixsocketperm", "777")
-                .Build(), [RedisBuilder.RedisPort]);
+                .Build(), RedisBuilder.RedisPort);
         }
         catch { await DisposeAsync(); throw; }
     }

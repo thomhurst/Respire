@@ -15,7 +15,7 @@ public class ClientFilterIntegrationTests
     [Arguments(3, true)]
     public async Task ValkeyListMaximumAgeUsesWholeSeconds(int protocol, bool grouped)
     {
-        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("valkey/valkey:9.0-alpine").Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("valkey/valkey:9.0-alpine").Build(), 6379);
         var options = new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
@@ -65,7 +65,7 @@ public class ClientFilterIntegrationTests
     [Arguments(3, true)]
     public async Task ValkeyFiltersIndependentlyChangeSelectionAndKillCounts(int protocol, bool grouped)
     {
-        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("valkey/valkey:9.0-alpine").Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("valkey/valkey:9.0-alpine").Build(), 6379);
         var options = new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
@@ -188,7 +188,7 @@ public class ClientFilterIntegrationTests
     [Arguments("valkey/valkey:9.0-alpine", 3, 2, true)]
     public async Task FiltersSelectAndKillOnlyOwnedTargets(string image, int protocol, int execution, bool grouped)
     {
-        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder(image).Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder(image).Build(), 6379);
         var options = new RespireOptions
         {
             Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],

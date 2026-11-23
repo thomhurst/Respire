@@ -32,10 +32,10 @@ public sealed class RedisServerFixture : IAsyncLifetime
             return;
         }
 
-        _container = await Respire.Testing.ContainerStartRetry.StartAsync(() => new ContainerBuilder(Image)
+        _container = await Respire.Testing.ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder(Image)
             .WithPortBinding(6379, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
-            .Build(), [6379]).ConfigureAwait(false);
+            .Build(), 6379).ConfigureAwait(false);
 
         try
         {

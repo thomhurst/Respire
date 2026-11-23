@@ -91,7 +91,7 @@ public class RedlockTests(RedlockRedisCluster fixture)
         try
         {
             await Task.WhenAll(Enumerable.Range(0, containers.Length).Select(async index =>
-                containers[index] = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [RedisBuilder.RedisPort])));
+                containers[index] = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:7.0.15").Build(), RedisBuilder.RedisPort)));
             clients = containers.Select(container => (IRespireClient)RespireClient.Create(new RespireOptions
             {
                 Endpoints = [new(container.Hostname, container.GetMappedPublicPort(6379))],
@@ -142,7 +142,7 @@ public sealed class RedlockRedisCluster : IAsyncInitializer, IAsyncDisposable
         // Record each started node at once, so DisposeAsync removes it even when another node fails to start.
         await Task.WhenAll(Enumerable.Range(0, 3).Select(async _ =>
         {
-            var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15").Build(), [RedisBuilder.RedisPort]);
+            var container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:7.0.15").Build(), RedisBuilder.RedisPort);
 
             lock (_containers)
             {

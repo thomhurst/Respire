@@ -14,9 +14,9 @@ public sealed class StreamConfigurationRedisContainer : IAsyncInitializer, IAsyn
 
     public string ConnectionString => $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}";
 
-    public async Task InitializeAsync() => _container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.10-alpine")
+    public async Task InitializeAsync() => _container = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder("redis:8.10-alpine")
         .WithPortBinding(6379, true)
-        .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+        .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379);
 
     public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }

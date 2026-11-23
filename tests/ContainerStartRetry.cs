@@ -27,11 +27,18 @@ internal static class ContainerStartRetry
 
     // Redis and Valkey ship a CLI. The Garnet image ships Bash but has no Redis CLI.
     private static readonly string s_readContainerInfo = """
+        if [ "$#" -eq 3 ]; then
+            export REDISCLI_AUTH="$3"
+        fi
         if command -v redis-cli >/dev/null; then
-            exec redis-cli --raw -p "$1" INFO server
+            exec redis-cli --raw -p "$1" INFO "$2"
         fi
         if command -v valkey-cli >/dev/null; then
-            exec valkey-cli --raw -p "$1" INFO server
+            exec valkey-cli --raw -p "$1" INFO "$2"
+        fi
+        if [ "$2" != server ] || [ "$#" -eq 3 ]; then
+            echo "This INFO probe requires a Redis-compatible CLI" >&2
+            exit 1
         fi
         exec bash -c '
             exec 3<>"/dev/tcp/127.0.0.1/$1" || exit 1
@@ -47,25 +54,22 @@ internal static class ContainerStartRetry
         """.ReplaceLineEndings("\n");
 
     internal static Task<TContainer> StartRedisAsync<TContainer>(
-        Func<TContainer> createContainer, int redisPort, CancellationToken cancellationToken = default)
+        Func<TContainer> createContainer, int redisPort, CancellationToken cancellationToken = default,
+        string? password = null, bool useReplicationId = false)
         where TContainer : IContainer
     {
-        return StartAsync(createContainer, [redisPort], cancellationToken, redisPort);
+        return StartAsync(createContainer, [redisPort], cancellationToken,
+            (container, token) => VerifyPublishedRedisAsync(container, redisPort, token, password, useReplicationId));
     }
 
     /// <summary>Builds and starts a container, retrying host-port bind collisions up to three attempts in total.</summary>
     /// <param name="createContainer">Builds a new, unstarted container on every call.</param>
     /// <param name="containerPorts">The container ports published on random host ports.</param>
     /// <param name="cancellationToken">Cancels the start; no fresh container starts after cancellation.</param>
-    internal static Task<TContainer> StartAsync<TContainer>(
-        Func<TContainer> createContainer, int[] containerPorts, CancellationToken cancellationToken = default)
-        where TContainer : IContainer
-    {
-        return StartAsync(createContainer, containerPorts, cancellationToken, redisPort: null);
-    }
-
-    private static async Task<TContainer> StartAsync<TContainer>(
-        Func<TContainer> createContainer, int[] containerPorts, CancellationToken cancellationToken, int? redisPort)
+    /// <param name="verifyStarted">Optional check before returning the started container.</param>
+    internal static async Task<TContainer> StartAsync<TContainer>(
+        Func<TContainer> createContainer, int[] containerPorts, CancellationToken cancellationToken = default,
+        Func<TContainer, CancellationToken, Task>? verifyStarted = null)
         where TContainer : IContainer
     {
         var collisions = new List<Exception>();
@@ -81,9 +85,9 @@ internal static class ContainerStartRetry
                 await container.StartAsync(cancellationToken).ConfigureAwait(false);
                 started = true;
 
-                if (redisPort is int port)
+                if (verifyStarted is not null)
                 {
-                    await VerifyPublishedRedisAsync(container, port, cancellationToken).ConfigureAwait(false);
+                    await verifyStarted(container, cancellationToken).ConfigureAwait(false);
                 }
 
                 return container;
@@ -121,7 +125,9 @@ internal static class ContainerStartRetry
         }
     }
 
-    private static async Task VerifyPublishedRedisAsync(IContainer container, int redisPort, CancellationToken cancellationToken)
+    internal static async Task VerifyPublishedRedisAsync(
+        IContainer container, int redisPort, CancellationToken cancellationToken, string? password = null,
+        bool useReplicationId = false, Func<CancellationToken, Task<string>>? readContainerInfo = null)
     {
         string host = container.Hostname;
         int port = container.GetMappedPublicPort(redisPort);
@@ -129,10 +135,15 @@ internal static class ContainerStartRetry
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(s_probeTimeout);
 
+        // Dragonfly standalone reports a per-server replication ID instead of a run_id.
+        string section = useReplicationId ? "replication" : "server";
+        string field = useReplicationId ? "master_replid" : "run_id";
+        readContainerInfo ??= token => ReadContainerInfoAsync(container, redisPort, section, password, token);
+
         try
         {
-            string expected = await ReadContainerRunIdAsync(container, redisPort, deadline.Token).ConfigureAwait(false);
-            string? actual = await ReadPublishedRunIdAsync(host, port, deadline.Token).ConfigureAwait(false);
+            string expected = ReadIdentity(await readContainerInfo(deadline.Token).ConfigureAwait(false), section, field, "inside the container");
+            string? actual = await ReadPublishedIdentityAsync(host, port, section, field, password, deadline.Token).ConfigureAwait(false);
 
             if (actual == expected)
             {
@@ -145,16 +156,16 @@ internal static class ContainerStartRetry
                 throw new PublishedPortCollisionException($"Published Redis endpoint {endpoint} replied with HTTP.");
             }
 
-            // A server restart also changes run_id. Verify the container still reports the same identity.
-            string current = await ReadContainerRunIdAsync(container, redisPort, deadline.Token).ConfigureAwait(false);
+            // A server restart also changes its identity. Check that the container still reports the same one.
+            string current = ReadIdentity(await readContainerInfo(deadline.Token).ConfigureAwait(false), section, field, "inside the container");
 
             if (current == expected)
             {
                 throw new PublishedPortCollisionException(
-                    $"Published Redis endpoint {endpoint} reached run_id {actual}, expected {expected}.");
+                    $"Published Redis endpoint {endpoint} reached {field} {actual}, expected {expected}.");
             }
 
-            throw new IOException($"Redis inside the container changed run_id from {expected} to {current} during startup.");
+            throw new IOException($"Redis inside the container changed {field} from {expected} to {current} during startup.");
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
         {
@@ -166,78 +177,110 @@ internal static class ContainerStartRetry
         }
     }
 
-    private static async Task<string> ReadContainerRunIdAsync(IContainer container, int port, CancellationToken cancellationToken)
+    private static async Task<string> ReadContainerInfoAsync(
+        IContainer container, int port, string section, string? password, CancellationToken cancellationToken)
     {
-        var result = await container.ExecAsync(
-            ["sh", "-c", s_readContainerInfo, "redis-info", port.ToString(CultureInfo.InvariantCulture)],
-            cancellationToken).ConfigureAwait(false);
+        string[] command = ["sh", "-c", s_readContainerInfo, "redis-info", port.ToString(CultureInfo.InvariantCulture), section];
+
+        if (password is not null)
+        {
+            command = [.. command, password];
+        }
+
+        ExecResult result = await container.ExecAsync(command, cancellationToken).ConfigureAwait(false);
 
         if (result.ExitCode != 0)
         {
-            throw new IOException($"INFO server inside the Redis container exited with code {result.ExitCode}: {result.Stderr.Trim()}");
+            throw new IOException($"INFO {section} inside the Redis container failed (exit {result.ExitCode}): {result.Stderr.Trim()}");
         }
 
-        return ReadRunId(result.Stdout, "inside the container");
+        return result.Stdout;
     }
 
     // A null result means the listener answered with HTTP. Missing or malformed INFO replies throw.
-    private static async Task<string?> ReadPublishedRunIdAsync(string host, int port, CancellationToken cancellationToken)
+    private static async Task<string?> ReadPublishedIdentityAsync(
+        string host, int port, string section, string field, string? password, CancellationToken cancellationToken)
     {
         using var client = new TcpClient();
         await client.ConnectAsync(host, port, cancellationToken).ConfigureAwait(false);
         var stream = client.GetStream();
-        await stream.WriteAsync("*2\r\n$4\r\nINFO\r\n$6\r\nserver\r\n"u8.ToArray(), cancellationToken).ConfigureAwait(false);
-
         using var response = new BufferedStream(stream);
+
+        if (password is not null)
+        {
+            byte[] passwordBytes = Encoding.UTF8.GetBytes(password);
+            byte[] header = Encoding.ASCII.GetBytes(FormattableString.Invariant($"*2\r\n$4\r\nAUTH\r\n${passwordBytes.Length}\r\n"));
+            byte[] command = [.. header, .. passwordBytes, (byte)'\r', (byte)'\n'];
+            await stream.WriteAsync(command, cancellationToken).ConfigureAwait(false);
+            string authentication = await ReadReplyHeaderAsync(response, cancellationToken).ConfigureAwait(false);
+
+            if (authentication.StartsWith("HTTP/", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (authentication != "+OK")
+            {
+                throw new IOException("The published listener rejected Redis AUTH or returned an invalid AUTH reply.");
+            }
+        }
+
+        byte[] infoCommand = Encoding.ASCII.GetBytes(FormattableString.Invariant($"*2\r\n$4\r\nINFO\r\n${section.Length}\r\n{section}\r\n"));
+        await stream.WriteAsync(infoCommand, cancellationToken).ConfigureAwait(false);
+        string line = await ReadReplyHeaderAsync(response, cancellationToken).ConfigureAwait(false);
+
+        if (line.StartsWith("HTTP/", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        if (!line.StartsWith('$') || !int.TryParse(line.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out int size)
+            || size <= 0 || size > MaxInfoLength)
+        {
+            throw new IOException($"Unexpected INFO {section} reply header: {line}");
+        }
+
+        var payload = new byte[size + 2];
+        await response.ReadExactlyAsync(payload, cancellationToken).ConfigureAwait(false);
+
+        if (!payload.AsSpan(size).SequenceEqual("\r\n"u8))
+        {
+            throw new IOException($"INFO {section} reply did not end with CRLF.");
+        }
+
+        return ReadIdentity(Encoding.UTF8.GetString(payload, 0, size), section, field, "from the published port");
+    }
+
+    private static async Task<string> ReadReplyHeaderAsync(Stream response, CancellationToken cancellationToken)
+    {
         var header = new byte[256];
 
         for (int length = 1; length <= header.Length; length++)
         {
             await response.ReadExactlyAsync(header.AsMemory(length - 1, 1), cancellationToken).ConfigureAwait(false);
 
-            if (length < 2 || header[length - 2] != '\r' || header[length - 1] != '\n')
+            if (length >= 2 && header[length - 2] == '\r' && header[length - 1] == '\n')
             {
-                continue;
+                return Encoding.ASCII.GetString(header, 0, length - 2);
             }
-
-            string line = Encoding.ASCII.GetString(header, 0, length - 2);
-
-            if (line.StartsWith("HTTP/", StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            if (!line.StartsWith('$') || !int.TryParse(line.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out int size)
-                || size <= 0 || size > MaxInfoLength)
-            {
-                throw new IOException($"Unexpected INFO server reply header: {line}");
-            }
-
-            var payload = new byte[size + 2];
-            await response.ReadExactlyAsync(payload, cancellationToken).ConfigureAwait(false);
-
-            if (!payload.AsSpan(size).SequenceEqual("\r\n"u8))
-            {
-                throw new IOException("INFO server reply did not end with CRLF.");
-            }
-
-            return ReadRunId(Encoding.UTF8.GetString(payload, 0, size), "from the published port");
         }
 
-        throw new IOException("INFO server reply header exceeded 256 bytes.");
+        throw new IOException("Redis probe reply header exceeded 256 bytes.");
     }
 
-    private static string ReadRunId(string info, string source)
+    private static string ReadIdentity(string info, string section, string field, string source)
     {
+        string prefix = field + ":";
+
         foreach (string line in info.Split('\n'))
         {
-            if (line.StartsWith("run_id:", StringComparison.Ordinal) && line.AsSpan(7).Trim().Length > 0)
+            if (line.StartsWith(prefix, StringComparison.Ordinal) && line.AsSpan(prefix.Length).Trim().Length > 0)
             {
-                return line[7..].Trim();
+                return line[prefix.Length..].Trim();
             }
         }
 
-        throw new IOException($"INFO server {source} did not include a run_id.");
+        throw new IOException($"INFO {section} {source} did not include {field}.");
     }
 
     private sealed class PublishedPortCollisionException(string message) : IOException(message);

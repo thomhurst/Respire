@@ -26,9 +26,9 @@ public sealed class KeyNotificationRedisContainer : IAsyncInitializer, IAsyncDis
     public string ConnectionString =>
         $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}/{TestContext.Current!.Isolation.UniqueId}";
 
-    public async Task InitializeAsync() => _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:8.8-alpine")
+    public async Task InitializeAsync() => _container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:8.8-alpine")
         .WithCommand("redis-server", "--databases", "4096", "--notify-keyspace-events", "KEAmoncSTIV")
-        .Build(), [RedisBuilder.RedisPort]);
+        .Build(), RedisBuilder.RedisPort);
 
     public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
@@ -310,8 +310,8 @@ public sealed class KeyNotificationLegacyRedisContainer : IAsyncInitializer, IAs
 
     public string ConnectionString => $"redis://{Container.Hostname}:{Container.GetMappedPublicPort(6379)}";
 
-    public async Task InitializeAsync() => _container = await ContainerStartRetry.StartAsync(() => new RedisBuilder("redis:7.0.15")
-        .WithCommand("redis-server", "--notify-keyspace-events", "KEA").Build(), [RedisBuilder.RedisPort]);
+    public async Task InitializeAsync() => _container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder("redis:7.0.15")
+        .WithCommand("redis-server", "--notify-keyspace-events", "KEA").Build(), RedisBuilder.RedisPort);
 
     public ValueTask DisposeAsync() => _container?.DisposeAsync() ?? ValueTask.CompletedTask;
 }

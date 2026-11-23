@@ -14,11 +14,14 @@ public class ContainerStartRetryTests
 {
     private const string ListenFailure = "failed to set up container networking: driver failed programming external connectivity on endpoint sharp_colden (2db25cff5020): failed to listen on TCP socket: address already in use";
     private const string ExpectedRunId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private const string ProbePassword = "páss\r\n!";
 
     [Test]
-    [Arguments(true)]
-    [Arguments(false)]
-    public async Task WrongPublishedListenerStartsAFreshContainer(bool http)
+    [Arguments(true, false)]
+    [Arguments(false, false)]
+    [Arguments(true, true)]
+    [Arguments(false, true)]
+    public async Task WrongPublishedListenerStartsAFreshContainer(bool http, bool authenticate)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         using var wrong = new TcpListener(IPAddress.Loopback, 0);
@@ -28,8 +31,8 @@ public class ContainerStartRetryTests
         string wrongReply = http
             ? "HTTP/1.1 400 Bad Request\r\n\r\n"
             : InfoReply("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-        Task wrongReplySent = ReplyAsync(wrong, wrongReply, timeout.Token);
-        Task readyReplySent = ReplyAsync(ready, InfoReply(ExpectedRunId), timeout.Token);
+        Task wrongReplySent = ReplyAsync(wrong, wrongReply, timeout.Token, authenticate);
+        Task readyReplySent = ReplyAsync(ready, InfoReply(ExpectedRunId), timeout.Token, authenticate);
         var attempts = new List<ContainerProbe>();
         int bindFailures = http ? 1 : 0;
 
@@ -43,11 +46,38 @@ public class ContainerStartRetryTests
                     : PublishedContainer(attempts.Count == bindFailures ? wrong : ready);
                 attempts.Add((ContainerProbe)container);
                 return container;
-            }, 6379, timeout.Token);
+            }, 6379, timeout.Token, password: authenticate ? ProbePassword : null);
             attempts.Should().HaveCount(bindFailures + 2).And.OnlyContain(attempt => attempt.StartCount == 1);
             started.Should().BeSameAs(attempts[^1]);
             attempts[^1].DisposeCount.Should().Be(0);
             await Task.WhenAll(wrongReplySent, readyReplySent);
+        }
+        finally
+        {
+            await timeout.CancelAsync();
+        }
+    }
+
+    [Test]
+    public async Task RejectedAuthenticationReportsEndpointWithoutRetrying()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var container = PublishedContainer(listener);
+        var probe = (ContainerProbe)container;
+        Task reply = ReplyAsync(listener, "-WRONGPASS invalid credentials\r\n", timeout.Token, authenticate: true);
+        Func<Task<IContainer>> start = () => ContainerStartRetry.StartRedisAsync(
+            () => container, 6379, timeout.Token, password: ProbePassword);
+
+        try
+        {
+            var error = (await start.Should().ThrowAsync<IOException>()).Which;
+            error.Message.Should().Contain($"127.0.0.1:{probe.MappedPort}");
+            error.InnerException!.Message.Should().Contain("AUTH");
+            probe.StartCount.Should().Be(1);
+            probe.DisposeCount.Should().Be(1);
+            await reply;
         }
         finally
         {
@@ -150,10 +180,28 @@ public class ContainerStartRetryTests
         return "$" + FormattableString.Invariant($"{info.Length}\r\n{info}\r\n");
     }
 
-    private static async Task ReplyAsync(TcpListener listener, string? reply, CancellationToken cancellationToken)
+    private static async Task ReplyAsync(
+        TcpListener listener, string? reply, CancellationToken cancellationToken, bool authenticate = false)
     {
         using var client = await listener.AcceptTcpClientAsync(cancellationToken);
         using var stream = client.GetStream();
+
+        if (authenticate)
+        {
+            byte[] expected = "*2\r\n$4\r\nAUTH\r\n$8\r\npáss\r\n!\r\n"u8.ToArray();
+            var request = new byte[expected.Length];
+            await stream.ReadExactlyAsync(request, cancellationToken);
+            request.Should().Equal(expected);
+
+            if (reply is not null && (reply.StartsWith("HTTP/", StringComparison.Ordinal) || reply.StartsWith('-')))
+            {
+                await stream.WriteAsync(Encoding.ASCII.GetBytes(reply), cancellationToken);
+                return;
+            }
+
+            await stream.WriteAsync("+OK\r\n"u8.ToArray(), cancellationToken);
+        }
+
         await ReadInfoRequestAsync(stream, cancellationToken);
 
         if (reply is not null)

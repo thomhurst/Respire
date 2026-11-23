@@ -16,8 +16,8 @@ public class IncrementExtendedIntegrationTests
     public async Task FloatingZeroIsCanonicalAcrossExecutionModes(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
-        await using var container = useFake ? null : await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.10-alpine").WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+        await using var container = useFake ? null : await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder("redis:8.10-alpine").WithPortBinding(6379, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379);
         var options = fake?.CreateOptions() ?? RespireOptions.Parse($"redis://{container!.Hostname}:{container.GetMappedPublicPort(6379)}");
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
 
@@ -47,8 +47,8 @@ public class IncrementExtendedIntegrationTests
     [Arguments("redis:7.4-alpine", 3)]
     public async Task CoordinationUsesAtomicNativeOrLegacyPathWithoutPartialPermits(string image, int protocol)
     {
-        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder(image).WithPortBinding(6379, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379);
         await using var client = await RespireClient.ConnectAsync(
             $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
         var coordination = new Respire.Coordination.RespireCoordination(client.WithKeyPrefix("tenant:"));
@@ -87,8 +87,8 @@ public class IncrementExtendedIntegrationTests
     public async Task IntegerAndFloatingResultsBoundsAndExpiryMatchAcrossExecutionModes(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
-        await using var container = useFake ? null : await ContainerStartRetry.StartAsync(() => new ContainerBuilder("redis:8.10-alpine").WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+        await using var container = useFake ? null : await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder("redis:8.10-alpine").WithPortBinding(6379, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379);
         var options = fake?.CreateOptions() ?? RespireOptions.Parse($"redis://{container!.Hostname}:{container.GetMappedPublicPort(6379)}");
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespireProtocol)protocol });
 

@@ -15,10 +15,10 @@ public class ServerDiagnosticsIntegrationTests
     public async Task SlowLogAsync_ReadsAllRetainedEntriesAndOriginalArgumentCount(
         string image, int protocol, bool reportsArgumentCount)
     {
-        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder(image)
             .WithPortBinding(6379, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379))
-            .Build(), [6379]);
+            .Build(), 6379);
         var address = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}&allowAdmin=true";
         await using var client = await RespireClient.ConnectAsync(address);
         var server = client.Server;
@@ -68,8 +68,8 @@ public class ServerDiagnosticsIntegrationTests
             command = [.. command, "--enable-debug-command", "yes"];
         }
 
-        await using var container = await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image).WithCommand(command).WithPortBinding(6379, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder(image).WithCommand(command).WithPortBinding(6379, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(6379)).Build(), 6379);
         var address = $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}";
         await using var client = await RespireClient.ConnectAsync(address + "&allowAdmin=true");
         var server = client.WithKeyPrefix("ignored:").Server;

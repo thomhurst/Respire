@@ -13,8 +13,8 @@ public class GeoPolygonIntegrationTests
     [Arguments(3)]
     public async Task Valkey9PolygonSearchAndStoreWorkDirectBatchedAndTransactional(int protocol)
     {
-        await using var container = await ContainerStartRetry.StartAsync(
-            () => new RedisBuilder("valkey/valkey:9.0-alpine").Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(
+            () => new RedisBuilder("valkey/valkey:9.0-alpine").Build(), 6379);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var token = deadline.Token;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -84,7 +84,7 @@ public class GeoPolygonIntegrationTests
     [Arguments("redis:7.2-alpine", 3)]
     public async Task OlderServersReportPolygonRequirementWithoutMaskingOtherErrors(string image, int protocol)
     {
-        await using var container = await ContainerStartRetry.StartAsync(() => new RedisBuilder(image).Build(), [6379]);
+        await using var container = await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder(image).Build(), 6379);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var token = deadline.Token;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
