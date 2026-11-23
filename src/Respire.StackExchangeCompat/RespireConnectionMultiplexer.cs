@@ -198,9 +198,18 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
     {
         lock (_gate)
         {
-            if (_closeTask is not null)
+            if (_closeTask is { } previousClose)
             {
-                return _closeTask;
+                // The first close has drained commands and released the adapter's owned resources.
+                if (!previousClose.IsFaulted || _ownsClients || _subscriber is not { HasPendingSubscriptions: true } subscriber)
+                {
+                    return previousClose;
+                }
+
+                var retry = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _closeTask = retry.Task;
+                _ = CompleteCloseAsync(subscriber.CloseSubscriptionsAsync(ownsClient: false), retry);
+                return retry.Task;
             }
 
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -215,15 +224,26 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
             }
 
 #pragma warning restore CA1849
-            _ = CloseCoreAsync(_operations.ToArray(), _clients.Values.ToArray(), completion);
-            return _closeTask;
+            _ = CompleteCloseAsync(CloseCoreAsync(_operations.ToArray(), _clients.Values.ToArray()), completion);
+            return completion.Task;
         }
     }
 
-    private async Task CloseCoreAsync(Task[] operations, IRespireClient[] clients, TaskCompletionSource completion)
+    private static async Task CompleteCloseAsync(Task close, TaskCompletionSource completion)
     {
-        Exception? failure = null;
+        try
+        {
+            await close.ConfigureAwait(false);
+            completion.SetResult();
+        }
+        catch (Exception error)
+        {
+            completion.SetException(error);
+        }
+    }
 
+    private async Task CloseCoreAsync(Task[] operations, IRespireClient[] clients)
+    {
         try
         {
             try
@@ -236,7 +256,7 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
             {
                 if (_subscriber is not null)
                 {
-                    await _subscriber.DisposeSubscriptionsAsync(closing: true).ConfigureAwait(false);
+                    await _subscriber.CloseSubscriptionsAsync(_ownsClients).ConfigureAwait(false);
                 }
             }
             finally
@@ -251,7 +271,6 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
                 await Task.WhenAll(owned.Select(static client => client.DisposeAsync().AsTask())).ConfigureAwait(false);
             }
         }
-        catch (Exception error) { failure = error; }
         finally
         {
             _shutdown.Dispose();
@@ -261,15 +280,6 @@ public sealed partial class RespireConnectionMultiplexer : IConnectionMultiplexe
             {
                 database.DisposeDispatch();
             }
-        }
-
-        if (failure is null)
-        {
-            completion.SetResult();
-        }
-        else
-        {
-            completion.SetException(failure);
         }
     }
 
