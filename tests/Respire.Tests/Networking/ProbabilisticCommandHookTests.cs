@@ -105,6 +105,34 @@ public class ProbabilisticCommandHookTests
     }
 
     [Test]
+    [Arguments("BF.MEXISTS", "*2\r\n:1\r\n+unexpected\r\n", "outcome at index 1 has type SimpleString")]
+    [Arguments("CF.MEXISTS", "*2\r\n:1\r\n+unexpected\r\n", "outcome at index 1 has type SimpleString")]
+    [Arguments("TOPK.QUERY", "*2\r\n:1\r\n+unexpected\r\n", "outcome at index 1 has type SimpleString")]
+    [Arguments("BF.MEXISTS", "*2\r\n#t\r\n:2\r\n", "outcome at index 1 has integer value 2")]
+    [Arguments("CF.MEXISTS", "+unexpected\r\n", "expected an array of 2 outcomes")]
+    [Arguments("TOPK.QUERY", "*1\r\n:1\r\n", "expected an array of 2 outcomes")]
+    public async Task MembershipReadsRejectMalformedReplies(string command, string reply, string message)
+    {
+        await using var server = Server(command, reply);
+        var hook = new RecordingHook();
+        await using var client = await Connect(server, hook);
+        RespireProbabilisticClient module = client.Probabilistic;
+        RespireValue[] items = ["a", "b"];
+
+        Exception error = await Failure(() => (command switch
+        {
+            "BF.MEXISTS" => module.BloomMultiExistsAsync("key", items),
+            "CF.MEXISTS" => module.CuckooMultiExistsAsync("key", items),
+            "TOPK.QUERY" => module.TopKQueryAsync("key", items),
+            _ => throw new ArgumentException("Unsupported membership command.", nameof(command)),
+        }).AsTask());
+
+        await Assert.That(error is RespireProtocolException).IsTrue();
+        await Assert.That(error.Message).Contains(message);
+        await Check(hook, command, RespireCommandOutcome.Failed, error);
+    }
+
+    [Test]
     public async Task CancellationAfterWireAdmissionCompletesTheTypedOwnerOnce()
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
