@@ -7,7 +7,7 @@ using Respire.Serialization;
 
 namespace Respire;
 
-/// <summary>Valkey 9.2 Path Hash commands. Tested against 9.2.0-rc1; GA compatibility is unverified. Paths and fields are binary, and only the containing key receives a key prefix.</summary>
+/// <summary>Valkey 9.2 Path Hash commands. Paths and fields are binary, and only the containing key receives a key prefix.</summary>
 public partial interface IRespirePathHashCommands
 {
     /// <summary>Sets one field; false when FNX/FXX rejects the complete write. Valkey: PHSET.</summary>
@@ -37,10 +37,10 @@ public partial interface IRespirePathHashCommands
     /// <summary>Gets the owned binary payload; missing paths return an empty array. Valkey: PHGETALL.</summary>
     ValueTask<RespirePathHashField[]> GetAllAsync(RespireKey key, RespireKey path, CancellationToken cancellationToken = default);
 
-    /// <summary>Tests whether an exact logical path exists. Valkey: PHEXISTS.</summary>
+    /// <summary>Tests whether an exact logical path exists. Valkey: PHPATHEXISTS.</summary>
     ValueTask<bool> ExistsAsync(RespireKey key, RespireKey path, CancellationToken cancellationToken = default);
 
-    /// <summary>Counts logical paths, returning zero when the key is missing. Valkey: PHCARD.</summary>
+    /// <summary>Counts logical paths, returning zero when the key is missing. Valkey: PHPATHCOUNT.</summary>
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Deletes specified fields and returns their count; no fields deletes the entire path and returns 0 or 1. Valkey: PHDEL.</summary>
@@ -49,10 +49,10 @@ public partial interface IRespirePathHashCommands
     /// <summary>Deletes one field and returns its count. Valkey: PHDEL.</summary>
     ValueTask<long> RemoveAsync(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default);
 
-    /// <summary>Deletes paths whose bytes start with the prefix; empty prefix removes all paths. Valkey: PHDELPREFIX.</summary>
+    /// <summary>Deletes paths whose bytes start with the prefix; empty prefix removes all paths. Valkey: PHPATHDEL WITHSUBPATHS.</summary>
     ValueTask<long> RemovePrefixAsync(RespireKey key, RespireKey prefix, CancellationToken cancellationToken = default);
 
-    /// <summary>Gets the longest stored byte prefix and its owned payload, or null. Valkey: PHLONGEST.</summary>
+    /// <summary>Gets the longest stored byte prefix and its owned payload, or null. Valkey: PHPREFIXES COUNT 1.</summary>
     ValueTask<RespirePathHashEntry?> LongestPrefixAsync(RespireKey key, RespireKey query, CancellationToken cancellationToken = default);
 
     /// <summary>Gets ancestor byte prefixes from shortest to longest; count retains deepest matches after the byte-length limit. Valkey: PHPREFIXES.</summary>
@@ -253,8 +253,8 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
             }
 
             RespireValue[] args = [path.AsValue()];
-            return owner.Attach(client.ConvertResponseAsync("PHEXISTS",
-                new Cmd1N(RespireCommands.PathHash.PHEXISTS.Verb, client.Key(in key), args), cancellationToken,
+            return owner.Attach(client.ConvertResponseAsync("PHPATHEXISTS",
+                new Cmd1N(RespireCommands.PathHash.PHPATHEXISTS.Verb, client.Key(in key), args), cancellationToken,
                 client, static (RespireClient client, in RespValue reply) => ResponseReader.Flag(in reply), observation: owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -272,8 +272,8 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
             }
 
             var args = Array.Empty<RespireValue>();
-            return owner.Attach(client.ConvertResponseAsync("PHCARD",
-                new Cmd1N(RespireCommands.PathHash.PHCARD.Verb, client.Key(in key), args), cancellationToken,
+            return owner.Attach(client.ConvertResponseAsync("PHPATHCOUNT",
+                new Cmd1N(RespireCommands.PathHash.PHPATHCOUNT.Verb, client.Key(in key), args), cancellationToken,
                 client, static (RespireClient client, in RespValue reply) => ResponseReader.Integer(in reply), observation: owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -309,9 +309,9 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
                 return owner.Attach(ValueTask.FromCanceled<long>(cancellationToken));
             }
 
-            RespireValue[] args = [prefix.AsValue()];
-            return owner.Attach(client.ConvertResponseAsync("PHDELPREFIX",
-                new Cmd1N(RespireCommands.PathHash.PHDELPREFIX.Verb, client.Key(in key), args), cancellationToken,
+            RespireValue[] args = [prefix.AsValue(), "WITHSUBPATHS"];
+            return owner.Attach(client.ConvertResponseAsync("PHPATHDEL",
+                new Cmd1N(RespireCommands.PathHash.PHPATHDEL.Verb, client.Key(in key), args), cancellationToken,
                 client, static (RespireClient client, in RespValue reply) => ResponseReader.Integer(in reply), observation: owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -328,9 +328,9 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
                 return owner.Attach(ValueTask.FromCanceled<RespirePathHashEntry?>(cancellationToken));
             }
 
-            RespireValue[] args = [query.AsValue(), "WITHVALUES"];
-            return owner.Attach(client.ConvertResponseAsync("PHLONGEST",
-                new Cmd1N(RespireCommands.PathHash.PHLONGEST.Verb, client.Key(in key), args), cancellationToken,
+            RespireValue[] args = [query.AsValue(), "COUNT", 1, "WITHVALUES"];
+            return owner.Attach(client.ConvertResponseAsync("PHPREFIXES",
+                new Cmd1N(RespireCommands.PathHash.PHPREFIXES.Verb, client.Key(in key), args), cancellationToken,
                 client, static (RespireClient client, in RespValue reply) => PathHashCodec.Match(in reply), observation: owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -350,7 +350,7 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
             var args = PathHashCodec.Prefixes(query, count, maxPathLength);
             return owner.Attach(client.ConvertResponseAsync("PHPREFIXES",
                 new Cmd1N(RespireCommands.PathHash.PHPREFIXES.Verb, client.Key(in key), args), cancellationToken,
-                client, static (RespireClient client, in RespValue reply) => PathHashCodec.Entries(in reply), observation: owner.Observation));
+                client, static (RespireClient client, in RespValue reply) => PathHashCodec.PrefixEntries(in reply), observation: owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }

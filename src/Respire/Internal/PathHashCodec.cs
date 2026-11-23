@@ -197,15 +197,28 @@ internal static class PathHashCodec
 
     internal static RespirePathHashEntry? Match(in RespValue value)
     {
-        if (value.IsNull)
+        if (value.Type != RespireDataType.Array || value.IsNull)
         {
-            return null;
+            throw Malformed();
         }
 
-        return Entry(in value);
+        var matches = value.AsArray();
+        return matches.Length switch
+        {
+            0 => null,
+            1 => Entry(in matches[0]),
+            _ => throw Malformed()
+        };
     }
 
-    internal static RespirePathHashEntry[] Entries(in RespValue value)
+    internal static RespirePathHashEntry[] PrefixEntries(in RespValue value)
+    {
+        var entries = Entries(in value);
+        Array.Reverse(entries);
+        return entries;
+    }
+
+    private static RespirePathHashEntry[] Entries(in RespValue value)
     {
         if (value.Type != RespireDataType.Array || value.IsNull)
         {

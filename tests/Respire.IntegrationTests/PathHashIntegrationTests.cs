@@ -8,19 +8,20 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<VersionedServerFixture>(Shared = SharedType.PerTestSession)]
 public class PathHashIntegrationTests(VersionedServerFixture servers)
 {
+    private const string ReleasedImage = "valkey/valkey:9.2.0-alpine";
+
     [Test]
     [Arguments(2)]
     [Arguments(3)]
-    public async Task ExactOperationsAndPrefixTraversal(int protocol)
+    public async Task ExactOperationsAndAncestorLookup(int protocol)
     {
-        var lease = await servers.LeaseAsync(Valkey92IntegrationTests.Image);
+        var lease = await servers.LeaseAsync(ReleasedImage);
         await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
         var paths = client.WithKeyPrefix("tenant:").PathHashes;
         (await paths.CountAsync("tree")).Should().Be(0);
         (await paths.GetAllAsync("tree", "missing")).Should().BeEmpty();
         (await paths.LongestPrefixAsync("tree", "missing")).Should().BeNull();
         (await paths.PrefixesAsync("tree", "missing")).Should().BeEmpty();
-        (await paths.ScanPageAsync("tree")).IsComplete.Should().BeTrue();
         (await paths.SetAsync("tree", "", "root", "root-value")).Should().BeTrue();
         (await paths.SetFieldsAsync("tree", "a", [("f", "one"), ("g", "two")])).Should().BeTrue();
         (await paths.SetFieldsAsync("tree", "a", [("f", "ignored"), ("new", "ignored")], RespireSetWhen.NotExists)).Should().BeFalse();
@@ -31,6 +32,7 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
         (await paths.CountAsync("tree")).Should().Be(5);
         (await paths.ExistsAsync("tree", "ab")).Should().BeTrue();
         (await paths.ExistsAsync("tree", "abcd")).Should().BeFalse();
+        (await paths.ExistsAsync("tree", "missing")).Should().BeFalse();
         var values = await paths.GetFieldsAsync("tree", "a", ["g", "missing", "f"]);
         values.Select(value => value is null ? null : Encoding.UTF8.GetString(value)).Should().Equal("two", null, "one");
         var many = await paths.GetManyAsync("tree", [new("a", ["f"]), new("ab", ["f", "missing"])]);
@@ -42,19 +44,16 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
         Encoding.UTF8.GetString(match.Fields.Single().Value).Should().Be("deepest");
         var ancestors = await paths.PrefixesAsync("tree", "abcd", count: 2, maxPathLength: 2);
         ancestors.Select(entry => Encoding.UTF8.GetString(entry.Path)).Should().Equal("a", "ab");
-        var descendants = new List<string>();
-
-        await foreach (var entry in paths.ScanAsync("tree", prefix: "a", count: 1))
-        {
-            descendants.Add(Encoding.UTF8.GetString(entry.Path));
-        }
-
-        descendants.Should().Equal("a", "ab", "abc");
+        var deepest = await paths.PrefixesAsync("tree", "abcd", count: 2);
+        deepest.Select(entry => Encoding.UTF8.GetString(entry.Path)).Should().Equal("ab", "abc");
         (await paths.RemoveAsync("tree", "a", ["g"])).Should().Be(1);
         (await paths.RemoveAsync("tree", "z")).Should().Be(1);
         (await paths.RemovePrefixAsync("tree", "ab")).Should().Be(2);
+        (await paths.ExistsAsync("tree", "a")).Should().BeTrue();
+        (await paths.ExistsAsync("tree", "ab")).Should().BeFalse();
         (await paths.RemovePrefixAsync("tree", "")).Should().Be(2);
         (await paths.CountAsync("tree")).Should().Be(0);
+        (await paths.RemovePrefixAsync("tree", "")).Should().Be(0);
     }
 
     [Test]
@@ -64,7 +63,7 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
     [Arguments(3, true)]
     public async Task DeferredTypedAndBinaryValues(int protocol, bool transaction)
     {
-        var lease = await servers.LeaseAsync(Valkey92IntegrationTests.Image);
+        var lease = await servers.LeaseAsync(ReleasedImage);
         await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
         var view = client.WithKeyPrefix("tenant:");
         using var batch = transaction ? null : view.CreateBatch();
@@ -73,11 +72,19 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
         byte[] path = [0, 255, (byte)'a'];
         byte[] field = [0, 254];
         byte[] value = [255, 0, 128];
+        byte[] ancestor = [0];
         var set = queue.PathHashes.Set("binary", path, field, value);
+        queue.PathHashes.Set("binary", ancestor, field, "ancestor");
         var get = queue.PathHashes.GetBytes("binary", path, field);
         var all = queue.PathHashes.GetAll("binary", path);
         var longest = queue.PathHashes.LongestPrefix("binary", new byte[] { 0, 255, (byte)'a', 1 });
-        var page = queue.PathHashes.ScanPage("binary", prefix: new byte[] { 0, 255 }, count: 1);
+        var noMatch = queue.PathHashes.LongestPrefix("binary", new byte[] { 1, 254 });
+        var prefixes = queue.PathHashes.Prefixes("binary", new byte[] { 0, 255, (byte)'a', 1 });
+        var count = queue.PathHashes.Count("binary");
+        var exists = queue.PathHashes.Exists("binary", path);
+        var missingPath = queue.PathHashes.Exists("binary", new byte[] { 0, 255 });
+        var removed = queue.PathHashes.RemovePrefix("binary", new byte[] { 0, 255 });
+        var remaining = queue.PathHashes.Count("binary");
         var number = queue.PathHashes.Set<int>("typed", "p", "f", 0);
         var typed = queue.PathHashes.Get<int>("typed", "p", "f");
         var found = queue.PathHashes.TryGet<int>("typed", "p", "f");
@@ -97,8 +104,14 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
         all.Result.Single().Field.Should().Equal(field);
         all.Result.Single().Value.Should().Equal(value);
         longest.Result!.Path.Should().Equal(path);
-        page.Result.Entries.Single().Path.Should().Equal(path);
-        page.Result.IsComplete.Should().BeTrue();
+        noMatch.Result.Should().BeNull();
+        prefixes.Result.Select(entry => entry.Path).Should().BeEquivalentTo(new[] { ancestor, path },
+            options => options.WithStrictOrdering());
+        count.Result.Should().Be(2);
+        exists.Result.Should().BeTrue();
+        missingPath.Result.Should().BeFalse();
+        removed.Result.Should().Be(1);
+        remaining.Result.Should().Be(1);
         number.Result.Should().BeTrue();
         typed.Result.Should().Be(0);
         found.Result.Found.Should().BeTrue();
@@ -106,6 +119,53 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
         await view.PathHashes.SetAsync<int>("typed", "p", "f", 42);
         (await view.PathHashes.GetAsync<int>("typed", "p", "f")).Should().Be(42);
         (await view.PathHashes.TryGetAsync<int>("typed", "p", "f")).Found.Should().BeTrue();
+    }
+
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task ReleaseCandidateTraversal(int protocol, bool transaction)
+    {
+        var lease = await servers.LeaseAsync(Valkey92IntegrationTests.Image);
+        await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
+        var paths = client.PathHashes;
+        var missing = await paths.ScanPageAsync("tree");
+        missing.IsComplete.Should().BeTrue();
+
+        byte[] prefix = [0, 255];
+        byte[] path = [0, 255, (byte)'a'];
+        await paths.SetAsync("tree", path, "f", "first");
+        await paths.SetAsync("tree", new byte[] { 0, 255, (byte)'b' }, "f", "second");
+        await paths.SetAsync("tree", "outside", "f", "other");
+
+        var descendants = new List<byte[]>();
+
+        await foreach (var entry in paths.ScanAsync("tree", prefix: prefix, count: 1))
+        {
+            descendants.Add(entry.Path);
+        }
+
+        descendants.Should().BeEquivalentTo(new byte[][] { path, [0, 255, (byte)'b'] },
+            options => options.WithStrictOrdering());
+
+        using var batch = transaction ? null : client.CreateBatch();
+        await using var tx = transaction ? client.CreateTransaction() : null;
+        IRespireCommandQueue queue = tx ?? (IRespireCommandQueue)batch!;
+        var page = queue.PathHashes.ScanPage("tree", prefix: prefix, count: 10);
+
+        if (tx is not null)
+        {
+            await tx.CommitAsync();
+        }
+        else
+        {
+            await batch!.ExecuteAsync();
+        }
+
+        page.Result.Entries.First().Path.Should().Equal(path);
+        page.Result.IsComplete.Should().BeTrue();
     }
 
     [Test]

@@ -47,7 +47,7 @@ public class PathHashCommandTests
             "*1\r\n$1\r\nv\r\n"u8.ToArray(), "*1\r\n$-1\r\n"u8.ToArray(),
             "*2\r\n$1\r\nv\r\n$-1\r\n"u8.ToArray(), "*2\r\n$1\r\nv\r\n$-1\r\n"u8.ToArray(),
             Encoding.ASCII.GetBytes(payload), ":1\r\n"u8.ToArray(), ":2\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray(), ":2\r\n"u8.ToArray(), Encoding.ASCII.GetBytes(entry),
+            ":1\r\n"u8.ToArray(), ":2\r\n"u8.ToArray(), Encoding.ASCII.GetBytes("*1\r\n" + entry),
             Encoding.ASCII.GetBytes("*1\r\n" + entry), Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + entry));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var paths = client.WithKeyPrefix("tenant:").PathHashes;
@@ -81,8 +81,8 @@ public class PathHashCommandTests
             "PHMSET tenant:tree /a FIELDS 1 f v /b FIELDS 1 g w", "PHGET tenant:tree /a f",
             "PHGET tenant:tree /a missing", "PHGET tenant:tree /a f missing",
             "PHMGET tenant:tree /a FIELDS 1 f /b FIELDS 1 missing", "PHGETALL tenant:tree /a",
-            "PHEXISTS tenant:tree /a", "PHCARD tenant:tree", "PHDEL tenant:tree /a f",
-            "PHDELPREFIX tenant:tree /", "PHLONGEST tenant:tree /abc WITHVALUES",
+            "PHPATHEXISTS tenant:tree /a", "PHPATHCOUNT tenant:tree", "PHDEL tenant:tree /a f",
+            "PHPATHDEL tenant:tree / WITHSUBPATHS", "PHPREFIXES tenant:tree /abc COUNT 1 WITHVALUES",
             "PHPREFIXES tenant:tree /abc WITHVALUES COUNT 2 MAXPATHLEN 3",
             "PHSCAN tenant:tree 0 PREFIX /a COUNT 2 WITHVALUES"]);
     }
@@ -205,7 +205,7 @@ public class PathHashCommandTests
     {
         var entry = "*2\r\n" + Path + Map;
         byte[][] results = [FakeRespServer.OkReply, "*1\r\n$1\r\nv\r\n"u8.ToArray(),
-            Encoding.ASCII.GetBytes(entry), Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + entry), ":1\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes("*1\r\n" + entry), Encoding.ASCII.GetBytes("*2\r\n$1\r\n0\r\n*1\r\n" + entry), ":1\r\n"u8.ToArray(),
             "*1\r\n$1\r\nv\r\n"u8.ToArray(), ":1\r\n"u8.ToArray()];
         var replies = transaction
             ? new[] { FakeRespServer.OkReply }.Concat(Enumerable.Repeat("+QUEUED\r\n"u8.ToArray(), results.Length))
@@ -256,7 +256,7 @@ public class PathHashCommandTests
         await Assert.That(scan[2].AsSpan().SequenceEqual(new byte[] { 0xff, 0, 0x80 })).IsTrue();
         await Assert.That(server.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC")).IsEquivalentTo([
             "PHSET tenant:tree /a FXX FIELDS 1 f v", "PHGET tenant:tree /a f",
-            "PHLONGEST tenant:tree /abc WITHVALUES", $"PHSCAN tenant:tree {Encoding.UTF8.GetString(new byte[] { 0xff, 0, 0x80 })} PREFIX /a COUNT 1 WITHVALUES", "PHDEL tenant:tree /a",
+            "PHPREFIXES tenant:tree /abc COUNT 1 WITHVALUES", $"PHSCAN tenant:tree {Encoding.UTF8.GetString(new byte[] { 0xff, 0, 0x80 })} PREFIX /a COUNT 1 WITHVALUES", "PHDEL tenant:tree /a",
             "PHGET tenant:tree /a f", "PHDEL tenant:tree /a f"]);
     }
 

@@ -1035,6 +1035,15 @@ public static class RespireCommands
         /// <summary><c>PHMSET</c>.</summary>
         public static readonly RespireCommand PHMSET = new("PHMSET", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteLastWins);
 
+        /// <summary><c>PHPATHCOUNT</c>.</summary>
+        public static readonly RespireCommand PHPATHCOUNT = new("PHPATHCOUNT", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
+
+        /// <summary><c>PHPATHDEL</c>.</summary>
+        public static readonly RespireCommand PHPATHDEL = new("PHPATHDEL", RespireCommandSource.Valkey, RespireCacheMutation.Mutation, retryCategory: RespireCommandRetryCategory.WriteAccumulating);
+
+        /// <summary><c>PHPATHEXISTS</c>.</summary>
+        public static readonly RespireCommand PHPATHEXISTS = new("PHPATHEXISTS", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
+
         /// <summary><c>PHPREFIXES</c>.</summary>
         public static readonly RespireCommand PHPREFIXES = new("PHPREFIXES", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
@@ -2647,6 +2656,9 @@ public static class RespireCommands
         PathHash.PHLONGEST,
         PathHash.PHMGET,
         PathHash.PHMSET,
+        PathHash.PHPATHCOUNT,
+        PathHash.PHPATHDEL,
+        PathHash.PHPATHEXISTS,
         PathHash.PHPREFIXES,
         PathHash.PHSCAN,
         PathHash.PHSET,
@@ -3453,6 +3465,9 @@ internal static class CommandCacheMutationMetadata
         mutations["PHLONGEST"] = RespireCacheMutation.ReadOnly;
         mutations["PHMGET"] = RespireCacheMutation.ReadOnly;
         mutations["PHMSET"] = RespireCacheMutation.Mutation;
+        mutations["PHPATHCOUNT"] = RespireCacheMutation.ReadOnly;
+        mutations["PHPATHDEL"] = RespireCacheMutation.Mutation;
+        mutations["PHPATHEXISTS"] = RespireCacheMutation.ReadOnly;
         mutations["PHPREFIXES"] = RespireCacheMutation.ReadOnly;
         mutations["PHSCAN"] = RespireCacheMutation.ReadOnly;
         mutations["PHSET"] = RespireCacheMutation.Mutation;
@@ -3943,6 +3958,8 @@ internal static class CommandReadMetadata
             ["PHGETALL"] = (ReadCommandKind.Read, -1),
             ["PHLONGEST"] = (ReadCommandKind.Read, -1),
             ["PHMGET"] = (ReadCommandKind.Read, -1),
+            ["PHPATHCOUNT"] = (ReadCommandKind.Read, -1),
+            ["PHPATHEXISTS"] = (ReadCommandKind.Read, -1),
             ["PHPREFIXES"] = (ReadCommandKind.Read, -1),
             ["PHSCAN"] = (ReadCommandKind.CursorRead, 1),
             ["PTTL"] = (ReadCommandKind.Read, -1),
@@ -4422,6 +4439,9 @@ internal static class CommandRetryCategoryMetadata
             ["PHLONGEST"] = RespireCommandRetryCategory.ReadOnly,
             ["PHMGET"] = RespireCommandRetryCategory.ReadOnly,
             ["PHMSET"] = RespireCommandRetryCategory.WriteLastWins,
+            ["PHPATHCOUNT"] = RespireCommandRetryCategory.ReadOnly,
+            ["PHPATHDEL"] = RespireCommandRetryCategory.WriteAccumulating,
+            ["PHPATHEXISTS"] = RespireCommandRetryCategory.ReadOnly,
             ["PHPREFIXES"] = RespireCommandRetryCategory.ReadOnly,
             ["PHSCAN"] = RespireCommandRetryCategory.ReadOnly,
             ["PHSET"] = RespireCommandRetryCategory.WriteAccumulating,
