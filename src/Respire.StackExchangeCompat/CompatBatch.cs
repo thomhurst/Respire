@@ -7,6 +7,7 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
 {
     private readonly Lock _gate = new();
     private readonly List<IQueuedCommand> _pending = [];
+    private Task _previousExecution = Task.CompletedTask;
 
     protected override Task<T> Send<T>(RespireCommand command, RedisValue[] arguments, CommandFlags flags, Func<RedisResult, T> convert)
     {
@@ -52,18 +53,42 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
             var commands = _pending.ToArray();
             _pending.Clear();
 
+            var previous = _previousExecution;
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Publish the order before native execution can call back into this batch.
+            _previousExecution = completion.Task;
+
             try
             {
-                _ = DatabaseOwner.Owner.Run(token => ExecuteAsync(commands, token));
+                _ = DatabaseOwner.Owner.Run(token => ExecuteAsync(commands, previous, completion, token));
             }
-            catch (Exception error) { foreach (var command in commands) { command.Fail(error); } }
+            catch (Exception error)
+            {
+                foreach (var command in commands)
+                {
+                    command.Fail(error);
+                }
+
+                completion.TrySetResult();
+            }
         }
     }
 
-    private async Task<bool> ExecuteAsync(IQueuedCommand[] commands, CancellationToken cancellationToken)
+    private async Task<bool> ExecuteAsync(IQueuedCommand[] commands, Task previous, TaskCompletionSource completion,
+        CancellationToken cancellationToken)
     {
         try
         {
+            // Graceful close drains scheduled flushes, even when they are still waiting for an earlier reply.
+            foreach (var command in commands)
+            {
+                command.Admit();
+            }
+
+            // Distinct native batches can use different sockets. Wait for the previous flush to settle.
+            await previous.WaitAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+
             using var batch = DatabaseOwner.CreateNativeBatch();
 
             foreach (var command in commands)
@@ -82,7 +107,17 @@ internal sealed class CompatBatch(CompatDatabase database) : CompatDatabaseAsync
                 command.Complete();
             }
         }
-        catch (Exception error) { foreach (var command in commands) { command.Fail(error); } }
+        catch (Exception error)
+        {
+            foreach (var command in commands)
+            {
+                command.Fail(error);
+            }
+        }
+        finally
+        {
+            completion.TrySetResult();
+        }
 
         return true;
     }

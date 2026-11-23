@@ -104,7 +104,18 @@ internal sealed class CompatSortedSetScan(
             {
                 parent._active = this;
                 var cursor = _nextCursor;
-                var page = await parent._readPage(cursor).WaitAsync(cancellationToken).ConfigureAwait(false);
+                var pending = parent._readPage(cursor);
+                Page page;
+
+                try
+                {
+                    page = await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    _ = ObserveAsync(pending);
+                    throw;
+                }
 
                 if (_disposed)
                 {
