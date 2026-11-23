@@ -12,8 +12,9 @@ long slowLogLength = await redis.Server.SlowLogLengthAsync();
 
 - Event and command names are sent literally; `WithKeyPrefix` never changes them.
 - These methods are immediate, with no batch or transaction versions.
-- For the latest latency events, memory statistics, and slow-log entries, use `LatestLatencyAsync`, `MemoryStatsAsync`, and `SlowLogAsync`.
-- `SlowLogLengthAsync` counts retained entries, not every command that ever exceeded the threshold.
+- For the latest latency events and memory statistics, use `LatestLatencyAsync` and `MemoryStatsAsync`.
+- `SlowLogAsync()` returns up to ten recent entries. Pass `count: -1` to read all retained entries, or a nonnegative count to limit the result. `SlowLogLengthAsync` counts retained entries.
+- Redis 8.10 and later report `OriginalArgumentCount`, which includes the command name and counts arguments before the server truncates the logged `Command` array. The value is `null` when the server omits it.
 - Doctor methods return the server's human-readable text, including RESP3 verbatim strings. The wording varies by version and configuration; do not parse it. Use the typed measurements for monitoring.
 
 ## Histories and histograms
