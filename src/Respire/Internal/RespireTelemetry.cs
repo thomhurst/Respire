@@ -1062,7 +1062,7 @@ internal static partial class RespireTelemetry
                     }
                 }
 
-                activity.Stop();
+                StopOperationActivity(activity);
                 activityDurationSeconds = activity.Duration.TotalSeconds;
             }
 
@@ -1091,6 +1091,38 @@ internal static partial class RespireTelemetry
                 ? error.InnerException
                 : error;
             return relevantError.GetType().FullName ?? relevantError.GetType().Name;
+        }
+    }
+
+    private static void StopOperationActivity(Activity activity)
+    {
+        try
+        {
+            activity.Stop();
+        }
+        catch
+        {
+            // Stop notifies listeners before restoring the ambient activity.
+            // Command activities start with an implicit parent.
+            if (!ReferenceEquals(Activity.Current, activity))
+            {
+                return;
+            }
+
+            try
+            {
+                Activity.Current = activity.Parent;
+
+                // The setter rejects a parent that has already stopped.
+                if (ReferenceEquals(Activity.Current, activity))
+                {
+                    Activity.Current = null;
+                }
+            }
+            catch
+            {
+                // Activity.CurrentChanged also invokes application callbacks.
+            }
         }
     }
 

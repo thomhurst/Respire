@@ -623,6 +623,9 @@ public partial class StandaloneCircuitDispatchTests
         EndpointCircuitState? callbackState = null;
         int? callbackProbes = null;
         var callbacks = 0;
+        var durationMeasurements = 0;
+        Activity? durationActivity = null;
+        using var parent = new Activity("recovery-probe").Start();
         using var tracing = new ActivityListener
         {
             ShouldListenTo = source => source.Name == RespireTelemetry.SourceName,
@@ -646,6 +649,9 @@ public partial class StandaloneCircuitDispatchTests
         };
         listener.SetMeasurementEventCallback<double>((_, _, _, _) =>
         {
+            durationMeasurements++;
+            durationActivity = Activity.Current;
+
             if (callback == "duration")
             {
                 ThrowFromListener();
@@ -653,17 +659,11 @@ public partial class StandaloneCircuitDispatchTests
         });
         listener.Start();
 
-        if (callback == "duration")
-        {
-            await Assert.That(await client.GetStringAsync("recovery")).IsEqualTo("recovery");
-        }
-        else
-        {
-            Exception error = await Failure(() => Send(client, "string", "recovery"));
-            await Assert.That(error).IsSameReferenceAs(listenerError);
-        }
+        await Assert.That(await client.GetStringAsync("recovery")).IsEqualTo("recovery");
 
         await Assert.That(callbacks).IsEqualTo(1);
+        await Assert.That(durationMeasurements).IsEqualTo(1);
+        await Assert.That(durationActivity).IsSameReferenceAs(parent);
         await Assert.That(callbackState).IsEqualTo(EndpointCircuitState.Closed);
         await Assert.That(callbackProbes).IsEqualTo(0);
         await Assert.That(circuit.Snapshot().State).IsEqualTo(EndpointCircuitState.Closed);
@@ -1197,13 +1197,17 @@ public partial class StandaloneCircuitDispatchTests
         {
             await Trip(client, server);
             clock.Advance(TimeSpan.FromMinutes(1));
-            server.SuppressReply = command => command == "GET stream";
+            var key = $"stream-{i}";
+            var streamCommand = $"GET {key}";
+            var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            server.GateCommand(streamCommand, Task.CompletedTask, id => received.TrySetResult(id));
+            server.SuppressReply = command => command == streamCommand;
             using var cancellation = new CancellationTokenSource();
-            var pending = client.Strings.GetStreamAsync("stream", cancellation.Token).AsTask();
-            await Received(server, "GET stream", i + 1);
-            await server.SendRawAsync("$2\r\nx"u8.ToArray());
+            var pending = client.Strings.GetStreamAsync(key, cancellation.Token).AsTask();
+            int connectionId = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await server.SendRawAsync("$2\r\nx"u8.ToArray(), connectionId);
             await using var stream = await pending;
-            await Task.WhenAll(server.SendRawAsync("y\r\n"u8.ToArray()), Task.Run(async () =>
+            await Task.WhenAll(server.SendRawAsync("y\r\n"u8.ToArray(), connectionId), Task.Run(async () =>
             {
                 cancellation.Cancel();
                 await stream!.DisposeAsync();
