@@ -392,7 +392,7 @@ internal static class RawCommandKeyLayouts
         return layout.Count > 0 ? new(true, layout.Start) : KeyRouting.NoKeys;
     }
 
-    private static void ValidateKey(RespireValue key, string operation, ref int? slot, bool includeKeyContext)
+    internal static void ValidateKey(RespireValue key, string operation, ref int? slot, bool includeKeyContext)
     {
         RespireValue.ThrowIfNull(key, "args");
         key.TryGetClusterSlot(out var current);

@@ -116,17 +116,19 @@ internal sealed partial class BatchSetCommands(IPendingSink sink) : IRespireBatc
     }
 
     public RespirePending<bool> Move(RespireKey source, RespireKey destination, RespireValue member)
-        => sink.Add<Cmd3, bool>("SMOVE",
-            new Cmd3(Verbs.SMove, sink.Client.Key(in source), sink.Client.Key(in destination), member),
+    {
+        return sink.Add<Cmd3, bool>("SMOVE", SetCommands.MoveCommand(sink.Client, source, destination, member),
             source, destination, static (c, v) => ResponseReader.Flag(in v));
+    }
 
     public RespirePending<long> IntersectCount(params ReadOnlySpan<RespireKey> keys)
         => IntersectCount(0, keys);
 
     public RespirePending<long> IntersectCount(long limit, params ReadOnlySpan<RespireKey> keys)
-        => sink.Add<CmdN, long>("SINTERCARD",
-            new CmdN(Verbs.SInterCard, CountedKeyArguments.Create(sink.Client, keys, limit)),
+    {
+        return sink.Add<CmdN, long>("SINTERCARD", SetCommands.IntersectCountCommand(sink.Client, keys, limit),
             keys, static (c, v) => ResponseReader.Integer(in v));
+    }
 
     public RespirePending<long> Count(RespireKey key)
         => sink.Add<Cmd1, long>(
@@ -184,7 +186,7 @@ internal sealed partial class BatchSetCommands(IPendingSink sink) : IRespireBatc
     private RespirePending<string[]> StringArrayKeys(string operation, Verb verb, ReadOnlySpan<RespireKey> keys)
     {
         return sink.Add<CmdN, string[]>(
-            operation, new CmdN(verb, sink.Client.MapKeys(keys)),
+            operation, SingleSlotCommand.Create(sink.Client, operation, verb, keys),
             keys,
             static (c, v) => ResponseReader.StringArray(in v));
     }
@@ -193,7 +195,7 @@ internal sealed partial class BatchSetCommands(IPendingSink sink) : IRespireBatc
         string operation, Verb verb, RespireKey destination, ReadOnlySpan<RespireKey> keys)
     {
         return sink.Add<Cmd1N, long>(
-            operation, new Cmd1N(verb, sink.Client.Key(in destination), sink.Client.MapKeys(keys)),
+            operation, SingleSlotCommand.Create(sink.Client, operation, verb, destination, keys),
             destination, keys,
             static (c, v) => ResponseReader.Integer(in v));
     }
