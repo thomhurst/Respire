@@ -466,6 +466,107 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return context.SemanticModel.GetSymbolInfo(expression, context.CancellationToken).Symbol as ILocalSymbol;
     }
 
+    private static bool IsBatchLocal(ILocalSymbol local)
+    {
+        return local.Type.WithNullableAnnotation(NullableAnnotation.None).ToDisplayString() == BatchTypeName;
+    }
+
+    private static ILocalSymbol? GetCopySource(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, ILocalSymbol copy, ExpressionSyntax initializer)
+    {
+        if (copy.RefKind == RefKind.None
+            && !IsDeclaredOutside(scope, copy)
+            && !ScopeWalker.IsNestedInLambda(initializer, scope)
+            && ScopeWalker.Unwrap(initializer) is IdentifierNameSyntax identifier
+            && context.SemanticModel.GetSymbolInfo(identifier, context.CancellationToken).Symbol
+                is ILocalSymbol { RefKind: RefKind.None } source
+            && !IsDeclaredOutside(scope, source)
+            && SymbolEqualityComparer.Default.Equals(source.Type, copy.Type))
+        {
+            return source;
+        }
+
+        return null;
+    }
+
+    private static (ILocalSymbol Local, SyntaxNode Use) ResolveBatchValue(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, ILocalSymbol local, SyntaxNode use)
+    {
+        // A copy keeps the value the source held at its initializer, even if the source is
+        // reassigned later. Walk back only while the copy itself still holds that value.
+        while (local.DeclaringSyntaxReferences.Length == 1
+               && local.DeclaringSyntaxReferences[0].GetSyntax(context.CancellationToken)
+                   is VariableDeclaratorSyntax { Initializer.Value: { } initializer }
+               && initializer.SpanStart < use.SpanStart
+               && GetCopySource(context, scope, local, initializer) is { } source
+               && !IsReassignedBetween(context, scope, local, initializer, use))
+        {
+            local = source;
+            use = initializer;
+        }
+
+        return (local, use);
+    }
+
+    private static IEnumerable<(ILocalSymbol Local, IdentifierNameSyntax Reference)> FindBatchReferences(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, ILocalSymbol local, SyntaxNode use, SyntaxNode? before)
+    {
+        foreach (var reference in ScopeWalker.FindReferences(
+                     scope, local, context.SemanticModel, context.CancellationToken))
+        {
+            if (before is not null && reference.SpanStart > before.SpanStart)
+            {
+                continue;
+            }
+
+            var expression = ScopeWalker.GetOutermostTransparentExpression(reference);
+            ILocalSymbol? copy = null;
+
+            if (expression.Parent is EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator }
+                && context.SemanticModel.GetDeclaredSymbol(declarator, context.CancellationToken) is ILocalSymbol target
+                && SymbolEqualityComparer.Default.Equals(GetCopySource(context, scope, target, expression), local))
+            {
+                copy = target;
+            }
+
+            // A copy can precede the queue call. Check for writes in either direction
+            // when linking a reference to the value captured by a copy.
+            if (!ScopeWalker.IsSame(use, expression)
+                && (IsReassignedBetween(context, scope, local, use, expression)
+                    || ((use is not InvocationExpressionSyntax || copy is not null)
+                        && IsReassignedBetween(context, scope, local, expression, use))))
+            {
+                continue;
+            }
+
+            if (copy is null)
+            {
+                yield return (local, reference);
+                continue;
+            }
+
+            foreach (var aliasReference in FindBatchReferences(context, scope, copy, expression, before))
+            {
+                yield return aliasReference;
+            }
+        }
+    }
+
+    private static IEnumerable<(ILocalSymbol Local, IdentifierNameSyntax Reference)> FindReferencesForValue(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, ILocalSymbol local, SyntaxNode? origin, SyntaxNode? before)
+    {
+        if (origin is InvocationExpressionSyntax && IsBatchLocal(local))
+        {
+            var value = ResolveBatchValue(context, scope, local, origin);
+            return FindBatchReferences(context, scope, value.Local, value.Use, before);
+        }
+
+        return ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken)
+            .Where(reference => before is null || reference.SpanStart <= before.SpanStart)
+            .Where(reference => origin is null || !IsReassignedBetween(context, scope, local, origin, reference))
+            .Select(reference => (local, reference));
+    }
+
     /// <summary>
     /// True when the local is used in any way other than reading a member off it (or awaiting it) —
     /// passed on, returned, assigned or captured — which puts the flush out of this rule's reach.
@@ -504,24 +605,14 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
         aliases = (aliases ?? ImmutableHashSet.Create<ISymbol>(SymbolEqualityComparer.Default)).Add(local);
 
-        foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
+        foreach (var (receiver, reference) in FindReferencesForValue(context, scope, local, origin, before))
         {
-            if (before is not null && reference.SpanStart > before.SpanStart)
-            {
-                continue;
-            }
-
             if (ScopeWalker.IsInsideNameOf(context.SemanticModel, reference, context.CancellationToken))
             {
                 continue;
             }
 
             if (ScopeWalker.IsDiscarded(reference))
-            {
-                continue;
-            }
-
-            if (origin is not null && IsReassignedBetween(context, scope, local, origin, reference))
             {
                 continue;
             }
@@ -555,7 +646,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
             if (includeFlushes && origin is not null
                 && reference.FirstAncestorOrSelf<InvocationExpressionSyntax>() is { } flush
-                && IsFlushInvocation(context, flush, local))
+                && IsFlushInvocation(context, flush, receiver))
             {
                 foreach (var completion in GetCompletionExpressions(context, scope, flush, local, origin))
                 {
@@ -695,8 +786,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         // A successful operation can only complete commands queued before that flush.
         return execution?.Syntax is InvocationExpressionSyntax flush
             && origin.Span.End <= flush.SpanStart
-            && IsFlushInvocation(context, flush, batch)
-            && !IsReassignedBetween(context, scope, batch, origin, flush)
+            && IsMatchingFlushInvocation(context, scope, flush, batch, origin)
             && ScopeWalker.CanReach(context.SemanticModel, scope, origin, read, context.CancellationToken)
             && !ScopeWalker.CanReachWithoutCrossing(
                 context.SemanticModel, scope, origin, read, [flush], context.CancellationToken);
@@ -715,8 +805,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNode origin,
         SyntaxNode flush)
         => ScopeWalker.FindReferences(scope, batch, context.SemanticModel, context.CancellationToken)
-            .Any(reference => reference.Parent is AssignmentExpressionSyntax assignment
-                              && ScopeWalker.IsSame(assignment.Left, reference)
+            .Any(reference => GetLocalAssignment(reference) is { } assignment
                               && ScopeWalker.CanReach(
                                   context.SemanticModel,
                                   scope,
@@ -729,6 +818,21 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                                   assignment,
                                   flush,
                                   context.CancellationToken));
+
+    private static AssignmentExpressionSyntax? GetLocalAssignment(IdentifierNameSyntax reference)
+    {
+        SyntaxNode target = reference;
+
+        while (target.Parent is ParenthesizedExpressionSyntax
+               or ArgumentSyntax { Parent: TupleExpressionSyntax })
+        {
+            target = target.Parent is ArgumentSyntax argument ? argument.Parent! : target.Parent;
+        }
+
+        return target.Parent is AssignmentExpressionSyntax assignment && ScopeWalker.IsSame(assignment.Left, target)
+            ? assignment
+            : null;
+    }
 
     private static IEnumerable<SyntaxNode> GetCompletionExpressions(
         SyntaxNodeAnalysisContext context,
@@ -760,8 +864,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             };
 
             if (completion is not null && useSite is not null
-                && HasOnlyMatchingReachingDefinitions(context, scope, flush, batch, origin, useSite,
-                    requireFlushAfterOrigin: completion is ForEachStatementSyntax))
+                && HasOnlyMatchingReachingDefinitions(context, scope, flush, batch, origin, useSite))
             {
                 yield return completion;
             }
@@ -803,8 +906,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         ILocalSymbol flush,
         ILocalSymbol batch,
         SyntaxNode origin,
-        ExpressionSyntax completion,
-        bool requireFlushAfterOrigin)
+        ExpressionSyntax completion)
     {
         var definitions = FindStoredValueDefinitions(context, scope, flush).ToArray();
         var reachingDefinitions = definitions.Where(definition =>
@@ -819,8 +921,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return reachingDefinitions.Length > 0
                && reachingDefinitions.All(definition =>
                    IsMatchingFlushDefinition(context, scope, definition, batch, origin))
-               && (!requireFlushAfterOrigin || !ScopeWalker.CanReachWithoutCrossing(
-                   context.SemanticModel, scope, origin, completion, reachingDefinitions, context.CancellationToken))
+               && !ScopeWalker.CanReachWithoutCrossing(
+                   context.SemanticModel, scope, origin, completion, reachingDefinitions, context.CancellationToken)
                && !HasMutatingCallBefore(context, scope, flush, completion);
     }
 
@@ -886,15 +988,12 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
         foreach (var invocation in definition.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
         {
-            if (!ScopeWalker.IsSame(
-                    ScopeWalker.Unwrap(GetOutermostCompletionExpression(context, invocation)),
-                    unwrappedDefinition)
-                || !IsFlushInvocation(context, invocation, batch))
+            if (ScopeWalker.IsSame(
+                    ScopeWalker.Unwrap(GetOutermostCompletionExpression(context, invocation)), unwrappedDefinition)
+                && IsMatchingFlushInvocation(context, scope, invocation, batch, origin))
             {
-                continue;
+                return true;
             }
-
-            return !IsReassignedBetween(context, scope, batch, origin, invocation);
         }
 
         return false;
@@ -904,10 +1003,40 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         => name is SendAsync or ExecuteAsync or TryExecuteAsync
             or ExecuteAndWaitForReplicationAsync or ExecuteAndWaitForAofAsync;
 
+    private static bool IsMatchingFlushInvocation(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, InvocationExpressionSyntax flush,
+        ILocalSymbol batch, SyntaxNode origin)
+    {
+        if (!IsBatchLocal(batch) || origin is not InvocationExpressionSyntax)
+        {
+            return IsFlushInvocation(context, flush, batch)
+                   && !IsReassignedBetween(context, scope, batch, origin, flush);
+        }
+
+        if (ScopeWalker.GetReceiver(flush.Expression) is not { } expression
+            || context.SemanticModel.GetSymbolInfo(ScopeWalker.Unwrap(expression), context.CancellationToken).Symbol
+                is not ILocalSymbol receiver
+            || !IsFlushInvocation(context, flush, receiver))
+        {
+            return false;
+        }
+
+        if (SymbolEqualityComparer.Default.Equals(batch, receiver))
+        {
+            return !IsReassignedBetween(context, scope, batch, origin, flush);
+        }
+
+        var queued = ResolveBatchValue(context, scope, batch, origin);
+        var flushed = ResolveBatchValue(context, scope, receiver, flush);
+        return SymbolEqualityComparer.Default.Equals(queued.Local, flushed.Local)
+               && !IsReassignedBetween(context, scope, queued.Local, queued.Use, flushed.Use)
+               && !IsReassignedBetween(context, scope, queued.Local, flushed.Use, queued.Use);
+    }
+
     private static bool IsFlushInvocation(
         SyntaxNodeAnalysisContext context, InvocationExpressionSyntax invocation, ILocalSymbol batch)
     {
-        var isBatch = batch.Type.WithNullableAnnotation(NullableAnnotation.None).ToDisplayString() == BatchTypeName;
+        bool isBatch = IsBatchLocal(batch);
         return ScopeWalker.Unwrap(invocation.Expression) is MemberAccessExpressionSyntax member
                && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
                    is IMethodSymbol method

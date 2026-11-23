@@ -6,6 +6,70 @@ namespace Respire.Analyzers.Tests;
 public class PendingReadBeforeFlushAnalyzerTests
 {
     [Test]
+    [Arguments("alias", "await batch.ExecuteAsync();", false)]
+    [Arguments("batch", "await alias.ExecuteAsync();", false)]
+    [Arguments("alias", "await sibling.ExecuteAsync();", false)]
+    [Arguments("batch", "", true)]
+    [Arguments("alias", "", true)]
+    [Arguments("batch", "var lateCopy = batch;", true)]
+    [Arguments("batch", "var lateCopy = batch; await lateCopy.ExecuteAsync();", false)]
+    [Arguments("batch", "if (flush) await alias.ExecuteAsync();", true)]
+    [Arguments("batch", "if (flush) await alias.ExecuteAsync(); else await sibling.ExecuteAsync();", false)]
+    [Arguments("batch", "alias = client.CreateBatch(); await alias.ExecuteAsync();", true)]
+    [Arguments("batch", "(alias, _) = (client.CreateBatch(), 1); await alias.ExecuteAsync();", true)]
+    [Arguments("alias", "batch = client.CreateBatch(); await batch.ExecuteAsync();", true)]
+    [Arguments("batch", "batch = client.CreateBatch(); await alias.ExecuteAsync();", false)]
+    [Arguments("alias", "var execution = sibling.ExecuteAsync(); await execution;", false)]
+    [Arguments("batch", "await earlier;", true, "var earlier = alias.ExecuteAsync();")]
+    [Arguments("alias", "await FlushAsync(sibling);", false)]
+    public Task TracksLocalBatchCopies(string receiver, string flush, bool warning, string beforeQueue = "")
+    {
+        string read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        return Verify.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task<string> RunAsync(RespireClient client, bool flush)
+                {
+                    var batch = client.CreateBatch();
+                    var alias = (batch);
+                    var sibling = batch;
+                    {{beforeQueue}}
+                    var pending = {{receiver}}.GetStringAsync("key");
+                    {{flush}}
+                    return {{read}};
+                }
+
+                static async Task FlushAsync(RespireBatch batch) => await batch.ExecuteAsync();
+            }
+            """);
+    }
+
+    [Test]
+    [Arguments("", false)]
+    [Arguments("alias = client.CreateBatch();", true)]
+    public Task SuccessGuardTracksTheBatchCopy(string reassign, bool warning)
+    {
+        string read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        return Verify.VerifyAsync($$"""
+            using Respire;
+            class Caller
+            {
+                string Run(RespireClient client)
+                {
+                    var batch = client.CreateBatch();
+                    var alias = batch;
+                    var pending = batch.GetStringAsync("key");
+                    {{reassign}}
+                    var execution = alias.ExecuteAsync();
+                    return execution.IsCompletedSuccessfully ? {{read}} : "";
+                }
+            }
+            """);
+    }
+
+    [Test]
     [Arguments("execution.IsCompletedSuccessfully", false)]
     [Arguments("pending.HasResult", false)]
     [Arguments("other.HasResult", true)]
