@@ -104,6 +104,61 @@ public partial class RespireHybridCacheCoherenceTests
         }
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RemoteKeyWriteStartsANewFallbackRead(bool disableLocalCache)
+    {
+        string prefix = "fallback:" + NewKey() + ":";
+        await using var writer = BuildProvider(false, clientPrefix: prefix);
+        await using var reader = BuildProvider(true, clientPrefix: prefix, configure: options =>
+        {
+            TagOptions("tags:" + NewKey())(options);
+            options.MaxObservedKeys = 1;
+        });
+        HybridCache cache = reader.GetRequiredService<HybridCache>();
+        var options = new HybridCacheEntryOptions
+        {
+            Flags = HybridCacheEntryFlags.DisableDistributedCacheWrite
+                | (disableLocalCache ? HybridCacheEntryFlags.DisableLocalCache : HybridCacheEntryFlags.None),
+        };
+
+        if (!disableLocalCache)
+        {
+            await cache.SetAsync(NewKey(), "occupy observation", new HybridCacheEntryOptions
+            {
+                Flags = HybridCacheEntryFlags.DisableDistributedCache,
+            });
+            await Assert.That(Coherent(reader).ObservationCount).IsEqualTo(1);
+        }
+
+        string key = NewKey();
+        string[] tags = [NewKey()];
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<string> first = cache.GetOrCreateAsync(key, async _ =>
+        {
+            entered.SetResult();
+            await release.Task;
+            return "first";
+        }, options, tags).AsTask();
+
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await writer.GetRequiredService<HybridCache>().SetAsync(key, "replacement", tags: tags);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            string second = await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult("second"),
+                options, tags, timeout.Token);
+            await Assert.That(second).IsEqualTo("replacement");
+        }
+        finally
+        {
+            release.TrySetResult();
+            await first.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
     private sealed class StampedeJoinListener : EventListener
     {
         internal TaskCompletionSource Joined

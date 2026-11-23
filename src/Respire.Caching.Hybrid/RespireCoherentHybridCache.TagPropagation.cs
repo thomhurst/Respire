@@ -193,9 +193,7 @@ internal sealed partial class RespireCoherentHybridCache
                 .ConfigureAwait(false);
         }
 
-        // Let HybridCache handle invalid keys and tags without joining an existing fill.
-        if (string.IsNullOrWhiteSpace(key) || key.Length > _hybridOptions.MaximumKeyLength || HasControlCharacter(key)
-            || (tags is not null && tags.Any(tag => tag == WildcardTag || string.IsNullOrWhiteSpace(tag))))
+        if (!IsFallbackJoinable(key, tags))
         {
             HybridCache cache = CreateContext(null, new TagReplayBackend(this));
             await SeedTagMetadataAsync(cache, tags).WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -205,9 +203,26 @@ internal sealed partial class RespireCoherentHybridCache
 
         string[] seeded = GetSeedTags(tags);
         Array.Sort(seeded, 1, seeded.Length - 1, StringComparer.Ordinal);
-        DateTimeOffset[] markers = await Task.WhenAll(seeded.Select(ReadTagMarkerAsync))
-            .WaitAsync(cancellationToken).ConfigureAwait(false);
-        FallbackRead read = AcquireFallbackRead(key, EffectiveFlags(options), seeded, markers);
+        HybridCacheEntryFlags flags = EffectiveFlags(options);
+        Task<DateTimeOffset[]> markerRead = Task.WhenAll(seeded.Select(ReadTagMarkerAsync));
+        Task<bool> canShareRead = CanShareFallbackReadAsync(key, flags, cancellationToken);
+        await Task.WhenAll(markerRead, canShareRead).WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        bool canShare = await canShareRead.ConfigureAwait(false);
+        DateTimeOffset[] markers = await markerRead.ConfigureAwait(false);
+        FallbackRead read = AcquireFallbackRead(key, flags, seeded, markers, canShare);
+
+        // A shareable read either already bypasses L2 or has confirmed an L2 miss.
+        // Reuse that result so this context cannot start an L2 hit after the probe.
+        if (canShare && (flags & HybridCacheEntryFlags.DisableDistributedCacheRead) == 0)
+        {
+            options = new HybridCacheEntryOptions
+            {
+                Flags = flags | HybridCacheEntryFlags.DisableDistributedCacheRead,
+                Expiration = options.Expiration,
+                LocalCacheExpiration = options.LocalCacheExpiration,
+            };
+        }
 
         try
         {
@@ -217,12 +232,45 @@ internal sealed partial class RespireCoherentHybridCache
         }
         finally
         {
-            ReleaseFallbackRead(key, read);
+            if (canShare)
+            {
+                ReleaseFallbackRead(key, read);
+            }
+        }
+    }
+
+    private bool IsFallbackJoinable(string key, IEnumerable<string>? tags)
+    {
+        // Leave HybridCache's validation and uncached factory behavior to an isolated context.
+        return !string.IsNullOrWhiteSpace(key) && key.Length <= _hybridOptions.MaximumKeyLength
+            && !HasControlCharacter(key)
+            && (tags is null || !tags.Any(tag => tag == WildcardTag || string.IsNullOrWhiteSpace(tag)));
+    }
+
+    private async Task<bool> CanShareFallbackReadAsync(string key, HybridCacheEntryFlags flags,
+        CancellationToken cancellationToken)
+    {
+        if ((flags & HybridCacheEntryFlags.DisableDistributedCacheRead) != 0)
+        {
+            return true;
+        }
+
+        // A later caller must see a remote replacement instead of joining an older miss.
+        // Read the primary directly so a cached existence result cannot mask the replacement.
+        try
+        {
+            RespireKey physicalKey = _distributed.ResolveCoherenceKey(key);
+            return !await _fallbackKeyProbe.ExistsAsync(physicalKey, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is RespireException or ObjectDisposedException)
+        {
+            // If the probe fails, let HybridCache try its usual L2 read independently.
+            return false;
         }
     }
 
     private FallbackRead AcquireFallbackRead(string key, HybridCacheEntryFlags flags, string[] tags,
-        DateTimeOffset[] markers)
+        DateTimeOffset[] markers, bool canShare)
     {
         lock (_gate)
         {
@@ -233,9 +281,26 @@ internal sealed partial class RespireCoherentHybridCache
 
             MergeRememberedTagMarkers(tags, markers);
 
-            // A new reader checks Redis before joining. Share only while the flags and the
-            // authoritative tag snapshot match, so an updated marker can start a fresh fill.
-            if (_fallbackReads.TryGetValue(key, out List<FallbackRead>? reads))
+            _fallbackReads.TryGetValue(key, out List<FallbackRead>? reads);
+
+            if (!canShare)
+            {
+                // A present key or a failed probe ends reuse of earlier L2 misses.
+                if (reads is not null)
+                {
+                    reads.RemoveAll(static read => (read.Flags & HybridCacheEntryFlags.DisableDistributedCacheRead) == 0);
+
+                    if (reads.Count == 0)
+                    {
+                        _fallbackReads.Remove(key);
+                    }
+                }
+
+                return CreateFallbackRead(flags, tags, markers);
+            }
+
+            // An updated marker starts a new fill even when the key is still missing.
+            if (reads is not null)
             {
                 foreach (FallbackRead read in reads)
                 {
@@ -248,9 +313,7 @@ internal sealed partial class RespireCoherentHybridCache
                 }
             }
 
-            HybridCache cache = CreateContext(null, new TagReplayBackend(this));
-            Task tagReplay = ReplayTagMarkers(cache, tags, markers);
-            var newRead = new FallbackRead(cache, tagReplay, flags, tags, markers);
+            FallbackRead newRead = CreateFallbackRead(flags, tags, markers);
 
             if (reads is null)
             {
@@ -263,6 +326,13 @@ internal sealed partial class RespireCoherentHybridCache
 
             return newRead;
         }
+    }
+
+    private FallbackRead CreateFallbackRead(HybridCacheEntryFlags flags, string[] tags, DateTimeOffset[] markers)
+    {
+        HybridCache cache = CreateContext(null, new TagReplayBackend(this));
+        Task tagReplay = ReplayTagMarkers(cache, tags, markers);
+        return new FallbackRead(cache, tagReplay, flags, tags, markers);
     }
 
     private void ReleaseFallbackRead(string key, FallbackRead read)
