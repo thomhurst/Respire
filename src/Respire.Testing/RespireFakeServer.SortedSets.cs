@@ -132,10 +132,11 @@ public sealed partial class RespireFakeServer
             {
                 updated++;
             }
-            // Equal scores are a no-op, including +0 replacing an existing -0.
+
             if (!exists || score != previous)
             {
-                set[member] = score;
+                // Match compact sorted sets while preserving the immediate increment reply.
+                set[member] = score == 0 ? 0d : score;
             }
 
             result = score;
@@ -235,7 +236,7 @@ public sealed partial class RespireFakeServer
 
         if (set is null || !set.TryGetValue(args[2], out var score))
         {
-            return FakeReply.Null;
+            return withScore ? FakeReply.NullArray : FakeReply.Null;
         }
 
         var target = new KeyValuePair<byte[], double>(args[2], score);

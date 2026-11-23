@@ -115,7 +115,7 @@ a server error that names the command. Each error uses one response slot, so lat
 | Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY`; `HSCAN` with `MATCH`, `COUNT`, `NOVALUES`; `HIMPORT PREPARE`, `SET`, `DISCARD`, `DISCARDALL` (see [hash import](hash-import.md)) |
 | Lists | `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`/`RPOP` with optional count, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT BEFORE/AFTER`, `LPOS RANK/COUNT/MAXLEN`, `LMOVEM`, `BLMOVEM` |
 | Sets | `SADD`, `SREM`, `SMEMBERS`, `SSCAN` with `MATCH` and `COUNT`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms; `SINTERCARD`, `SDIFFCARD`, and `SUNIONCARD` with `LIMIT` (`SUNIONCARD APPROX` returns the exact count) |
-| Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZSCAN` with `MATCH` and `COUNT`, `ZCARD`, `ZSCORE`, `ZMSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
+| Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZSCAN` with `MATCH` and `COUNT`, `ZCARD`, `ZSCORE`, `ZMSCORE`; `ZRANK` and `ZREVRANK` with optional `WITHSCORE`; `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
 | Pub/sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, with binary channel names and payloads |
 | Streams | `XADD` with numeric IDs or `*`, optional `NOMKSTREAM`, and manual `IDMP` with `*`; `XLEN`; `XCFGSET IDMP-DURATION/IDMP-MAXSIZE`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK`; `XPENDING` summary and ranges with `IDLE` and consumer filters; `XAUTOCLAIM` with `COUNT` and `JUSTID`; `XDEL`; `XINFO GROUPS`; `EVAL`/`EVALSHA` for the built-in [stream worker](stream-workers.md) scripts only |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST`, `KEYS`, `SCAN` with `MATCH` and `COUNT` |
@@ -135,7 +135,7 @@ a server error that names the command. Each error uses one response slot, so lat
 | Hashes | Hash-field expiry, `HINCRBYFLOAT`, `HRANDFIELD` |
 | Sets | `SPOP`, `SRANDMEMBER` |
 | Lists | `BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`, `BLMOVE`, `RPOPLPUSH`, `BRPOPLPUSH` |
-| Sorted sets | `ZRANDMEMBER`, `BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP`, `ZUNION`, `ZINTER`, `ZDIFF` and their `STORE` forms, `ZRANGESTORE`, `ZRANK`/`ZREVRANK WITHSCORE` |
+| Sorted sets | `ZRANDMEMBER`, `BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP`, `ZUNION`, `ZINTER`, `ZDIFF` and their `STORE` forms, `ZRANGESTORE` |
 | Streams | Trimming, `XCLAIM`, `XREADGROUP` `NOACK` and `CLAIM`, `IDMPAUTO`, range commands, stream metadata, other group-administration commands |
 | Pub/sub | `PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB`, `QUIT`, `RESET` |
 
@@ -255,10 +255,12 @@ if (first.Result != 10 || !rest.Result.SequenceEqual(new[] { 30, 20 }))
 - `LIMIT` applies to score/lex ranges. A negative offset returns nothing; a negative count returns all remaining. Repeated `LIMIT` uses the last value.
 - `WITHSCORES` cannot combine with `BYLEX`.
 - `ZINTERCARD` accepts sets and sorted sets and treats `LIMIT 0` as unlimited.
-- Scores accept decimal, exponent, hexadecimal, subnormal, and infinite values. NaN, malformed numbers, and overflow or underflow to zero fail before mutation. An increment that produces NaN fails.
+- Scores accept decimal, exponent, hexadecimal, subnormal, and infinite values. The fake rejects NaN, malformed numbers, overflow, and nonzero scores that underflow to zero before mutation. Some Redis versions, including 8.8 and 8.10, accept decimal scores such as `2e-324` and round them to zero. An increment that produces NaN fails.
+- Stored zero scores read back as positive zero, matching Redis listpacks. Redis skiplists can preserve negative zero. An increment can still return negative zero in its immediate reply.
 - `ZADD CH` counts additions and score changes.
 - Mutations keep expiry. Removing the last member deletes the key.
-- Missing scores and ranks return null; missing ranges and pops return empty arrays. In RESP3, scored ranges and counted pops return nested member/score pairs; a pop without a count stays flat.
+- `ZRANK` and `ZREVRANK` with `WITHSCORE` return a rank and score pair for an existing member. A missing member or key returns a null array in RESP2 and null in RESP3. Plain ranks and single score lookups return a null bulk string in RESP2 when missing.
+- Missing ranges and pops return empty arrays. In RESP3, scored ranges and counted pops return nested member/score pairs. A pop without a count stays flat.
 - Sorting runs on demand. It does not model Redis performance.
 
 ```csharp

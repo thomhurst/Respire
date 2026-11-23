@@ -1,3 +1,4 @@
+using Respire.Protocol;
 using Respire.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -7,6 +8,62 @@ namespace Respire.Tests;
 
 public class FakeSortedSetServerTests
 {
+    [Test]
+    [Arguments(RespireProtocol.Resp2, "ZRANK", 0L)]
+    [Arguments(RespireProtocol.Resp2, "ZREVRANK", 1L)]
+    [Arguments(RespireProtocol.Resp3, "ZRANK", 0L)]
+    [Arguments(RespireProtocol.Resp3, "ZREVRANK", 1L)]
+    public async Task ScoredRanksUseNullArrayInResp2Async(RespireProtocol protocol, string command, long expectedRank)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using RespireClient client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = protocol });
+#pragma warning restore RESP010
+        await client.SortedSets.AddAsync("scores", ("present", 2.5), ("higher", 4));
+
+        using RespireResult present = await client.ExecuteAsync(command, "scores", "present", "WITHSCORE");
+        await Assert.That(present.Count).IsEqualTo(2);
+        await Assert.That(present[0].AsInteger()).IsEqualTo(expectedRank);
+        await Assert.That(present[1].AsDouble()).IsEqualTo(2.5);
+
+        RespireDataType scoredNull = protocol == RespireProtocol.Resp2 ? RespireDataType.Array : RespireDataType.Null;
+        RespireDataType plainNull = protocol == RespireProtocol.Resp2 ? RespireDataType.BulkString : RespireDataType.Null;
+
+        foreach (string key in new[] { "scores", "absent" })
+        {
+            using RespireResult scored = await client.ExecuteAsync(command, key, "missing", "WITHSCORE");
+            using RespireResult plain = await client.ExecuteAsync(command, key, "missing");
+            await Assert.That(scored.NullWireType).IsEqualTo(scoredNull);
+            await Assert.That(plain.NullWireType).IsEqualTo(plainNull);
+        }
+    }
+
+    [Test]
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task StoredSortedSetScoresReadBackAsPositiveZeroAsync(RespireProtocol protocol)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using RespireClient client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = protocol });
+#pragma warning restore RESP010
+        using RespireResult added = await client.ExecuteAsync("ZADD", "scores", "-0", "negative", "0", "positive");
+        await Assert.That(added.AsInteger()).IsEqualTo(2L);
+
+        using RespireResult incremented = await client.ExecuteAsync("ZINCRBY", "scores", "-0", "incremented");
+        await Assert.That(BitConverter.DoubleToInt64Bits(incremented.AsDouble())).IsEqualTo(long.MinValue);
+
+        foreach (string member in new[] { "negative", "positive", "incremented" })
+        {
+            double? score = await client.SortedSets.ScoreAsync("scores", member);
+            await Assert.That(score.HasValue).IsTrue();
+            await Assert.That(BitConverter.DoubleToInt64Bits(score.GetValueOrDefault())).IsEqualTo(0L);
+        }
+
+        using RespireResult rank = await client.ExecuteAsync("ZRANK", "scores", "negative", "WITHSCORE");
+        await Assert.That(BitConverter.DoubleToInt64Bits(rank[1].AsDouble())).IsEqualTo(0L);
+    }
+
     [Test]
     [Arguments(2)]
     [Arguments(3)]
