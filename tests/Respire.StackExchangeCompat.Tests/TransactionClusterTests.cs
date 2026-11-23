@@ -1,6 +1,7 @@
 using System.Text;
 using Respire.Internal;
 using Respire.Tests.Networking;
+using StackExchange.Redis;
 using TUnit.Core;
 using Assert = Xunit.Assert;
 
@@ -218,6 +219,37 @@ public class TransactionClusterTests
     }
 
     [Test]
+    public async Task ConditionalTransactionCommitsWithLongCommandTimeout()
+    {
+        await using var source = new FakeRespServer(16, FakeRespServer.OkReply);
+        Configure(source);
+        var setup = source.ReplyOverride!;
+        source.ReplyOverride = (id, command) => command switch
+        {
+            "EXISTS key" => ":0\r\n"u8.ToArray(),
+            "HSET key field value" => "+QUEUED\r\n"u8.ToArray(),
+            "EXEC" => "*1\r\n:1\r\n"u8.ToArray(),
+            _ => setup(id, command),
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(source) with
+        {
+            CommandTimeout = TimeSpan.FromDays(50),
+        });
+        await using var adapter = RespireConnectionMultiplexer.Wrap(client);
+        var transaction = adapter.GetDatabase().CreateTransaction();
+        var condition = transaction.AddCondition(Condition.KeyNotExists("key"));
+        var write = transaction.HashSetAsync("key", "field", "value");
+
+        Assert.True(await transaction.ExecuteAsync().WaitAsync(TimeSpan.FromSeconds(15)));
+        Assert.True(condition.WasSatisfied);
+        Assert.True(await write);
+
+        var commands = source.ReceivedCommands;
+        Assert.Equal(new[] { "WATCH key", "EXISTS key", "MULTI", "HSET key field value", "EXEC" },
+            commands.SkipWhile(command => command != "WATCH key"));
+    }
+
+    [Test]
     public async Task RedirectLoopsAreBoundedAndNativeWatchStillRejectsAsk()
     {
         await using var source = new FakeRespServer(32, FakeRespServer.OkReply);
@@ -235,9 +267,10 @@ public class TransactionClusterTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ImportingWatchHonorsCancellationAndTimeout(bool cancel)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task ImportingWatchHonorsCancellationAndTimeout(bool cancel, bool longTimeout)
     {
         await using var source = new FakeRespServer(16, FakeRespServer.OkReply);
         await using var target = new FakeRespServer(16, FakeRespServer.OkReply);
@@ -259,13 +292,14 @@ public class TransactionClusterTests
         };
         await using var client = await RespireClient.ConnectAsync(Options(source) with
         {
-            CommandTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = longTimeout ? TimeSpan.FromDays(50) : TimeSpan.FromSeconds(2),
         });
 
         if (cancel)
         {
             var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-                await client.CreateCompatibilityTransactionAsync(["key"], cancellation.Token));
+                await client.CreateCompatibilityTransactionAsync(["key"], cancellation.Token).AsTask()
+                    .WaitAsync(TimeSpan.FromSeconds(15)));
             Assert.Equal(cancellation.Token, error.CancellationToken);
         }
         else
@@ -343,14 +377,14 @@ public class TransactionClusterTests
     private static byte[] Ask(FakeRespServer target)
         => Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("key")} 127.0.0.1:{target.Port}\r\n");
 
-    private static void Configure(FakeRespServer source, FakeRespServer target)
+    private static void Configure(FakeRespServer source, FakeRespServer? target = null)
     {
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*3\r\n$9\r\n127.0.0.1\r\n:{source.Port}\r\n$7\r\nprimary\r\n");
         source.ReplyOverride = (_, command) => command switch
         {
             "CLUSTER SLOTS" => topology,
-            "WATCH key" => Ask(target),
+            "WATCH key" when target is not null => Ask(target),
             _ => null,
         };
     }

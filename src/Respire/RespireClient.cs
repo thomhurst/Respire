@@ -1787,7 +1787,9 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         RespireKey[] watchKeys, CancellationToken cancellationToken)
     {
         var duration = _core.Options.CommandTimeout;
-        using var timeout = duration is { } value ? CommandTimeoutCancellation.Create(cancellationToken, value) : null;
+        using CommandTimeoutCancellation.TimeoutScope? timeout = duration is { } value
+            ? CommandTimeoutCancellation.CreateForTimeout(cancellationToken, value)
+            : null;
 
         try
         {
@@ -1798,7 +1800,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         {
             throw new OperationCanceledException(error.Message, error, cancellationToken);
         }
-        catch (OperationCanceledException error) when (timeout is not null && timeout.IsCancellationRequested)
+        catch (OperationCanceledException error) when (timeout?.Token.IsCancellationRequested == true)
         {
             throw new RespireTimeoutException("WATCH", duration!.Value, error);
         }
