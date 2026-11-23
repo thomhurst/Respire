@@ -11,10 +11,10 @@ public sealed partial class RespireClient
     // Standalone and Sentinel primaries share the write-evidence owner. Every attempt resolves the
     // current Sentinel generation; a READONLY reply retires its generation before the retry selects one.
     private bool CanRetryImmediate<TCommand>(in TCommand command) where TCommand : struct, IRespCommand
-        => _core.CommandRetries is not null && _core.Cluster is null && IsImmediateRetryEligible(in command);
+        => _commandRetries is not null && _core.Cluster is null && IsImmediateRetryEligible(in command);
 
     private bool CanRetryCluster<TCommand>(in TCommand command) where TCommand : struct, IRespCommand
-        => _core.CommandRetries is not null && _core.Cluster is not null && IsImmediateRetryEligible(in command);
+        => _commandRetries is not null && _core.Cluster is not null && IsImmediateRetryEligible(in command);
 
     private bool IsImmediateRetryEligible<TCommand>(in TCommand command) where TCommand : struct, IRespCommand
         => !_snapshotPrefixedBinaryKeys && command is not IStreamingRespCommand
@@ -195,7 +195,7 @@ public sealed partial class RespireClient
 
                     var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
 
-                    if (!_core.CommandRetries!.TryGetDelay(error, outcome, state.Category, attempt, remaining, token, out var delay))
+                    if (!_commandRetries!.TryGetDelay(error, outcome, state.Category, attempt, remaining, token, out var delay))
                     {
                         throw;
                     }
@@ -509,7 +509,7 @@ public sealed partial class RespireClient
 
                     var remaining = deadline.IsSet ? TimeSpan.FromMilliseconds(deadline.RemainingMilliseconds) : TimeSpan.MaxValue;
 
-                    if (!_core.CommandRetries!.TryGetDelay(error, outcome, state.Category, attempt, remaining, token, out var delay))
+                    if (!_commandRetries!.TryGetDelay(error, outcome, state.Category, attempt, remaining, token, out var delay))
                     {
                         throw;
                     }
@@ -608,7 +608,7 @@ public sealed partial class RespireClient
                 observation = RespireTelemetry.ErrorObservation.Rent(force: true);
             }
 
-            return await LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, state.Category, _core.Options.CommandTimeout,
+            return await LogicalCommandRetry.RunAsync(_commandRetries!, operation, state.Category, _core.Options.CommandTimeout,
                 (Client: this, Operation: operation, Cluster: cluster, Command: command, NoRedirect: noRedirect, Observation: observation),
                 static (state, attempt) => state.Client.SendClusterAttemptAsync(state.Operation, state.Cluster, state.Command,
                     state.NoRedirect, attempt, state.Observation),
@@ -683,7 +683,7 @@ public sealed partial class RespireClient
     {
         try
         {
-            return await LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, state.Category, _core.Options.CommandTimeout,
+            return await LogicalCommandRetry.RunAsync(_commandRetries!, operation, state.Category, _core.Options.CommandTimeout,
                 (Client: this, Operation: operation, Cluster: cluster, Command: command,
                     OnRedirect: onRedirect, Track: track, Observation: observation),
                 static (retry, attempt) => retry.Client.SendTrackedClusterRetryAttemptAsync(retry.Operation, retry.Cluster,
@@ -719,7 +719,7 @@ public sealed partial class RespireClient
         RespireCommandRetryCategory category, TState state,
         Func<TState, LogicalCommandRetry.Attempt, ValueTask<TResult>> send,
         RespireTelemetry.ErrorObservation observation, CancellationToken cancellationToken)
-        => LogicalCommandRetry.RunAsync(_core.CommandRetries!, operation, category, _core.Options.CommandTimeout,
+        => LogicalCommandRetry.RunAsync(_commandRetries!, operation, category, _core.Options.CommandTimeout,
             (Client: this, State: state, Send: send, Observation: observation),
             static (retry, attempt) => retry.Send(retry.State, attempt),
             observation, cancellationToken, rejectionProvesUnexecuted: false,
@@ -768,7 +768,7 @@ public sealed partial class RespireClient
     }
 
     internal bool CanRetryDeclared(RespireCommandRetryCategory category)
-        => _core.CommandRetries is not null && category != RespireCommandRetryCategory.Never;
+        => _commandRetries is not null && category != RespireCommandRetryCategory.Never;
 
     // Waiting for a replacement records no availability samples. The ignored permit
     // releases half-open probe capacity without completing the probe.

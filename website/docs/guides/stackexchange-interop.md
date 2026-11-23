@@ -230,7 +230,7 @@ profiling registration, library-name suffixes, events, non-null `asyncState`, an
 - With native command retries, Cluster routing, or replica redirects enabled, direct database commands wait for the preceding command to finish before dispatching. This keeps a write ahead of its expiry when the write has to move to another connection. A standalone database with these options disabled can pipeline direct commands.
 - Direct database commands use one `CommandTimeout` budget for the dispatch queue and execution. A command that expires in the dispatch queue is never sent.
 - Arguments are copied at call time; later buffer changes do not affect the command. Null keys and arguments are rejected.
-- The adapter never replays a failed write. Native reconnect and failover still apply.
+- Automatic write retries require proof that the failed attempt did not send the command. Native reconnect, failover, and Redis redirects still apply.
 - Increments of 1 send `INCR`/`DECR`; other values send `INCRBY`/`DECRBY`, matching StackExchange.Redis for ACLs. A zero increment in fire-and-forget mode is a no-op.
 
 Supported `CommandFlags`:

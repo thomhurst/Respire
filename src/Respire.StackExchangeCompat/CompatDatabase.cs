@@ -29,7 +29,7 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
     {
         Owner = owner;
         Number = number;
-        _client = client;
+        _client = client.WithoutAmbiguousWriteRetries();
         DatabaseOwner = this;
     }
 
