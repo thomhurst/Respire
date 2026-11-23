@@ -13,6 +13,8 @@ namespace Respire.Serialization;
 /// </summary>
 public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
 {
+    private const int DefaultMaxDepth = 64;
+
     private readonly JsonSerializerOptions? _options;
     private readonly JsonSerializerContext? _context;
     [ThreadStatic]
@@ -41,7 +43,7 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public void Serialize<T>(IBufferWriter<byte> destination, T value)
     {
-        var writer = RentWriter(destination);
+        var writer = RentWriter(destination, out bool pooled);
         var completed = false;
 
         try
@@ -51,7 +53,7 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
         }
         finally
         {
-            ReturnWriter(writer, completed);
+            ReturnWriter(writer, completed, pooled);
         }
     }
 
@@ -67,7 +69,7 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
     public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
     {
         ArgumentNullException.ThrowIfNull(type);
-        var writer = RentWriter(destination);
+        var writer = RentWriter(destination, out bool pooled);
         var completed = false;
 
         try
@@ -85,7 +87,7 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
         }
         finally
         {
-            ReturnWriter(writer, completed);
+            ReturnWriter(writer, completed, pooled);
         }
     }
 
@@ -132,24 +134,43 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
         internal static readonly ConditionalWeakTable<RespireSystemTextJsonSerializer, JsonTypeInfo<T>> Values = new();
     }
 
-    private static Utf8JsonWriter RentWriter(IBufferWriter<byte> destination)
+    private Utf8JsonWriter RentWriter(IBufferWriter<byte> destination, out bool pooled)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        var writer = s_writer;
+
+        JsonSerializerOptions options = _context?.Options ?? _options!;
+        int maxDepth = options.MaxDepth is 0 ? DefaultMaxDepth : options.MaxDepth;
+        pooled = options.Encoder is null && !options.WriteIndented && maxDepth == DefaultMaxDepth
+                 && options.IndentCharacter == ' ' && options.IndentSize == 2 && options.NewLine == Environment.NewLine;
+
+        if (!pooled)
+        {
+            // Reset preserves the writer's options. Keep caller-supplied encoders out of thread-local storage.
+            return new Utf8JsonWriter(destination, new JsonWriterOptions
+            {
+                Encoder = options.Encoder,
+                Indented = options.WriteIndented,
+                IndentCharacter = options.IndentCharacter,
+                IndentSize = options.IndentSize,
+                MaxDepth = maxDepth,
+                NewLine = options.NewLine,
+            });
+        }
+
+        Utf8JsonWriter? writer = s_writer;
         // A custom converter can recursively serialize on the same thread.
         s_writer = null;
-        // Default JsonWriterOptions match JsonSerializer's writer overloads; serializer
-        // options configure metadata/converters rather than the supplied writer's options.
+
         if (writer is null)
         {
-            return new Utf8JsonWriter(destination);
+            return new Utf8JsonWriter(destination, new JsonWriterOptions { MaxDepth = DefaultMaxDepth });
         }
 
         writer.Reset(destination);
         return writer;
     }
 
-    private static void ReturnWriter(Utf8JsonWriter writer, bool completed)
+    private static void ReturnWriter(Utf8JsonWriter writer, bool completed, bool pooled)
     {
         var flushed = false;
 
@@ -168,7 +189,7 @@ public sealed class RespireSystemTextJsonSerializer : IRespireSerializer
             // Detach even on flush failure, so disposal cannot retry a broken caller destination.
             writer.Reset(DetachedDestination);
 
-            if (flushed && s_writer is null)
+            if (pooled && flushed && s_writer is null)
             {
                 s_writer = writer;
             }
