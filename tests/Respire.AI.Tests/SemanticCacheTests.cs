@@ -72,6 +72,65 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
     }
 
     [Test, Arguments(2), Arguments(3)]
+    public async Task ProviderOptionTypesHaveDistinctCacheEntries(int protocol)
+    {
+        await using var scenario = await Create(protocol);
+        scenario.Provider.ResponseFactory = options =>
+        {
+            object value = options!.AdditionalProperties!["option"]!;
+            return new ChatResponse(new ChatMessage(ChatRole.Assistant, value.GetType().Name));
+        };
+
+        using var json = JsonDocument.Parse("42");
+
+        foreach (object value in new object[] { 42, 42L, 42m, "42", json.RootElement })
+        {
+            var options = new ChatOptions { AdditionalProperties = new() { ["option"] = value } };
+            (await scenario.Ask("near", options)).Text.Should().Be(value.GetType().Name);
+            (await scenario.Ask("near paraphrase", options)).Text.Should().Be(value.GetType().Name);
+        }
+
+        scenario.Provider.Calls.Should().Be(5);
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task ComplexProviderOptionsBypassEvenWithFailOpenDisabled(int protocol)
+    {
+        await using var scenario = await Create(protocol, new() { Dimensions = 2, FailOpen = false });
+        var options = new ChatOptions
+        {
+            AdditionalProperties = new()
+            {
+                ["option"] = new Dictionary<string, object?> { ["nested"] = new[] { 42 } },
+            },
+        };
+
+        (await scenario.Ask("near", options)).Text.Should().Be("response 1");
+        (await scenario.Ask("near", options)).Text.Should().Be("response 2");
+        scenario.Embeddings.Calls.Should().Be(0);
+        (await ReadEntries(scenario)).Should().BeEmpty();
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task JsonRoundTrippedOptOutBypassesReadsAndWrites(int protocol)
+    {
+        await using var scenario = await Create(protocol);
+        await scenario.Ask("near");
+        var options = new ChatOptions { AdditionalProperties = new() { [RespireSemanticCacheOptions.DisableCacheKey] = true } };
+        var typeInfo = AIJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatOptions));
+        var restored = (ChatOptions)JsonSerializer.Deserialize(JsonSerializer.Serialize(options, typeInfo), typeInfo)!;
+
+        restored.AdditionalProperties![RespireSemanticCacheOptions.DisableCacheKey].Should()
+            .BeOfType<JsonElement>().Which.ValueKind.Should().Be(JsonValueKind.True);
+        (await scenario.Ask("near", restored)).Text.Should().Be("response 2");
+        using var falseFlag = JsonDocument.Parse("false");
+        restored.AdditionalProperties[RespireSemanticCacheOptions.DisableCacheKey] = falseFlag.RootElement;
+        (await scenario.Ask("near", restored)).Text.Should().Be("response 1");
+        scenario.Embeddings.Calls.Should().Be(2);
+        (await ReadEntries(scenario)).Should().ContainSingle();
+    }
+
+    [Test, Arguments(2), Arguments(3)]
     public async Task OptOutBypassesReadsAndWritesWithoutChangingOptions(int protocol)
     {
         await using var scenario = await Create(protocol);
@@ -220,10 +279,10 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
     public async Task StatefulAndToolResponsesAreNotStored(int protocol)
     {
         await using var scenario = await Create(protocol);
-        scenario.Provider.ResponseFactory = () => new(new ChatMessage(ChatRole.Assistant, "text")) { ConversationId = "state" };
+        scenario.Provider.ResponseFactory = _ => new(new ChatMessage(ChatRole.Assistant, "text")) { ConversationId = "state" };
         await scenario.Ask("near");
         await scenario.Ask("near");
-        scenario.Provider.ResponseFactory = () => new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call", "tool")]));
+        scenario.Provider.ResponseFactory = _ => new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call", "tool")]));
         await scenario.Ask("near");
         await scenario.Ask("near");
         scenario.Provider.Calls.Should().Be(4);
@@ -312,7 +371,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
                 })
             },
         };
-        scenario.Provider.ResponseFactory = () => response;
+        scenario.Provider.ResponseFactory = _ => response;
 
         if (failOpen)
         {
@@ -474,7 +533,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
     public async Task RawProviderRepresentationsAreOmittedFromPortableCachedResponse(int protocol)
     {
         await using var scenario = await Create(protocol);
-        scenario.Provider.ResponseFactory = () => new(new ChatMessage(ChatRole.Assistant,
+        scenario.Provider.ResponseFactory = _ => new(new ChatMessage(ChatRole.Assistant,
             [new TextContent("portable") { RawRepresentation = new object() }])
         { RawRepresentation = new object() })
         { RawRepresentation = new object() };
@@ -496,7 +555,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
         Func<Task> request = () => scenario.Chat.GetResponseAsync([new(ChatRole.User, "near")], cancellationToken: cancelled.Token);
         await request.Should().ThrowAsync<OperationCanceledException>();
         scenario.Embeddings.Calls.Should().Be(0);
-        scenario.Provider.ResponseFactory = () => throw new InvalidOperationException("provider failed");
+        scenario.Provider.ResponseFactory = _ => throw new InvalidOperationException("provider failed");
         Func<Task> failure = () => scenario.Ask("near");
         await failure.Should().ThrowAsync<InvalidOperationException>().WithMessage("provider failed");
         scenario.Provider.ResponseFactory = null;
@@ -507,12 +566,18 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
     private static readonly string[] MalformedIdentities =
         ["\uD800", "\uD801", "\uDC00", "prefix\uD800", "\uD800suffix", "\uD800\uD801", "\uDC00\uD800"];
 
-    [Test, Arguments(2), Arguments(3)]
-    public async Task WellFormedScopesKeepTheirExistingHashes(int protocol)
+    [Test, Arguments(2, false), Arguments(3, false), Arguments(2, true), Arguments(3, true)]
+    public async Task ScopeHashChangesOnlyWithProviderOptions(int protocol, bool hasProviderOptions)
     {
         const string identity = "tenant é \uFFFD \uD800\uDC00";
         await using var scenario = await Create(protocol, new() { Dimensions = 2, ScopeSelector = (_, _) => identity });
-        var options = new ChatOptions { Instructions = identity, AdditionalProperties = new() { [identity] = identity } };
+        var options = new ChatOptions { Instructions = identity };
+
+        if (hasProviderOptions)
+        {
+            options.AdditionalProperties = new() { [identity] = identity };
+        }
+
         var history = new ChatMessage(ChatRole.System, identity);
         var final = new ChatMessage(ChatRole.User, "near") { AuthorName = identity };
         // The pre-fix scope format used the default writer and upstream AI JSON metadata.
@@ -536,10 +601,10 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
             writer.WriteEndArray();
         }
 
-        var expected = Convert.ToHexString(SHA256.HashData(stream.ToArray()));
+        var legacyHash = Convert.ToHexString(SHA256.HashData(stream.ToArray()));
         var first = await scenario.Chat.GetResponseAsync([history, final], options);
         var entry = (await ReadEntries(scenario)).Should().ContainSingle().Subject.Value;
-        Encoding.UTF8.GetString(entry.Scope!).Should().Be(expected);
+        (Encoding.UTF8.GetString(entry.Scope!) == legacyHash).Should().Be(!hasProviderOptions);
         final = new(ChatRole.User, "near paraphrase") { AuthorName = identity };
         (await scenario.Chat.GetResponseAsync([history, final], options)).Text.Should().Be(first.Text);
         scenario.Provider.Calls.Should().Be(1);
@@ -664,7 +729,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
                 options.StopSequences = [identity];
                 break;
             case "optionValue":
-                options.AdditionalProperties = new() { ["nested"] = new Dictionary<string, object?> { ["list"] = new[] { identity } } };
+                options.AdditionalProperties = new() { ["identity"] = identity };
                 break;
             case "optionKey":
                 options.AdditionalProperties = new() { [identity] = "value" };
@@ -888,7 +953,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
             get; set;
         } = "fake";
 
-        public Func<ChatResponse>? ResponseFactory
+        public Func<ChatOptions?, ChatResponse>? ResponseFactory
         {
             get; set;
         }
@@ -897,7 +962,7 @@ public class SemanticCacheTests(ModernRedisTestContainer fixture)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var calls = Interlocked.Increment(ref _calls);
-            return Task.FromResult(ResponseFactory?.Invoke() ?? new ChatResponse(new ChatMessage(ChatRole.Assistant, "response " + calls))
+            return Task.FromResult(ResponseFactory?.Invoke(options) ?? new ChatResponse(new ChatMessage(ChatRole.Assistant, "response " + calls))
             {
                 ResponseId = "id-" + calls,
                 ModelId = "fake-model",

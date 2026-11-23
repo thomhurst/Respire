@@ -77,11 +77,13 @@ Indexes:
 
 `ScopeSelector` returns an exact user or tenant boundary. **The default shared scope is safe only for responses every caller may see.** A null scope bypasses the cache.
 
-Besides the scope, these must match exactly (including case): model/provider identity, generation options (including `Instructions` and request properties such as `UserId`), and **every message before the final user prompt**. Only the final user text matches semantically.
+Besides the scope, model and provider identity, generation options such as `Instructions`, and the serialized history before the final user prompt must match exactly, including case. Only the final user text matches semantically.
 
-`CacheName` must be well-formed UTF-16: registration rejects unpaired surrogates with `EncoderFallbackException` before accessing Redis. Scope strings, provider/model metadata, and serialized generation options and message metadata must also be well-formed, including nested string values and property names. Malformed scope inputs follow `FailOpen`: the default calls the provider without embedding, cache reads or writes; `FailOpen = false` propagates the encoding or serialization error. Valid replacement characters (`U+FFFD`) and surrogate pairs remain cacheable, and well-formed identities keep their existing namespace and scope hashes.
+`ChatOptions.AdditionalProperties` are scoped by CLR type and value. For example, `42`, `42L`, `42m`, and `"42"` select different cache entries. The cache accepts `null`, `bool`, `char`, `string`, signed and unsigned integers from 8 to 64 bits, `float`, `double`, `decimal`, and `JsonElement`. Other values, including CLR collections and custom objects, bypass the cache. Entries written with the previous scope format for additional properties expire on their original TTL. Requests without provider options continue to use the same scope.
 
-Set `RespireSemanticCacheOptions.DisableCacheKey` to `true` in `ChatOptions.AdditionalProperties` to bypass reads and writes for one request:
+`CacheName` must be well-formed UTF-16. Registration rejects unpaired surrogates with `EncoderFallbackException` before accessing Redis. Scope strings, provider and model metadata, and serialized generation options and message metadata must also be well-formed, including nested JSON string values and property names. With the default `FailOpen = true`, malformed scope inputs call the provider without embedding, cache reads or writes. With `FailOpen = false`, the encoding or serialization error propagates. Valid replacement characters (`U+FFFD`) and surrogate pairs remain cacheable.
+
+Set `RespireSemanticCacheOptions.DisableCacheKey` to `true` in `ChatOptions.AdditionalProperties` to bypass reads and writes for one request. A JSON boolean `true` restored through the chat options serializer also bypasses caching.
 
 <!-- doc-test-declaration -->
 ```csharp
@@ -111,7 +113,7 @@ Derive user and tenant identifiers from trusted application context, not from re
 
 ## Threshold tuning
 
-Cosine **distance** is lower for more similar prompts: 0 for identical directions, 1 for orthogonal, 2 for opposite. A hit needs `distance <= DistanceThreshold`. The 0.1 default is a starting point, not a quality guarantee. Embeddings must have the configured dimensions, finite values and a nonzero norm.
+Cosine **distance** is lower for more similar prompts. Mathematically it is 0 for identical directions, 1 for orthogonal directions, and 2 for opposite directions. A hit needs the distance returned by Redis to be at most `DistanceThreshold`. Redis Search uses floating-point arithmetic and can report a small positive distance even for byte-identical embeddings, so a zero threshold can miss an exact repeat. If exact repeats miss, measure those distances on your Redis server when choosing a small positive threshold. The default is 0.1. Embeddings must have the configured dimensions, finite values and a nonzero norm.
 
 1. Collect representative paraphrases and hard negative pairs, especially questions that differ only in negation, names, dates, units or account IDs.
 2. Embed them with the production model. Measure distances and label whether reusing each answer is acceptable within its scope.
