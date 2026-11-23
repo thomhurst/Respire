@@ -250,11 +250,13 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                     throw new TimeoutException($"Fixture {options.Server}/{options.Topology} did not become ready within {options.StartupTimeout}; step: {fixture?._startupStep}; last reply: {fixture?._lastReadinessResponse}", startupError);
                 }
 
-                var standalone = options.Topology == RespireContainerTopology.Standalone;
+                bool standalone = options.Topology == RespireContainerTopology.Standalone;
+                bool wrongListener = standalone && startupError is PublishedPortCollisionException;
+                bool bindCollision = startingContainer && (standalone
+                    ? ContainerPortCollision.IsStandaloneBindCollision(startupError, ports)
+                    : ContainerPortCollision.IsMatch(startupError, ports));
 
-                if (startingContainer && attempt < MaximumStartupAttempts
-                    && (standalone ? ContainerPortCollision.IsStandaloneBindCollision(startupError, ports)
-                        : ContainerPortCollision.IsMatch(startupError, ports)))
+                if (attempt < MaximumStartupAttempts && (bindCollision || wrongListener))
                 {
                     collisions.Add(startupError);
 
@@ -377,8 +379,61 @@ public sealed class RespireContainerFixture : IAsyncDisposable
 
         const string host = "127.0.0.1";
         var endpoints = _ports.Select(port => new RespireEndpoint(host, _container.GetMappedPublicPort(port))).ToArray();
+
+        if (_options.Topology == RespireContainerTopology.Standalone)
+        {
+            await VerifyStandaloneEndpointAsync(endpoints[0], cancellationToken).ConfigureAwait(false);
+        }
+
         DataEndpoints = Array.AsReadOnly(endpoints[..dataCount]);
         SentinelEndpoints = Array.AsReadOnly(endpoints[dataCount..]);
+    }
+
+    private async Task VerifyStandaloneEndpointAsync(RespireEndpoint endpoint, CancellationToken cancellationToken)
+    {
+        string verificationStep = $"verify published Redis endpoint {endpoint.Host}:{endpoint.Port}";
+
+        try
+        {
+            string expectedRunId = await ReadStandaloneRunIdAsync(cancellationToken).ConfigureAwait(false);
+            _startupStep = verificationStep;
+            _lastReadinessResponse = null;
+            string? actualRunId = await PublishedRedisIdentity.ReadRunIdAsync(endpoint, cancellationToken).ConfigureAwait(false);
+
+            if (actualRunId == expectedRunId)
+            {
+                return;
+            }
+
+            if (actualRunId is null)
+            {
+                _lastReadinessResponse = "HTTP response";
+                throw new PublishedPortCollisionException($"Published Redis endpoint {endpoint.Host}:{endpoint.Port} replied with HTTP.");
+            }
+
+            // A daemon restart changes its run ID too. Confirm that the container still reports the original ID.
+            string currentRunId = await ReadStandaloneRunIdAsync(cancellationToken).ConfigureAwait(false);
+
+            if (currentRunId != expectedRunId)
+            {
+                throw new IOException($"Redis inside the container changed run_id from {expectedRunId} to {currentRunId} during startup.");
+            }
+
+            _startupStep = verificationStep;
+            _lastReadinessResponse = $"run_id:{actualRunId}";
+            throw new PublishedPortCollisionException(
+                $"Published Redis endpoint {endpoint.Host}:{endpoint.Port} reached run_id {actualRunId}, expected {expectedRunId}.");
+        }
+        catch (Exception error) when (error is not (PublishedPortCollisionException or OperationCanceledException))
+        {
+            throw new IOException($"Could not {verificationStep}.", error);
+        }
+    }
+
+    private async Task<string> ReadStandaloneRunIdAsync(CancellationToken cancellationToken)
+    {
+        string info = await CliAsync(_ports[0], ["INFO", "server"], cancellationToken).ConfigureAwait(false);
+        return PublishedRedisIdentity.ParseRunId(info);
     }
 
     private async Task InitializeClusterAsync(int dataCount, CancellationToken cancellationToken)
@@ -566,4 +621,6 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             return new ValueTask(_disposeTask ??= _container.DisposeAsync().AsTask());
         }
     }
+
+    private sealed class PublishedPortCollisionException(string message) : IOException(message);
 }
