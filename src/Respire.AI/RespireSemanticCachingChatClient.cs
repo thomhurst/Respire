@@ -258,6 +258,9 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
 
     private static bool TryWriteProviderOptions(Utf8JsonWriter writer, AdditionalPropertiesDictionary properties)
     {
+        // stackalloc-audit[300efd3df8058cd6]: init: decimal.GetBits writes all four elements;
+        // read: the decimal case iterates the span only after GetBits returns;
+        // failure: other cases never read the span, and a GetBits exception exits before the loop.
         Span<int> decimalBits = stackalloc int[4];
         writer.WriteStartObject();
 
