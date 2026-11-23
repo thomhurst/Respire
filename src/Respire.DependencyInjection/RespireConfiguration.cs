@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net.Security;
 using global::Respire;
+using global::Respire.Internal;
 using Microsoft.Extensions.Configuration;
 
 namespace Respire.DependencyInjection;
@@ -77,6 +78,24 @@ internal static class RespireConfiguration
         WriteBufferSize = section.GetValue("WriteBufferSize", options.WriteBufferSize),
         MaxInflightCommands = section.GetValue("MaxInflightCommands", options.MaxInflightCommands),
     };
+
+    /// <summary>Copies mutable values produced by configuration binding before handing options to a callback.</summary>
+    internal static RespireOptions CopyForCallback(RespireOptions options)
+    {
+        return options with
+        {
+            Endpoints = [.. options.Endpoints],
+            ReplicaEndpoints = [.. options.ReplicaEndpoints],
+            NodeAddressMap = options.NodeAddressMap is { } map
+                ? new Dictionary<RespireEndpoint, RespireEndpoint>(map, RespireEndpointComparer.Instance)
+                : null,
+            ClientSideCache = options.ClientSideCache is { } cache
+                ? cache with { KeyPrefixes = cache.KeyPrefixes.ToArray() }
+                : null,
+            TlsOptions = CopyTlsOptions(options.TlsOptions),
+            SentinelTlsOptions = CopyTlsOptions(options.SentinelTlsOptions),
+        };
+    }
 
     /// <summary>Replaces endpoint arrays only when the section is present.</summary>
     private static IList<RespireEndpoint> Endpoints(IConfigurationSection section, IList<RespireEndpoint> fallback)
@@ -244,17 +263,33 @@ internal static class RespireConfiguration
             return options;
         }
 
-        options ??= new();
         // Connection-string parsing can supply a TLS target host. Preserve it when only another
         // TLS field is overridden; callers configure certificate objects through configureOptions.
+        var copy = CopyTlsOptions(options) ?? new SslClientAuthenticationOptions();
+        copy.TargetHost = section.GetValue("TargetHost", copy.TargetHost);
+        copy.EnabledSslProtocols = section.GetValue("EnabledSslProtocols", copy.EnabledSslProtocols);
+        copy.CertificateRevocationCheckMode = section.GetValue("CertificateRevocationCheckMode", copy.CertificateRevocationCheckMode);
+        copy.EncryptionPolicy = section.GetValue("EncryptionPolicy", copy.EncryptionPolicy);
+        copy.AllowRenegotiation = section.GetValue("AllowRenegotiation", copy.AllowRenegotiation);
+        copy.AllowTlsResume = section.GetValue("AllowTlsResume", copy.AllowTlsResume);
+        return copy;
+    }
+
+    private static SslClientAuthenticationOptions? CopyTlsOptions(SslClientAuthenticationOptions? options)
+    {
+        if (options is null)
+        {
+            return null;
+        }
+
         return new SslClientAuthenticationOptions
         {
-            TargetHost = section.GetValue("TargetHost", options.TargetHost),
-            EnabledSslProtocols = section.GetValue("EnabledSslProtocols", options.EnabledSslProtocols),
-            CertificateRevocationCheckMode = section.GetValue("CertificateRevocationCheckMode", options.CertificateRevocationCheckMode),
-            EncryptionPolicy = section.GetValue("EncryptionPolicy", options.EncryptionPolicy),
-            AllowRenegotiation = section.GetValue("AllowRenegotiation", options.AllowRenegotiation),
-            AllowTlsResume = section.GetValue("AllowTlsResume", options.AllowTlsResume),
+            TargetHost = options.TargetHost,
+            EnabledSslProtocols = options.EnabledSslProtocols,
+            CertificateRevocationCheckMode = options.CertificateRevocationCheckMode,
+            EncryptionPolicy = options.EncryptionPolicy,
+            AllowRenegotiation = options.AllowRenegotiation,
+            AllowTlsResume = options.AllowTlsResume,
             RemoteCertificateValidationCallback = options.RemoteCertificateValidationCallback,
             LocalCertificateSelectionCallback = options.LocalCertificateSelectionCallback,
             ClientCertificates = options.ClientCertificates,
