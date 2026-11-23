@@ -23,7 +23,18 @@ public class ContainerFixtureIntegrationTests
     [Arguments(RespireContainerServer.Valkey, RespireContainerTopology.Sentinel)]
     public async Task PublicFixtureSupportsEveryServerAndTopology(RespireContainerServer server, RespireContainerTopology topology)
     {
-        await using var fixture = await RespireContainerFixture.StartAsync(new() { Server = server, Topology = topology });
+        var fixtureOptions = new RespireContainerOptions { Server = server, Topology = topology };
+
+        if (topology != RespireContainerTopology.Sentinel)
+        {
+            fixtureOptions = fixtureOptions with
+            {
+                SentinelDownAfter = TimeSpan.Zero,
+                SentinelFailoverTimeout = TimeSpan.FromDays(30),
+            };
+        }
+
+        await using var fixture = await RespireContainerFixture.StartAsync(fixtureOptions);
         var disposableOptions = fixture.CreateOptions();
         disposableOptions.Endpoints.Clear();
         var options = fixture.CreateOptions();
@@ -120,6 +131,28 @@ public class ContainerFixtureIntegrationTests
     }
 
     [Test]
+    [ParallelLimiter<DockerHeavy>]
+    public async Task SentinelCanRewriteConfigurationAsNonRootAsync()
+    {
+        var options = new RespireContainerOptions { Topology = RespireContainerTopology.Sentinel };
+        await using var fixture = await RespireContainerFixture.StartAsync(options, default, (ports, _) =>
+            Task.FromResult(RespireContainerFixture.BuildContainer(options, ports, builder =>
+                builder.WithCreateParameterModifier(parameters => parameters.User = "redis"))));
+
+        foreach (var endpoint in fixture.SentinelEndpoints)
+        {
+            await using var sentinel = await RespireClient.ConnectAsync(new RespireOptions
+            {
+                Endpoints = [endpoint],
+                Protocol = RespireProtocol.Resp2,
+                AllowAdmin = true,
+            });
+            using var result = await sentinel.ExecuteAsync(RespireCommands.Sentinel.SENTINEL_FLUSHCONFIG, []);
+            result.AsString().Should().Be("OK");
+        }
+    }
+
+    [Test]
     [Arguments(RespireContainerServer.Redis)]
     [Arguments(RespireContainerServer.Valkey)]
     public async Task ClusterStartsWithDistinctNonzeroConfigurationEpochs(RespireContainerServer server)
@@ -171,9 +204,9 @@ public class ContainerFixtureIntegrationTests
             new RespireContainerOptions { Topology = (RespireContainerTopology)99 },
             new RespireContainerOptions { Server = (RespireContainerServer)99 },
             new RespireContainerOptions { Image = " " },
-            new RespireContainerOptions { SentinelDownAfter = TimeSpan.Zero },
-            new RespireContainerOptions { SentinelFailoverTimeout = TimeSpan.FromMilliseconds(0.5) },
-            new RespireContainerOptions { SentinelFailoverTimeout = TimeSpan.FromDays(30) },
+            new RespireContainerOptions { Topology = RespireContainerTopology.Sentinel, SentinelDownAfter = TimeSpan.Zero },
+            new RespireContainerOptions { Topology = RespireContainerTopology.Sentinel, SentinelFailoverTimeout = TimeSpan.FromMilliseconds(0.5) },
+            new RespireContainerOptions { Topology = RespireContainerTopology.Sentinel, SentinelFailoverTimeout = TimeSpan.FromDays(30) },
         })
         {
             Func<Task> start = async () => await RespireContainerFixture.StartAsync(options);
