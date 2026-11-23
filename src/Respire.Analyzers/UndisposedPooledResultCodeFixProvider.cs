@@ -26,15 +26,20 @@ public sealed class UndisposedPooledResultCodeFixProvider : CodeFixProvider
     public override async Task RegisterCodeFixesAsync(CodeFixContext context)
     {
         var root = await context.Document.GetSyntaxRootAsync(context.CancellationToken).ConfigureAwait(false);
+        var model = await context.Document.GetSemanticModelAsync(context.CancellationToken).ConfigureAwait(false);
 
-        if (root is null)
+        if (root is null || model is null)
         {
             return;
         }
 
         foreach (var diagnostic in context.Diagnostics)
         {
-            if (root.FindNode(diagnostic.Location.SourceSpan).FirstAncestorOrSelf<LocalDeclarationStatementSyntax>() is not { } declaration)
+            var span = diagnostic.Location.SourceSpan;
+            var token = root.FindToken(span.Start);
+
+            if (token.Parent is not VariableDeclaratorSyntax variable || variable.Identifier.Span != span
+                || variable.Parent?.Parent is not LocalDeclarationStatementSyntax declaration)
             {
                 continue;
             }
@@ -47,6 +52,14 @@ public sealed class UndisposedPooledResultCodeFixProvider : CodeFixProvider
 
             // A using declaration cannot be placed directly in a switch section (CS8647).
             if (declaration.Parent is SwitchSectionSyntax)
+            {
+                continue;
+            }
+
+            // A using variable is read-only. Writes anywhere outside the declaration invalidate this fix.
+            if (model.GetDeclaredSymbol(variable, context.CancellationToken) is not ILocalSymbol local
+                || model.AnalyzeDataFlow(declaration) is not { Succeeded: true } flow
+                || flow.WrittenOutside.Contains(local, SymbolEqualityComparer.Default))
             {
                 continue;
             }

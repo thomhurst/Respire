@@ -12,11 +12,10 @@ namespace Respire.Analyzers;
 /// without disposal leaks its pooled buffer.
 /// </summary>
 /// <remarks>
-/// The analysis is deliberately conservative: it only reports a local whose every use is a
-/// non-owning read (<c>result.AsString()</c>, <c>result[0]</c>, …). The moment the value is passed
-/// on, returned, assigned, or captured, ownership belongs to code this rule cannot see and it stays
-/// silent. Nested results from the indexer are views over the root, are never obtained from an
-/// <c>await</c>, and so are never candidates.
+/// The analysis tracks named locals and reports temporary leases used as discards or non-owning reads.
+/// Passing the lease itself to another owner, such as through an argument or return, is treated as an
+/// ownership transfer. Indexing and enumeration borrow views of the elements and leave the root
+/// lease's disposal obligation with its owner.
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
@@ -27,13 +26,12 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     internal static readonly DiagnosticDescriptor Rule = new(
         DiagnosticIds.UndisposedPooledResult,
         title: "Pooled Respire result is never disposed",
-        messageFormat: "'{0}' holds a pooled {1} that is never disposed; declare it with 'using' so the buffer returns to the pool",
+        messageFormat: "{0} holds a pooled {1} that is never disposed; use 'using' or dispose it explicitly",
         category: DiagnosticIds.Category,
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
-        description: "Results from explicit lease APIs own pooled memory. A local that is awaited "
-            + "into existence and then never disposed keeps that buffer out of the pool for good. "
-            + "Declare it with a 'using' declaration (or dispose it explicitly).");
+        description: "Results from explicit lease APIs own pooled memory. "
+            + "Dispose the root lease explicitly or with 'using' to return the buffer to the pool.");
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics
     {
@@ -62,6 +60,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 nodeContext => AnalyzeAssignment(nodeContext, resultType, leaseType),
                 SyntaxKind.SimpleAssignmentExpression,
                 SyntaxKind.CoalesceAssignmentExpression);
+            compilationStart.RegisterSyntaxNodeAction(
+                nodeContext => AnalyzeTemporary(nodeContext, resultType, leaseType),
+                SyntaxKind.AwaitExpression);
         });
     }
 
@@ -113,7 +114,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            context.ReportDiagnostic(Diagnostic.Create(Rule, variable.Identifier.GetLocation(), local.Name, pooledType.Name));
+            context.ReportDiagnostic(Diagnostic.Create(Rule, variable.Identifier.GetLocation(), $"'{local.Name}'", pooledType.Name));
         }
     }
 
@@ -141,7 +142,48 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             return;
         }
 
-        context.ReportDiagnostic(Diagnostic.Create(Rule, identifier.GetLocation(), local.Name, pooledType.Name));
+        context.ReportDiagnostic(Diagnostic.Create(Rule, identifier.GetLocation(), $"'{local.Name}'", pooledType.Name));
+    }
+
+    private static void AnalyzeTemporary(
+        SyntaxNodeAnalysisContext context, INamedTypeSymbol? resultType, INamedTypeSymbol? leaseType)
+    {
+        var awaited = (AwaitExpressionSyntax)context.Node;
+
+        if (context.SemanticModel.GetTypeInfo(awaited, context.CancellationToken).Type is not { } type
+            || (Match(type, resultType) ?? Match(type, leaseType)) is not { } pooledType
+            || !IsRespireAcquisition(context, awaited.Expression)
+            || IsImmediatelyReleasedOrTransferred(context, GetOutermostAcquisitionExpression(awaited)))
+        {
+            return;
+        }
+
+        context.ReportDiagnostic(Diagnostic.Create(Rule, awaited.GetLocation(), "This expression", pooledType.Name));
+    }
+
+    private static ExpressionSyntax GetOutermostAcquisitionExpression(ExpressionSyntax expression)
+    {
+        while (true)
+        {
+            expression = ScopeWalker.GetOutermostTransparentExpression(expression);
+
+            switch (expression.Parent)
+            {
+                case ConditionalExpressionSyntax conditional when ScopeWalker.IsSame(conditional.WhenTrue, expression)
+                                                                 || ScopeWalker.IsSame(conditional.WhenFalse, expression):
+                    expression = conditional;
+                    break;
+                case BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression):
+                    expression = coalesce;
+                    break;
+                case SwitchExpressionArmSyntax arm when ScopeWalker.IsSame(arm.Expression, expression)
+                                                        && arm.Parent is SwitchExpressionSyntax switchExpression:
+                    expression = switchExpression;
+                    break;
+                default:
+                    return expression;
+            }
+        }
     }
 
     private static bool ContainsRespireAcquisition(
@@ -262,7 +304,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         var releases = new List<SyntaxNode>();
 
         if (acquisitionAssignment is not null
-            && IsImmediatelyReleasedOrTransferred(context, acquisitionAssignment))
+            && IsImmediatelyReleasedOrTransferred(context, ScopeWalker.GetOutermostTransparentExpression(acquisitionAssignment)))
         {
             return true;
         }
@@ -282,7 +324,10 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (ScopeWalker.IsDiscarded(reference))
+            var use = ScopeWalker.GetOutermostTransparentExpression(reference);
+
+            if (use.Parent is AssignmentExpressionSyntax discard && ScopeWalker.IsSame(discard.Right, use)
+                && IsDiscardTarget(context, discard))
             {
                 continue;
             }
@@ -298,8 +343,6 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 releases.Add(reference);
                 continue;
             }
-
-            var use = ScopeWalker.GetOutermostTransparentExpression(reference);
 
             switch (use.Parent)
             {
@@ -327,8 +370,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
                     break;
 
-                // result[0] — a non-owning view of an element.
+                // Indexing and enumeration borrow the elements without disposing the root.
                 case ElementAccessExpressionSyntax element when ScopeWalker.IsSame(element.Expression, use):
+                case CommonForEachStatementSyntax loop when ScopeWalker.IsSame(loop.Expression, use):
                     break;
 
                 // result?.Dispose()
@@ -388,10 +432,8 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 context.SemanticModel, scope, reassignment, reference, context.CancellationToken));
 
     private static bool IsImmediatelyReleasedOrTransferred(
-        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+        SyntaxNodeAnalysisContext context, ExpressionSyntax use)
     {
-        var use = ScopeWalker.GetOutermostTransparentExpression(expression);
-
         switch (use.Parent)
         {
             case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):
@@ -407,6 +449,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                        && member.Parent is not InvocationExpressionSyntax;
 
             case ElementAccessExpressionSyntax element when ScopeWalker.IsSame(element.Expression, use):
+            case CommonForEachStatementSyntax loop when ScopeWalker.IsSame(loop.Expression, use):
                 return false;
 
             case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, use):
@@ -422,12 +465,14 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 return false;
 
             case AssignmentExpressionSyntax outerAssignment when ScopeWalker.IsSame(outerAssignment.Right, use):
-                return context.SemanticModel.GetOperation(
-                    outerAssignment.Left, context.CancellationToken) is not IDiscardOperation;
+                return !IsDiscardTarget(context, outerAssignment);
 
             default:
                 // using, return, argument, or assignment source transfers or disposes ownership.
                 return true;
         }
     }
+
+    private static bool IsDiscardTarget(SyntaxNodeAnalysisContext context, AssignmentExpressionSyntax assignment)
+        => context.SemanticModel.GetOperation(assignment.Left, context.CancellationToken) is IDiscardOperation;
 }

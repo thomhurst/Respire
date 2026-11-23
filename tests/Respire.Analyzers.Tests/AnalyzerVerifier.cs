@@ -53,6 +53,11 @@ internal static class CodeFixVerifier<TAnalyzer, TCodeFix>
         var test = CreateTest();
         test.TestState.Sources.Add(source);
         test.TestState.Sources.Add(RespireApiStub.Source);
+        test.FixedState.Sources.Add(source);
+        test.FixedState.Sources.Add(RespireApiStub.Source);
+        test.FixedState.MarkupHandling = MarkupMode.Allow;
+        test.NumberOfIncrementalIterations = 0;
+        test.NumberOfFixAllIterations = 0;
 
         return test.RunAsync(CancellationToken.None);
     }

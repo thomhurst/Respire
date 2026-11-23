@@ -48,6 +48,114 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    [Arguments("_ = {|RESP001:await client.ExecuteLeaseAsync(\"GET\", \"app:entry\")|};")]
+    [Arguments("_ = ({|RESP001:await client.ExecuteLeaseAsync(\"GET\", \"app:entry\")|}).AsString();")]
+    [Arguments("_ = ({|RESP001:await client.ExecuteLeaseAsync(\"GET\", \"app:entry\")|})[0].AsString();")]
+    [Arguments("_ = ({|RESP001:await client.GetLeaseAsync(\"app:entry\").ConfigureAwait(false)|}).Length;")]
+    [Arguments("_ = flag ? ({|RESP001:await client.ExecuteLeaseAsync(\"PING\")|}) : default;")]
+    [Arguments("_ = existing ?? {|RESP001:await client.ExecuteLeaseAsync(\"PING\")|};")]
+    [Arguments("_ = flag switch { true => {|RESP001:await client.ExecuteLeaseAsync(\"PING\")|}, false => existing.GetValueOrDefault() };")]
+    [Arguments("_ = (flag ? {|RESP001:await client.ExecuteLeaseAsync(\"PING\")|} : existing)?.AsString();")]
+    [Arguments("{|RESP001:await client.ExecuteLeaseAsync(\"PING\")|};")]
+    public async Task AbandonedTemporaryLease_IsFlagged(string statement) => await Verify.VerifyAsync(
+        $$"""
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool flag, RespireResult? existing)
+            {
+                {{statement}}
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ReturnedInlineProjectionStillNeedsDisposal() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task<string> RunAsync(RespireClient client)
+            {
+                return ({|RESP001:await client.ExecuteLeaseAsync("GET", "app:entry")|}).AsString();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task TemporaryLease_DisposalAndOwnershipTransferAreNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task<RespireResult> RunAsync(RespireClient client, bool flag, RespireResult existing)
+            {
+                (await client.ExecuteLeaseAsync("PING")).Dispose();
+                (flag ? await client.ExecuteLeaseAsync("PING") : (RespireResult?)null)?.Dispose();
+                using (await client.ExecuteLeaseAsync("PING")) { }
+                Consume(await client.ExecuteLeaseAsync("PING"));
+                (await client.ExecuteLeaseAsync("PING")).Consume();
+
+                {
+                    RespireResult _ = default;
+                    _ = await client.ExecuteLeaseAsync("PING");
+                    _.Dispose();
+                }
+
+                _ = (await client.ExecuteAsync("PING")).AsString();
+                return flag ? await client.ExecuteLeaseAsync("PING") : existing;
+            }
+
+            public async Task<RespireResult> TransferToUnderscoreAsync(RespireClient client)
+            {
+                RespireResult _;
+                var result = await client.ExecuteLeaseAsync("PING");
+                _ = result;
+                return _;
+            }
+
+            private static void Consume(RespireResult result) => result.Dispose();
+        }
+
+        public static class LeaseExtensions
+        {
+            public static void Consume(this RespireResult result) => result.Dispose();
+        }
+        """);
+
+    [Test]
+    [Arguments("var {|RESP001:result|} = await client.ExecuteLeaseAsync(\"LRANGE\");", "result", "")]
+    [Arguments("var result = await client.ExecuteLeaseAsync(\"LRANGE\");", "result", "result.Dispose();")]
+    [Arguments("using var result = await client.ExecuteLeaseAsync(\"LRANGE\");", "result", "")]
+    [Arguments("", "({|RESP001:await client.ExecuteLeaseAsync(\"LRANGE\")|})", "")]
+    public async Task Foreach_BorrowsResultWithoutDisposingIt(string declaration, string collection, string cleanup) =>
+        await Verify.VerifyAsync(
+            $$"""
+            using System.Threading.Tasks;
+            using Respire;
+
+            public class Caller
+            {
+                public async Task RunAsync(RespireClient client)
+                {
+                    {{declaration}}
+                    foreach (var item in {{collection}})
+                    {
+                        _ = item.AsString();
+                    }
+                    {{cleanup}}
+                }
+            }
+            """);
+
+    [Test]
     [Arguments("System.Exception")]
     [Arguments("System.InvalidOperationException")]
     public async Task GenericExceptionCaughtByItsBaseDoesNotBypassRelease(string constraint) => await Verify.VerifyAsync(
@@ -683,6 +791,42 @@ public class UndisposedPooledResultAnalyzerTests
                         Console.WriteLine(result.AsString());
                         break;
                 }
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("if (replace) { result = replacement; }")]
+    [Arguments("if (replace) { (result, _) = (replacement, 0); }")]
+    [Arguments("void SetResult() => result = replacement; if (replace) { SetResult(); }")]
+    public async Task CodeFix_IsNotOfferedForReassignedLocal(string write) => await VerifyFix.VerifyNoFixAsync(
+        $$"""
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task<string> RunAsync(RespireClient client, RespireResult replacement, bool replace)
+            {
+                var {|RESP001:result|} = await client.ExecuteLeaseAsync("GET", "app:entry");
+                {{write}}
+                return result.AsString();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task CodeFix_IsNotOfferedForInlineLeaseInLocalInitializer() => await VerifyFix.VerifyNoFixAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task<string> RunAsync(RespireClient client)
+            {
+                var value = ({|RESP001:await client.ExecuteLeaseAsync("GET", "app:entry")|}).AsString();
+                return value;
             }
         }
         """);
