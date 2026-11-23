@@ -25,6 +25,40 @@ public class TypedSearchQueryTests
     }
 
     [Test]
+    public async Task EmptyValuesUseQuotedSyntaxInBuildersAndGeneratedFilters()
+    {
+        await Assert.That(RespireSearchQueryBuilder.Text("").Value).IsEqualTo("\"\"");
+        await Assert.That(RespireSearchQueryBuilder.TextField("title", "").Value).IsEqualTo("@title:\"\"");
+        await Assert.That(RespireSearchQueryBuilder.Tag("category", "").Value).IsEqualTo("@category:{\"\"}");
+
+        var query = SearchHashModelSearchSchema.Query();
+        await Assert.That(query.Where(f => f.Title.Matches("")).Expression.Value).IsEqualTo("@title:\"\"");
+        await Assert.That(query.Where(f => f.Category.EqualTo("")).Expression.Value).IsEqualTo("@category:{\"\"}");
+    }
+
+    [Test]
+    public async Task EmptyValueSupportPreservesOtherInputValidation()
+    {
+        await Assert.That(() => RespireSearchQueryBuilder.Text(null!)).Throws<ArgumentNullException>();
+        await Assert.That(() => RespireSearchQueryBuilder.Text(" \t")).Throws<ArgumentException>();
+        await Assert.That(() => RespireSearchQueryBuilder.Tag("category", null!)).Throws<ArgumentNullException>();
+        await Assert.That(() => RespireSearchQueryBuilder.Tag("category", " \t")).Throws<ArgumentException>();
+        await Assert.That(() => RespireSearchQueryBuilder.TextField("", "")).Throws<ArgumentException>();
+        await Assert.That(() => RespireSearchQueryBuilder.Tag(" ", "")).Throws<ArgumentException>();
+    }
+
+    [Test]
+    public async Task QueryBuildersKeepUnicodeLiteralAndEscapeAsciiSyntax()
+    {
+        await Assert.That(RespireSearchQueryBuilder.Tag("kind🐛", "cafe\u0301—雪、🐛.a|b").Value)
+            .IsEqualTo("@kind🐛:{cafe\u0301—雪、🐛\\.a\\|b}");
+        await Assert.That(RespireSearchQueryBuilder.TextField("réservé🐛", "hello").Value)
+            .IsEqualTo("@réservé🐛:\"hello\"");
+        await Assert.That(RespireSearchQueryBuilder.NumericRange("display—rank", 1L, 1L).Value)
+            .IsEqualTo("@display—rank:[1 1]");
+    }
+
+    [Test]
     public async Task QueriesAreImmutableAndProjectionIsSnapshotted()
     {
         var original = SearchHashModelSearchSchema.Query();
