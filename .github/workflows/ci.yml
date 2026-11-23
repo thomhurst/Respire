@@ -311,11 +311,12 @@ jobs:
         shell: pwsh
         run: ./scripts/Test-FocusedTests.ps1
 
-      - name: Verify issue loop queue counts and audit retention
+      - name: Verify issue loop queue counts, audit retention, and main health
         shell: pwsh
         run: |
           ./scripts/Test-IssuePrLoopQueueCount.ps1
           ./scripts/Test-IssuePrLoopAuditRetention.ps1
+          ./scripts/Test-IssuePrLoopMainHealth.ps1
 
       - name: Verify worktree cleanup safety
         shell: pwsh
