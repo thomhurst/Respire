@@ -63,6 +63,12 @@ public sealed class SyncOverAsyncAnalyzer : DiagnosticAnalyzer
 
     private static bool HasSuccessfulCompletionGuard(OperationAnalysisContext context, SemanticModel model, IOperation operand)
     {
+        while (operand is IInvocationOperation { TargetMethod.Name: "AsTask" or "ConfigureAwait", Instance: { } instance } adapter
+               && IsTask(adapter.TargetMethod.ContainingType))
+        {
+            operand = instance;
+        }
+
         SyntaxNode read = context.Operation.Syntax;
         return operand is ILocalReferenceOperation { Local: { RefKind: RefKind.None } local }
             && ScopeWalker.GetEnclosingScope(read) is { } scope

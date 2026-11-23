@@ -80,6 +80,34 @@ public class PendingReadBeforeFlushAnalyzerTests
     }
 
     [Test]
+    public Task CapturedExecutionDoesNotProveTheCurrentBatchFlushed()
+    {
+        return Verify.VerifyAsync("""
+            using System;
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                Func<bool, string> CreateReader(RespireClient client)
+                {
+                    ValueTask<RespireBatchResult> execution = default;
+                    return flush =>
+                    {
+                        var batch = client.CreateBatch();
+                        var pending = batch.GetStringAsync("key");
+                        if (flush)
+                        {
+                            execution = batch.ExecuteAsync();
+                        }
+
+                        return execution.IsCompletedSuccessfully ? {|RESP002:pending.Result|} : "";
+                    };
+                }
+            }
+            """);
+    }
+
+    [Test]
     public Task ReplacingTheCheckedExecutionStillWarns()
     {
         return Verify.VerifyAsync("""

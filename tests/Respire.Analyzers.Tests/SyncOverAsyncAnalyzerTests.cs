@@ -7,14 +7,18 @@ namespace Respire.Analyzers.Tests;
 public class SyncOverAsyncAnalyzerTests
 {
     [Test]
-    [Arguments("command.IsCompletedSuccessfully", false)]
-    [Arguments("!command.IsCompletedSuccessfully", true)]
-    [Arguments("command.IsCompletedSuccessfully || skip", true)]
-    [Arguments("skip && command.IsCompletedSuccessfully", false)]
-    [Arguments("other.IsCompletedSuccessfully", true)]
-    public Task ReadsInsideSuccessGuards(string condition, bool warning)
+    [Arguments("command.IsCompletedSuccessfully", "command.Result", false)]
+    [Arguments("!command.IsCompletedSuccessfully", "command.Result", true)]
+    [Arguments("command.IsCompletedSuccessfully || skip", "command.Result", true)]
+    [Arguments("skip && command.IsCompletedSuccessfully", "command.Result", false)]
+    [Arguments("other.IsCompletedSuccessfully", "command.Result", true)]
+    [Arguments("command.IsCompletedSuccessfully", "command.ConfigureAwait(false).GetAwaiter().GetResult()", false)]
+    [Arguments("command.IsCompletedSuccessfully", "command.AsTask().Result", false)]
+    [Arguments("command.IsCompletedSuccessfully", "command.AsTask().ConfigureAwait(false).GetAwaiter().GetResult()", false)]
+    [Arguments("other.IsCompletedSuccessfully", "command.ConfigureAwait(false).GetAwaiter().GetResult()", true)]
+    public Task ReadsInsideSuccessGuards(string condition, string expression, bool warning)
     {
-        string read = warning ? "{|RESP009:command.Result|}" : "command.Result";
+        string read = warning ? "{|RESP009:" + expression + "|}" : expression;
         return Verify.VerifyAsync($$"""
             using System.Threading.Tasks;
             using Respire;
