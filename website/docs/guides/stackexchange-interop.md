@@ -271,6 +271,7 @@ Other flags, including retry categories, throw `NotSupportedException`.
 - `Close`/`Dispose` reject new work and cancel queued tasks that have not run.
 - The default close waits for started commands, then disposes owned clients. `Close(false)` cancels started commands first.
 - Closing is idempotent. Borrowed clients stay usable.
+- If a command hook rejects an unsubscribe while closing an adapter over a borrowed client, close reports the error and detaches the adapter's callbacks. Call `CloseAsync()` again after the hook allows unsubscribe to release the remaining subscriptions.
 
 ### Transactions and conditions
 

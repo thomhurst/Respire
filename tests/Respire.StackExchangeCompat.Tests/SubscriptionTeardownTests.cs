@@ -96,7 +96,7 @@ public class SubscriptionTeardownTests(RedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
-    public async Task RejectedCloseDetachesCallbacksFromBorrowedClient(int protocol)
+    public async Task RejectedCloseDetachesCallbacksAndCanBeRetried(int protocol)
     {
         var hook = new RejectNthUnsubscribe(1);
         await using var native = await RespireClient.ConnectAsync(Options(protocol, hook));
@@ -123,13 +123,65 @@ public class SubscriptionTeardownTests(RedisTestContainer fixture)
         Assert.Equal(1, await publisher.PublishAsync(channel, "before close"));
         await beforeClose.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // CloseAsync caches the failure, so disposing the adapter would throw it again.
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => connection.CloseAsync());
+        var firstClose = connection.CloseAsync();
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => firstClose);
         Assert.Same(hook.Rejection, error);
         await native.PingAsync();
 
+        Assert.False(connection.IsConnected);
+        Assert.Throws<ObjectDisposedException>(() => connection.GetSubscriber());
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => subscriber.SubscribeAsync(channel, (_, _) =>
+        {
+        }));
         Assert.Equal(1, await publisher.PublishAsync(channel, "after close"));
         await Assert.ThrowsAsync<TimeoutException>(() => afterClose.Task.WaitAsync(TimeSpan.FromSeconds(1)));
+
+        var retry = connection.CloseAsync();
+        Assert.NotSame(firstClose, retry);
+        Assert.Same(retry, connection.CloseAsync());
+        await retry;
+        Assert.Same(retry, connection.CloseAsync());
+        Assert.Equal(0, await publisher.PublishAsync(channel, "after retry"));
+        await native.PingAsync();
+    }
+
+    [Test]
+    public async Task CloseRetriesRemainingSubscriptionsAfterPartialTeardown()
+    {
+        var hook = new RejectNthUnsubscribe(2);
+        await using var native = await RespireClient.ConnectAsync(Options(3, hook));
+        using var control = await ConnectionMultiplexer.ConnectAsync(fixture.IsolatedStackExchangeConnectionString);
+        var connection = RespireConnectionMultiplexer.Wrap(native);
+        var subscriber = connection.GetSubscriber();
+        var publisher = control.GetSubscriber();
+        RedisChannel[] channels = [.. Enumerable.Range(0, 3)
+            .Select(_ => RedisChannel.Literal($"close-partial-{Guid.NewGuid():N}"))];
+
+        foreach (var channel in channels)
+        {
+            await subscriber.SubscribeAsync(channel, static (_, _) =>
+            {
+            });
+        }
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => connection.CloseAsync());
+        Assert.Same(hook.Rejection, error);
+        long active = 0;
+
+        foreach (var channel in channels)
+        {
+            active += await publisher.PublishAsync(channel, "after rejection");
+        }
+
+        Assert.Equal(2, active);
+        await connection.DisposeAsync();
+
+        foreach (var channel in channels)
+        {
+            Assert.Equal(0, await publisher.PublishAsync(channel, "after retry"));
+        }
+
+        await native.PingAsync();
     }
 
     private RespireOptions Options(int protocol, RespireCommandHook hook)

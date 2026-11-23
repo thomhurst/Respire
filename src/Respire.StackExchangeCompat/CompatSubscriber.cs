@@ -185,14 +185,38 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
 
         return owner.Run(async token =>
         {
-            await DisposeSubscriptionsAsync(closing: false, token).ConfigureAwait(false);
+            await DisposeSubscriptionsAsync(token).ConfigureAwait(false);
             return true;
         });
     }
 
     public void UnsubscribeAll(CommandFlags flags = CommandFlags.None) => owner.Wait(UnsubscribeAllAsync(flags));
 
-    internal async Task DisposeSubscriptionsAsync(bool closing, CancellationToken token = default)
+    // The owner checks this only after a close attempt has completed and all command work has drained.
+    internal bool HasPendingSubscriptions => _subscriptions.Count != 0;
+
+    internal async Task CloseSubscriptionsAsync(bool ownsClient)
+    {
+        try
+        {
+            await DisposeSubscriptionsAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            // Keep failed registrations for retry on a borrowed client, but detach their callbacks.
+            foreach (var registration in _subscriptions.Values)
+            {
+                registration.ClearHandlers();
+            }
+
+            if (ownsClient)
+            {
+                _subscriptions.Clear();
+            }
+        }
+    }
+
+    private async Task DisposeSubscriptionsAsync(CancellationToken token = default)
     {
         await _dispatch.WaitAsync(token).ConfigureAwait(false);
 
@@ -205,17 +229,6 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
         }
         finally
         {
-            if (closing)
-            {
-                // A closed adapter cannot retry. Detach callbacks from any subscriptions still live on a borrowed client.
-                foreach (var registration in _subscriptions.Values)
-                {
-                    registration.ClearHandlers();
-                }
-
-                _subscriptions.Clear();
-            }
-
             _dispatch.Release();
         }
     }
