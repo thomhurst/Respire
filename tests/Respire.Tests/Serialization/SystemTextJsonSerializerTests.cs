@@ -120,6 +120,48 @@ public class SystemTextJsonSerializerTests
     }
 
     [Test]
+    [Arguments(0, 64, false)]
+    [Arguments(0, 64, true)]
+    [Arguments(2, 2, false)]
+    [Arguments(2, 2, true)]
+    public async Task WriterDepthLimitMatchesNativeSerialization(int maxDepth, int depthLimit, bool useContext)
+    {
+        var options = new JsonSerializerOptions { MaxDepth = maxDepth };
+        options.Converters.Add(new NestedArraysConverter());
+
+        var context = useContext ? new TestJsonContext(options) : null;
+        var serializer = context is null
+            ? new RespireSystemTextJsonSerializer(options)
+            : RespireSystemTextJsonSerializer.FromContext(context);
+        var destination = new ArrayBufferWriter<byte>();
+        var atLimit = new NestedArrays(depthLimit);
+        var aboveLimit = new NestedArrays(depthLimit + 1);
+
+        string expected = SerializeNative(atLimit);
+        serializer.Serialize(destination, atLimit);
+        await Assert.That(Encoding.UTF8.GetString(destination.WrittenSpan)).IsEqualTo(expected);
+
+        destination.Clear();
+        serializer.Serialize(destination, typeof(NestedArrays), atLimit);
+        await Assert.That(Encoding.UTF8.GetString(destination.WrittenSpan)).IsEqualTo(expected);
+
+        destination.Clear();
+        await Assert.That(() => SerializeNative(aboveLimit)).ThrowsExactly<JsonException>();
+        await Assert.That(() => serializer.Serialize(destination, aboveLimit)).ThrowsExactly<JsonException>();
+
+        destination.Clear();
+        await Assert.That(() => serializer.Serialize(destination, typeof(NestedArrays), aboveLimit))
+            .ThrowsExactly<JsonException>();
+
+        string SerializeNative(NestedArrays value)
+        {
+            return context is null
+                ? JsonSerializer.Serialize(value, options)
+                : JsonSerializer.Serialize(value, context.NestedArrays);
+        }
+    }
+
+    [Test]
     public async Task SerializerContract_RequiresGenericAndTypeBasedMembers()
     {
         var methods = typeof(IRespireSerializer).GetMethods();
@@ -129,8 +171,33 @@ public class SystemTextJsonSerializerTests
     }
 
     internal sealed record Payload(string Name, int Age);
+
+    internal readonly record struct NestedArrays(int Depth);
+
+    private sealed class NestedArraysConverter : JsonConverter<NestedArrays>
+    {
+        public override NestedArrays Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            throw new NotSupportedException();
+        }
+
+        public override void Write(Utf8JsonWriter writer, NestedArrays value, JsonSerializerOptions options)
+        {
+            // Write containers directly so the test exercises the writer's depth check.
+            for (int depth = 0; depth < value.Depth; depth++)
+            {
+                writer.WriteStartArray();
+            }
+
+            for (int depth = 0; depth < value.Depth; depth++)
+            {
+                writer.WriteEndArray();
+            }
+        }
+    }
 }
 
+[JsonSerializable(typeof(SystemTextJsonSerializerTests.NestedArrays))]
 [JsonSerializable(typeof(SystemTextJsonSerializerTests.Payload))]
 [JsonSerializable(typeof(int))]
 internal sealed partial class TestJsonContext : JsonSerializerContext;
