@@ -9,7 +9,7 @@ internal sealed record StoredResponse(int Status, Dictionary<string, string[]> H
     private const int HeaderLimit = 16 * 1024;
     private static readonly string[] s_safeHeaders =
         [
-            "Content-Type", "Content-Language", "Content-Encoding", "Content-Range",
+            "Content-Type", "Content-Language", "Content-Encoding", "Content-Disposition", "Content-Range",
             "Location", "ETag", "Last-Modified", "Content-Length",
         ];
 
@@ -127,7 +127,7 @@ internal sealed record StoredResponse(int Status, Dictionary<string, string[]> H
             context.Response.Headers[name] = new StringValues(values);
         }
 
-        if (Status is StatusCodes.Status204NoContent or StatusCodes.Status304NotModified)
+        if (Status is StatusCodes.Status204NoContent or StatusCodes.Status205ResetContent or StatusCodes.Status304NotModified)
         {
             return;
         }

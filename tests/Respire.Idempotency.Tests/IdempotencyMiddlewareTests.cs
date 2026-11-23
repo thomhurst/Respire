@@ -144,30 +144,45 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task SingleRangeFileReplayPreservesContentRange(bool kestrel)
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task SeparateServersReplayFileDownloadWithOriginalHeaders(bool kestrel, bool singleRange)
     {
         await using RespireClient client = await RespireClient.ConnectAsync(redis.ConnectionString);
+        const string fileName = "order-receipt.csv";
         int executions = 0;
         RequestDelegate endpoint = context =>
         {
             Interlocked.Increment(ref executions);
-            return Results.File("abcdef"u8.ToArray(), enableRangeProcessing: true).ExecuteAsync(context);
+            return Results.File("abcdef"u8.ToArray(), "text/csv", fileName, enableRangeProcessing: true).ExecuteAsync(context);
         };
-        using TestApplication server = CreateServer(client, endpoint, kestrel: kestrel,
-            routes: routes => routes.MapGet("/file", endpoint).WithRespireIdempotency("file"));
-        using HttpClient http = server.CreateClient();
-        http.DefaultRequestHeaders.Range = new(1, 2);
-        using HttpResponseMessage first = await SendAsync(http, "/file", method: HttpMethod.Get);
-        using HttpResponseMessage replay = await SendAsync(http, "/file", method: HttpMethod.Get);
+        Action<IEndpointRouteBuilder> fileRoute = routes => routes.MapGet("/file", endpoint).WithRespireIdempotency("file");
+        using var firstServer = CreateServer(client, endpoint, routes: fileRoute, kestrel: kestrel);
+        using var secondServer = CreateServer(client, endpoint, routes: fileRoute, kestrel: kestrel);
+        using HttpClient firstHttp = firstServer.CreateClient();
+        using HttpClient secondHttp = secondServer.CreateClient();
+        firstHttp.DefaultRequestHeaders.Host = "orders.example";
+        secondHttp.DefaultRequestHeaders.Host = "orders.example";
+
+        if (singleRange)
+        {
+            firstHttp.DefaultRequestHeaders.Range = new(1, 2);
+            secondHttp.DefaultRequestHeaders.Range = new(1, 2);
+        }
+
+        using HttpResponseMessage first = await SendAsync(firstHttp, "/file", method: HttpMethod.Get);
+        using HttpResponseMessage replay = await SendAsync(secondHttp, "/file", method: HttpMethod.Get);
         await Assert.That(executions).IsEqualTo(1);
 
         foreach (HttpResponseMessage response in new[] { first, replay })
         {
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.PartialContent);
-            await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("bc");
-            await Assert.That(response.Content.Headers.ContentRange?.ToString()).IsEqualTo("bytes 1-2/6");
+            await Assert.That(response.StatusCode).IsEqualTo(singleRange ? HttpStatusCode.PartialContent : HttpStatusCode.OK);
+            await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(singleRange ? "bc" : "abcdef");
+            await Assert.That(response.Content.Headers.ContentRange?.ToString()).IsEqualTo(singleRange ? "bytes 1-2/6" : null);
+            await Assert.That(response.Content.Headers.ContentDisposition?.ToString())
+                .IsEqualTo($"attachment; filename={fileName}; filename*=UTF-8''{fileName}");
         }
     }
 
@@ -811,28 +826,43 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
     [Arguments(true, StatusCodes.Status200OK)]
     [Arguments(false, StatusCodes.Status204NoContent)]
     [Arguments(true, StatusCodes.Status204NoContent)]
+    [Arguments(false, StatusCodes.Status205ResetContent)]
+    [Arguments(true, StatusCodes.Status205ResetContent)]
     [Arguments(false, StatusCodes.Status304NotModified)]
     [Arguments(true, StatusCodes.Status304NotModified)]
     public async Task EmptyNoContentResponseIsReplayed(bool kestrel, int status)
     {
         await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
-        var executions = 0;
+        int executions = 0;
+        int requests = 0;
         var firstRequestFinished = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replayRequestFinished = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var server = CreateServer(client, context =>
         {
             Interlocked.Increment(ref executions);
             context.Response.StatusCode = status;
+            context.Response.Headers.ETag = "\"empty\"";
             return Task.CompletedTask;
         }, options => options.StoredStatusCodes.Add(status), before: app => app.Use(async (context, next) =>
         {
+            TaskCompletionSource<Exception?> requestFinished = Interlocked.Increment(ref requests) == 1
+                ? firstRequestFinished
+                : replayRequestFinished;
             Exception? failure = null;
 
             try
             {
                 await next(context);
             }
-            catch (Exception error) { failure = error; throw; }
-            finally { firstRequestFinished.TrySetResult(failure); }
+            catch (Exception error)
+            {
+                failure = error;
+                throw;
+            }
+            finally
+            {
+                requestFinished.TrySetResult(failure);
+            }
         }), kestrel: kestrel);
         using var http = server.CreateClient();
         using var first = await SendAsync(http);
@@ -840,8 +870,10 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         // connection. Observe server completion as well as the client response.
         await Assert.That(await firstRequestFinished.Task.WaitAsync(TimeSpan.FromSeconds(20))).IsNull();
         using var replay = await SendAsync(http);
+        await Assert.That(await replayRequestFinished.Task.WaitAsync(TimeSpan.FromSeconds(20))).IsNull();
         await Assert.That(first.StatusCode).IsEqualTo((HttpStatusCode)status);
         await Assert.That(replay.StatusCode).IsEqualTo((HttpStatusCode)status);
+        await Assert.That(replay.Headers.ETag?.Tag).IsEqualTo("\"empty\"");
         await Assert.That((await first.Content.ReadAsByteArrayAsync()).Length).IsEqualTo(0);
         await Assert.That((await replay.Content.ReadAsByteArrayAsync()).Length).IsEqualTo(0);
         await Assert.That(executions).IsEqualTo(1);
@@ -859,7 +891,8 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
             if (Interlocked.Increment(ref executions) == 1)
             {
                 // Exercise both the individual-value limit and aggregate header envelope limit.
-                context.Response.Headers.ContentLanguage = new string('a', combinedHeaders ? 9000 : 17 * 1024);
+                context.Response.Headers.ContentDisposition =
+                    "attachment; filename=" + new string('a', combinedHeaders ? 9000 : 17 * 1024);
 
                 if (combinedHeaders)
                 {
@@ -869,7 +902,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
                 return context.Response.WriteAsync("not stored");
             }
 
-            context.Response.Headers.ContentLanguage = "en";
+            context.Response.Headers.ContentDisposition = "attachment; filename=report.csv";
             return context.Response.WriteAsync("stored");
         });
         using var http = server.CreateClient();
@@ -880,7 +913,7 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         await Assert.That(await oversized.Content.ReadAsStringAsync()).IsEqualTo("not stored");
         await Assert.That(await retry.Content.ReadAsStringAsync()).IsEqualTo("stored");
         await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo("stored");
-        await Assert.That(replay.Content.Headers.ContentLanguage.Single()).IsEqualTo("en");
+        await Assert.That(replay.Content.Headers.ContentDisposition?.FileName).IsEqualTo("report.csv");
         await Assert.That(executions).IsEqualTo(2);
     }
 
@@ -895,7 +928,8 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
             context.Response.ContentType = "application/octet-stream";
             context.Response.Headers.ETag = "\"private-hop\"";
             context.Response.Headers.ContentLanguage = "en";
-            context.Response.Headers.Connection = "Keep-Alive, eTaG, CONTENT-language";
+            context.Response.Headers.ContentDisposition = "attachment; filename=report.csv";
+            context.Response.Headers.Connection = "Keep-Alive, eTaG, CONTENT-language, content-disposition";
             return context.Response.WriteAsync("result");
         });
         using var http = server.CreateClient();
@@ -903,8 +937,10 @@ public class IdempotencyMiddlewareTests(RedisTestContainer redis)
         using var replay = await SendAsync(http);
         await Assert.That(first.Headers.Contains("ETag")).IsTrue();
         await Assert.That(first.Content.Headers.Contains("Content-Language")).IsTrue();
+        await Assert.That(first.Content.Headers.Contains("Content-Disposition")).IsTrue();
         await Assert.That(replay.Headers.Contains("ETag")).IsFalse();
         await Assert.That(replay.Content.Headers.Contains("Content-Language")).IsFalse();
+        await Assert.That(replay.Content.Headers.Contains("Content-Disposition")).IsFalse();
         await Assert.That(replay.Headers.Contains("Connection")).IsFalse();
         await Assert.That(replay.Content.Headers.ContentType!.MediaType).IsEqualTo("application/octet-stream");
         await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo("result");
