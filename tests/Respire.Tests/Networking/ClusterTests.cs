@@ -4023,11 +4023,7 @@ public class ClusterTests
                 ("foo", "one"), ("bar", "two")),
             transaction => transaction.Strings.Lcs("foo", "bar"),
             transaction => transaction.Lists.Move("foo", "bar"),
-            transaction => transaction.Sets.Union("foo", "bar"),
-            transaction => transaction.Sets.UnionStore("foo", "bar"),
             transaction => transaction.Bitmaps.Operate(RespireBitOperation.Or, "foo", "bar"),
-            transaction => transaction.HyperLogLog.Count("foo", "bar"),
-            transaction => transaction.HyperLogLog.Merge("foo", "bar"),
         ];
 
         foreach (var queueCommand in queueCommands)
@@ -4040,12 +4036,25 @@ public class ClusterTests
             await Assert.That(transaction.Count).IsEqualTo(0);
         }
 
-        await using var geoTransaction = client.CreateTransaction();
-        var geoError = Assert.Throws<RespireCrossSlotException>(() => geoTransaction.Geo.SearchStore(
-            "foo", "bar", RespireGeoSearchOrigin.FromMember("member"), RespireGeoSearchShape.Circle(1)));
+        (string Operation, Action<RespireTransaction> Queue)[] locallyValidatedCommands =
+        [
+            ("SUNION", transaction => transaction.Sets.Union("foo", "bar")),
+            ("SUNIONSTORE", transaction => transaction.Sets.UnionStore("foo", "bar")),
+            ("PFCOUNT", transaction => transaction.HyperLogLog.Count("foo", "bar")),
+            ("PFMERGE", transaction => transaction.HyperLogLog.Merge("foo", "bar")),
+            ("GEOSEARCHSTORE", transaction => transaction.Geo.SearchStore(
+                "foo", "bar", RespireGeoSearchOrigin.FromMember("member"), RespireGeoSearchShape.Circle(1))),
+        ];
 
-        await Assert.That(geoError.CommandName).IsEqualTo("GEOSEARCHSTORE");
-        await Assert.That(geoTransaction.Count).IsEqualTo(0);
+        foreach (var (operation, queue) in locallyValidatedCommands)
+        {
+            await using var transaction = client.CreateTransaction();
+
+            var error = Assert.Throws<RespireCrossSlotException>(() => queue(transaction));
+
+            await Assert.That(error.CommandName).IsEqualTo(operation);
+            await Assert.That(transaction.Count).IsEqualTo(0);
+        }
     }
 
     [Test]

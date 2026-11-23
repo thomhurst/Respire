@@ -165,9 +165,11 @@ public class SetMembershipCommandTests
 #pragma warning restore RESP010
         await using var transaction = client.CreateTransaction();
         await Assert.That(() => transaction.Sets.Move("{a}:first", "{b}:second", "value"))
-            .Throws<InvalidOperationException>();
+            .ThrowsExactly<RespireCrossSlotException>();
         await Assert.That(() => transaction.Sets.IntersectCount(1, ["{a}:first", "{b}:second"]))
-            .Throws<InvalidOperationException>();
+            .ThrowsExactly<RespireCrossSlotException>();
+        await Assert.That(transaction.Count).IsEqualTo(0);
+
         _ = transaction.Sets.IntersectCount("{b}:first", "{b}:second");
         _ = transaction.Sets.Move("{b}:first", "{b}:second", "value");
         _ = transaction.Sets.ContainsMany("{b}:first", "value");

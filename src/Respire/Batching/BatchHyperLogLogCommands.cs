@@ -32,14 +32,9 @@ internal sealed class BatchHyperLogLogCommands(IPendingSink sink) : IRespireBatc
 
     public RespirePending<long> Count(params ReadOnlySpan<RespireKey> keys)
     {
-        if (keys.IsEmpty)
-        {
-            throw new ArgumentException("At least one key is required.", nameof(keys));
-        }
-
         return sink.Add<CmdN, long>(
             "PFCOUNT",
-            new CmdN(RespireCommands.HyperLogLog.PFCOUNT.Verb, sink.Client.MapKeys(keys)),
+            HyperLogLogCommands.CountCommand(sink.Client, keys),
             keys,
             static (c, v) => ResponseReader.Integer(in v));
     }
@@ -48,10 +43,8 @@ internal sealed class BatchHyperLogLogCommands(IPendingSink sink) : IRespireBatc
     {
         return sink.Add<Cmd1N, bool>(
             "PFMERGE",
-            new Cmd1N(
-                RespireCommands.HyperLogLog.PFMERGE.Verb,
-                sink.Client.Key(in destination),
-                sink.Client.MapKeys(sourceKeys)),
+            SingleSlotCommand.Create(sink.Client, "PFMERGE", RespireCommands.HyperLogLog.PFMERGE.Verb,
+                destination, sourceKeys),
             destination, sourceKeys,
             static (c, v) => ResponseReader.Ok(in v));
     }

@@ -73,13 +73,17 @@ internal sealed class HyperLogLogCommands(RespireClient client) : IRespireHyperL
 
     public ValueTask<long> CountAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
     {
+        return client.IntegerAsync("PFCOUNT", CountCommand(client, keys), cancellationToken);
+    }
+
+    internal static CmdN CountCommand(RespireClient client, ReadOnlySpan<RespireKey> keys)
+    {
         if (keys.IsEmpty)
         {
             throw new ArgumentException("At least one key is required.", nameof(keys));
         }
 
-        return client.IntegerAsync(
-            "PFCOUNT", new CmdN(RespireCommands.HyperLogLog.PFCOUNT.Verb, client.MapKeys(keys)), cancellationToken);
+        return SingleSlotCommand.Create(client, "PFCOUNT", RespireCommands.HyperLogLog.PFCOUNT.Verb, keys);
     }
 
     public ValueTask<bool> MergeAsync(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
@@ -90,7 +94,8 @@ internal sealed class HyperLogLogCommands(RespireClient client) : IRespireHyperL
     {
         return client.OkResultAsync(
             "PFMERGE",
-            new Cmd1N(RespireCommands.HyperLogLog.PFMERGE.Verb, client.Key(in destination), client.MapKeys(sourceKeys)),
+            SingleSlotCommand.Create(client, "PFMERGE", RespireCommands.HyperLogLog.PFMERGE.Verb,
+                destination, sourceKeys),
             cancellationToken);
     }
 }
