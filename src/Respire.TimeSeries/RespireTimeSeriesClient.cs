@@ -236,7 +236,8 @@ public sealed partial class RespireTimeSeriesClient
         throw new RespireTimeSeriesMultiAddException(partial, errors);
     }
 
-    /// <summary>Increments the latest sample, or creates a series with the increment value, and returns its timestamp.</summary>
+    /// <summary>Adds to the latest value and returns the sample timestamp.</summary>
+    /// <remarks>The timestamp determines whether Redis updates the latest sample or appends a sample.</remarks>
     /// <param name="key">The series key.</param>
     /// <param name="increment">The amount added to the latest value.</param>
     /// <param name="options">The sample timestamp, and settings for a series this call creates.</param>
@@ -255,7 +256,8 @@ public sealed partial class RespireTimeSeriesClient
         return result.AsInteger();
     }
 
-    /// <summary>Decrements the latest sample, or creates a series with the decremented value, and returns its timestamp.</summary>
+    /// <summary>Subtracts from the latest value and returns the sample timestamp.</summary>
+    /// <remarks>The timestamp determines whether Redis updates the latest sample or appends a sample.</remarks>
     /// <param name="key">The series key.</param>
     /// <param name="decrement">The amount subtracted from the latest value.</param>
     /// <param name="options">The sample timestamp, and settings for a series this call creates.</param>

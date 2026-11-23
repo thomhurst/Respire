@@ -48,11 +48,11 @@ Console.WriteLine($"Read {recent.Samples.Count} samples from {key}.");
 - `CreateAsync` and `AlterAsync` set retention, chunk size, duplicate policy, IGNORE thresholds and labels. Only `CreateAsync` sets encoding; `AlterAsync` throws `ArgumentException` if `Encoding` is set.
 - `AlterAsync` labels replace all existing labels; `ClearLabels = true` removes them all.
 - `AddAsync` creates the series if needed and returns the assigned timestamp. `RespireTimeSeriesAddOptions` sets `ON_DUPLICATE` for that write.
-- `IncrementByAsync` and `DecrementByAsync` update the latest sample. `RespireTimeSeriesIncrementOptions` sets an explicit `TIMESTAMP`, plus retention, encoding, chunk size, duplicate policy, IGNORE thresholds and labels for a series the call creates.
+- `IncrementByAsync` and `DecrementByAsync` use the latest sample as the basis for the new value when the series has samples. The timestamp defaults to the server clock. A matching timestamp updates the latest sample, a later timestamp can append a sample, and Redis rejects earlier timestamps. `RespireTimeSeriesIncrementOptions` sets an explicit timestamp, plus retention, encoding, chunk size, duplicate policy, IGNORE thresholds and labels for a series the call creates.
 
 ### Timestamps
 
-Timestamps are validated before anything is sent. Writes take a non-negative millisecond timestamp or `RespireTimeSeriesTimestamp.Now`. Ranges, deletions and `Align` take a non-negative millisecond timestamp, `Minimum` or `Maximum`.
+Timestamps are validated before anything is sent. Writes take a non-negative millisecond timestamp or `RespireTimeSeriesTimestamp.Now`. Ranges, deletions and `Align` take a non-negative millisecond timestamp, `Minimum` or `Maximum`. When passing a numeric timestamp as a string, use decimal digits with no leading zeros. For example, use `"2000"` or `"0"`.
 
 ### Multi-series writes
 
@@ -89,6 +89,7 @@ With client-side caching enabled, each `AddAsync`, `IncrementByAsync`, `Decremen
 
 - `GetAsync` returns the latest sample, or `null` for an empty series.
 - `RangeAsync` and `ReverseRangeAsync` read one series, with exact timestamp and value filters, `COUNT`, `LATEST`, and aggregation with `ALIGN`, `BUCKETTIMESTAMP` and `EMPTY`.
+- In range queries with aggregation, `Align = RespireTimeSeriesTimestamp.Minimum` aligns buckets to the start and requires an explicit millisecond start bound. `Maximum` aligns buckets to the end and requires an explicit millisecond end bound. Set `Align` to a millisecond timestamp to align buckets independently of the bounds.
 - `MultiGetAsync`, `MultiRangeAsync` and `MultiReverseRangeAsync` select series by label filters such as `sensor=temperature`, and accept `WITHLABELS` or `SELECTED_LABELS`. Multi-series ranges also accept `GROUPBY`/`REDUCE`; single-series ranges reject these locally.
 - `QueryIndexAsync` returns matching keys as `RespireKey`, preserving arbitrary bytes. Multi-series results expose the lossless key in `KeyValue`; `Key` is its display string.
 - `RespireTimeSeriesAggregation.CountNaN` and `CountAll` require Redis 8.6 in any range method.

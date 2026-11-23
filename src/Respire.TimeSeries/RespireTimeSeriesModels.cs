@@ -8,8 +8,8 @@ public readonly record struct RespireTimeSeriesLabel(string Name, string Value);
 /// <summary>A sample timestamp: Unix milliseconds or a RedisTimeSeries timestamp marker.</summary>
 /// <remarks>
 /// Timestamps are validated before any I/O. Writes accept a non-negative millisecond timestamp or
-/// <see cref="Now"/>; ranges accept a non-negative millisecond timestamp, <see cref="Minimum"/>, or
-/// <see cref="Maximum"/>.
+/// <see cref="Now"/>. Ranges accept a non-negative millisecond timestamp, <see cref="Minimum"/>, or
+/// <see cref="Maximum"/>. Numeric strings use decimal digits with no leading zeros, except for <c>0</c> itself.
 /// </remarks>
 public readonly record struct RespireTimeSeriesTimestamp(string Value)
 {
@@ -29,7 +29,7 @@ public readonly record struct RespireTimeSeriesTimestamp(string Value)
     /// <summary>Creates a millisecond timestamp. Negative values are rejected when the timestamp is used.</summary>
     public static implicit operator RespireTimeSeriesTimestamp(long value) => new(value.ToString(CultureInfo.InvariantCulture));
 
-    /// <summary>Converts to the Redis timestamp token.</summary>
+    /// <summary>Returns the stored timestamp token.</summary>
     public override string ToString() => Value;
 
     internal string RequireWrite(string parameterName)
@@ -74,11 +74,13 @@ public readonly record struct RespireTimeSeriesTimestamp(string Value)
 
     private string RequireMilliseconds(string parameterName)
     {
-        // NumberStyles.None rejects signs, so negative timestamps fail here rather than on the server.
-        if (!long.TryParse(Value, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        // TryParse accepts leading zeros and ignores trailing null characters, which Redis rejects.
+        if ((Value.Length > 1 && Value[0] == '0')
+            || !char.IsAsciiDigit(Value[^1])
+            || !long.TryParse(Value, NumberStyles.None, CultureInfo.InvariantCulture, out _))
         {
             throw new ArgumentOutOfRangeException(
-                parameterName, Value, "A time-series timestamp must be a non-negative number of milliseconds.");
+                parameterName, Value, "A time-series timestamp must be a non-negative 64-bit integer in decimal with no leading zeros.");
         }
 
         return Value;
@@ -359,8 +361,9 @@ public sealed record RespireTimeSeriesAddOptions
 public sealed record RespireTimeSeriesIncrementOptions
 {
     /// <summary>
-    /// Timestamp of the updated sample. Defaults to the server clock. <see cref="RespireTimeSeriesTimestamp.Now"/>
-    /// also selects the server clock. An explicit timestamp must not be earlier than the latest sample.
+    /// Timestamp of the sample to write. Defaults to the server clock, also selected by
+    /// <see cref="RespireTimeSeriesTimestamp.Now"/>. A timestamp equal to the latest sample can update that sample.
+    /// A later timestamp can append a sample. Redis rejects earlier timestamps.
     /// </summary>
     public RespireTimeSeriesTimestamp? Timestamp
     {
@@ -563,8 +566,10 @@ public sealed record RespireTimeSeriesRangeOptions
     }
 
     /// <summary>
-    /// Bucket alignment: <see cref="RespireTimeSeriesTimestamp.Minimum"/> aligns to the range start,
-    /// <see cref="RespireTimeSeriesTimestamp.Maximum"/> to the range end, or a millisecond timestamp. Requires <see cref="Aggregation"/>.
+    /// Bucket alignment. <see cref="RespireTimeSeriesTimestamp.Minimum"/> aligns to the range start and requires
+    /// an explicit millisecond start bound. <see cref="RespireTimeSeriesTimestamp.Maximum"/> aligns to the range
+    /// end and requires an explicit millisecond end bound. A millisecond timestamp aligns to that timestamp.
+    /// Requires <see cref="Aggregation"/>.
     /// </summary>
     public RespireTimeSeriesTimestamp? Align
     {
