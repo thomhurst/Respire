@@ -51,7 +51,7 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
 
             for (var i = 1; i <= 2; i++)
             {
-                await client.Hashes.SetAsync(index + ":doc:" + i, ("title", "hello"), ("price", i), ("embedding", Vector));
+                await client.Hashes.SetAsync(index + ":doc:" + i, ("title", "hello city0 city1"), ("price", i), ("embedding", Vector));
             }
 
             while ((await search.VectorSearchAsync(index, new("embedding", Vector, 2), cancellationToken: deadline.Token)).Documents.Count != 2)
@@ -65,7 +65,7 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
             var profiledSearch = await search.ProfileSearchAsync(index, query, limited);
             profiledSearch.Result.Total.Should().Be(normalSearch.Total).And.Be(2);
             profiledSearch.Result.Documents.Select(document => document.Id).Should().BeEquivalentTo(normalSearch.Documents.Select(document => document.Id));
-            profiledSearch.Result.Documents.Should().OnlyContain(document => document.Fields["title"] == "hello" && document.Score != null);
+            profiledSearch.Result.Documents.Should().OnlyContain(document => document.Fields["title"] == "hello city0 city1" && document.Score != null);
             var iterator = Descendants(profiledSearch.Profile).Single(node => node.Type == "INTERSECT");
             iterator.Children.Should().HaveCount(2);
             iterator.Children.Select(child => child.Type).Should().BeEquivalentTo("TEXT", "NUMERIC");
@@ -85,10 +85,21 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
             var normalHybrid = await search.HybridSearchAsync(index, hybrid);
             var profiledHybrid = await search.ProfileHybridSearchAsync(index, hybrid, limited);
             profiledHybrid.Result.Documents.Select(document => document.Id).Should().BeEquivalentTo(normalHybrid.Documents.Select(document => document.Id));
-            profiledHybrid.Result.Documents.Should().HaveCount(2).And.OnlyContain(document => document.Fields["title"] == "hello" && document.Score > 0);
+            profiledHybrid.Result.Documents.Should().HaveCount(2).And.OnlyContain(document => document.Fields["title"] == "hello city0 city1" && document.Score > 0);
             profiledHybrid.Profile.Children[0].Children.Select(node => node.Name).Should().Contain(["SEARCH", "VSIM"]);
             Descendants(profiledHybrid.Profile).Should().Contain(node => node.Type == "Hybrid Merger");
             AssertServerProfile(profiledHybrid.Profile);
+
+            var prefix = RespireSearchExpression.FromRaw("city*");
+            var prefixSearch = await search.ProfileSearchAsync(index, new(prefix), limited);
+            var prefixAggregate = await search.ProfileAggregateAsync(index, prefix, aggregate, limited);
+            var prefixHybrid = await search.ProfileHybridSearchAsync(index, new(prefix, "embedding", Vector, 2), limited);
+            prefixSearch.Result.Documents.Should().HaveCount(2);
+            prefixAggregate.Result.Rows[0]["count"].Should().Be("2");
+            prefixHybrid.Result.Documents.Should().HaveCount(2);
+            AssertUnionIterators(prefixSearch.Profile, limited);
+            AssertUnionIterators(prefixAggregate.Profile, limited);
+            AssertUnionIterators(prefixHybrid.Profile, limited);
 
             var noContent = await search.ProfileSearchAsync(index, new(All, new() { NoContent = true, WithScores = true }), limited);
             noContent.Result.Documents.Should().HaveCount(2).And.OnlyContain(document => document.Fields.Count == 0 && document.Score != null);
@@ -201,7 +212,98 @@ public class SearchProfileIntegrationTests(ModernRedisTestContainer fixture)
         Descendants(profile).Should().Contain(node => node.Metrics.ContainsKey("Total profile time"));
         Descendants(profile).Should().Contain(node => node.Properties.ContainsKey("Result processors profile"));
     }
+
+    private static void AssertUnionIterators(RespireSearchProfileNode profile, bool limited)
+    {
+        var union = Descendants(profile).Single(node => node.Type == "UNION" &&
+            node.Properties.ContainsKey("Child iterators"));
+
+        if (limited)
+        {
+            union.Properties["Child iterators"].Scalar.Should().Be("The number of iterators in the union is 2");
+            union.Children.Should().BeEmpty();
+        }
+        else
+        {
+            union.Children.Select(child => child.Properties["Term"].Scalar).Should().BeEquivalentTo("city0", "city1");
+        }
+    }
 }
+
+[Category(TestCategories.ProtocolIndependent)]
+[ClassDataSource<RedisStackProfileContainer>(Shared = SharedType.PerTestSession)]
+public class RedisStackProfileIntegrationTests(RedisStackProfileContainer fixture)
+{
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task SearchAndAggregateKeepLegacyResultsAndProfileTrees(int protocol, bool limited)
+    {
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespireProtocol)protocol });
+        var search = client.Search;
+        var index = "profile:" + Guid.NewGuid().ToString("N");
+        var document = index + ":doc:1";
+        await search.CreateIndexAsync(index, new()
+        {
+            Prefixes = [index + ":doc:"],
+            Fields = [new("title", RespireSearchFieldType.Text)],
+        });
+
+        try
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var expression = RespireSearchExpression.FromRaw("city*");
+            var query = new RespireSearchQuery(expression, new() { WithScores = true });
+            await client.Hashes.SetAsync(document, "title", "city0 city1");
+
+            while ((await search.SearchAsync(index, query, deadline.Token)).Total != 1)
+            {
+                await Task.Delay(20, deadline.Token);
+            }
+
+            var profiledSearch = await search.ProfileSearchAsync(index, query, limited, deadline.Token);
+            var searchDocument = profiledSearch.Result.Documents.Should().ContainSingle().Subject;
+            profiledSearch.Result.Total.Should().Be(1);
+            searchDocument.Id.Should().Be(document);
+            searchDocument.Score.Should().Be(1);
+            searchDocument.Fields["title"].Should().Be("city0 city1");
+
+            var options = new RespireSearchAggregateOptions { Stages = [RespireSearchAggregateStage.Load("@title")] };
+            var profiledAggregate = await search.ProfileAggregateAsync(index, expression, options, limited, deadline.Token);
+            profiledAggregate.Result.Total.Should().Be(1);
+            profiledAggregate.Result.Rows.Should().ContainSingle().Subject["title"].Should().Be("city0 city1");
+
+            foreach (var profile in new[] { profiledSearch.Profile, profiledAggregate.Profile })
+            {
+                profile.Metrics["Total profile time"].Should().BeGreaterThanOrEqualTo(0);
+                profile.Children.Should().Contain(node => node.Type == "Index");
+                var union = profile.Children.Single(node => node.Name == "Iterators profile");
+                union.Type.Should().Be("UNION");
+                union.Metrics["Counter"].Should().Be(1);
+
+                if (limited)
+                {
+                    union.Properties["Child iterators"].Scalar.Should().Be("The number of iterators in the union is 2");
+                    union.Children.Should().BeEmpty();
+                }
+                else
+                {
+                    union.Children.Select(node => node.Properties["Term"].Scalar).Should().BeEquivalentTo("city0", "city1");
+                }
+            }
+        }
+        finally
+        {
+            await search.DropIndexAsync(index, deleteDocuments: true);
+        }
+    }
+}
+
+/// <summary>Redis 7.4.7 with RediSearch 2.10.20, which emits legacy FT.PROFILE replies.</summary>
+public sealed class RedisStackProfileContainer() : StandaloneRedisTestContainer("redis/redis-stack-server:7.4.0-v8");
 
 /// <summary>Dedicated tracking fixture for Search profile cache tests.</summary>
 public sealed class SearchProfileCacheContainer() : StandaloneRedisTestContainer("redis:8.10-alpine");

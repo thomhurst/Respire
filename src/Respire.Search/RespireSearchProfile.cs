@@ -30,11 +30,19 @@ public sealed record RespireSearchProfileNode(
     /// <summary>Execution time in milliseconds, when this node reports Time.</summary>
     public double? TimeMilliseconds => Metrics.TryGetValue("Time", out var value) ? value : null;
 
-    internal static RespireSearchProfileNode Parse(RespireResult result, string name = "Profile")
+    internal static RespireSearchProfileNode Parse(RespireResult result, bool limited, bool inlineResp3 = false)
     {
         // Bound every collection before the owned-value copier or typed reader recurses.
         ValidateNesting(result, 0);
-        return Parse(result, name, RespireSearchValue.From(result));
+        var owned = RespireSearchValue.From(result);
+        var layout = inlineResp3 ? ProfileLayout.InlineResp3 : ProfileLayout.Flat;
+
+        if (owned.Type == RespireDataType.Array && owned.Items.Count > 0 && owned.Items[0].Type == RespireDataType.Array)
+        {
+            return Parse(owned, "Profile", ProfileLayout.GroupedResp2, limited, groupedFields: true);
+        }
+
+        return Parse(owned, "Profile", layout, limited);
     }
 
     private static void ValidateNesting(RespireResult value, int depth)
@@ -55,66 +63,134 @@ public sealed record RespireSearchProfileNode(
         }
     }
 
-    private static RespireSearchProfileNode Parse(RespireResult result, string name, RespireSearchValue owned)
+    private static RespireSearchProfileNode Parse(
+        RespireSearchValue value, string name, ProfileLayout layout, bool limited, bool groupedFields = false)
     {
-        RequireObject(result);
+        if (value.Type is not (RespireDataType.Array or RespireDataType.Map))
+        {
+            throw Unexpected("a value that is not a field/value array or map");
+        }
+
         var properties = new Dictionary<string, RespireSearchValue>(StringComparer.Ordinal);
         var metrics = new Dictionary<string, double>(StringComparer.Ordinal);
         var children = new List<RespireSearchProfileNode>();
+        var items = value.Items;
 
-        for (var i = 0; i < result.Count; i += 2)
+        for (int i = 0; i < items.Count;)
         {
-            var key = result[i];
-
-            if (!IsName(key))
+            if (groupedFields)
             {
-                throw Unexpected("a non-string or empty field name");
+                var group = items[i++];
+
+                if (group.Type != RespireDataType.Array || group.Items.Count == 0)
+                {
+                    throw Unexpected("an invalid grouped profile field");
+                }
+
+                string field = ReadFieldName(group.Items[0]);
+                // Processors and warnings follow the field name directly in the same group.
+                var fieldValue = group.Items.Count == 2 && field is not ("Result processors profile" or "Warning")
+                    ? group.Items[1] : CopyList(group.Items, 1, group.Items.Count);
+                AddField(field, fieldValue, missingValue: group.Items.Count == 1);
+                continue;
             }
 
-            var field = key.AsString();
-            var kind = ProfileSchema.GetKind(field);
-            var value = result[i + 1];
+            string fieldName = ReadFieldName(items[i++]);
 
-            if (field == "Type" && !IsName(value))
+            if (layout == ProfileLayout.GroupedResp2 && fieldName == "Child iterators" &&
+                (i == items.Count || items[i].Type is RespireDataType.Array or RespireDataType.Null))
+            {
+                // Legacy RESP2 nodes put child arrays and depth-limit nulls directly after the label.
+                int childStart = i;
+
+                while (i < items.Count && items[i].Type is RespireDataType.Array or RespireDataType.Null)
+                {
+                    i++;
+                }
+
+                AddField(fieldName, CopyList(items, childStart, i));
+                continue;
+            }
+
+            if (i == items.Count)
+            {
+                throw Unexpected("a field without its value");
+            }
+
+            AddField(fieldName, items[i++]);
+        }
+
+        return new(name, properties, metrics, children);
+
+        void AddField(string field, RespireSearchValue fieldValue, bool missingValue = false)
+        {
+            var kind = ProfileSchema.GetKind(field);
+
+            if (field == "Type" && !IsText(fieldValue))
             {
                 throw Unexpected("a non-string or empty node type");
             }
-            // Copy the tree once, then reuse its owned values in both raw properties and typed children.
-            var copied = owned.Items[i + 1];
 
-            if (!properties.TryAdd(field, copied))
+            if (!properties.TryAdd(field, fieldValue))
             {
                 throw Unexpected("a duplicate field name");
             }
 
-            if (TryReadNumber(value, out var number))
+            if (TryReadNumber(fieldValue, out double number))
             {
                 metrics.Add(field, number);
             }
-            else if (kind == ProfileFieldKind.Metric)
+            else if (kind == ProfileFieldKind.Metric && !missingValue)
             {
                 throw Unexpected("a non-numeric metric " + field);
             }
 
             if (kind == ProfileFieldKind.ListNode)
             {
-                if (value.IsNull || value.Type != RespireDataType.Array)
+                if (field == "Child iterators" && limited && IsLimitedIteratorSummary(fieldValue))
+                {
+                    return;
+                }
+
+                if (fieldValue.Type != RespireDataType.Array)
                 {
                     throw Unexpected("a non-array " + field);
                 }
 
-                for (var j = 0; j < value.Count; j++)
+                for (int j = 0; j < fieldValue.Items.Count; j++)
                 {
-                    children.Add(Parse(value[j], field + " #" + (j + 1).ToString(CultureInfo.InvariantCulture), copied.Items[j]));
+                    var item = fieldValue.Items[j];
+
+                    // Older Redis servers can return null when an iterator reaches their depth limit.
+                    if (layout == ProfileLayout.GroupedResp2 && field == "Child iterators" && item.Type == RespireDataType.Null)
+                    {
+                        continue;
+                    }
+
+                    children.Add(Parse(item, field + " #" + (j + 1).ToString(CultureInfo.InvariantCulture), layout, limited));
                 }
             }
-            else if (kind == ProfileFieldKind.ObjectNode || value.Type == RespireDataType.Map)
+            else if (kind == ProfileFieldKind.ObjectNode || fieldValue.Type == RespireDataType.Map)
             {
-                children.Add(Parse(value, field, copied));
+                if (layout == ProfileLayout.GroupedResp2 && field == "Child iterator" && fieldValue.Type == RespireDataType.Null)
+                {
+                    return;
+                }
+
+                // Legacy RESP3 wraps the root iterator in a one-element array.
+                var node = layout == ProfileLayout.InlineResp3 && field == "Iterators profile" &&
+                    fieldValue.Type == RespireDataType.Array && fieldValue.Items.Count == 1
+                    ? fieldValue.Items[0] : fieldValue;
+                children.Add(Parse(node, field, layout, limited));
             }
         }
+    }
 
-        return new(name, properties, metrics, children);
+    private enum ProfileLayout
+    {
+        Flat,
+        GroupedResp2,
+        InlineResp3
     }
 
     private enum ProfileFieldKind
@@ -165,40 +241,54 @@ public sealed record RespireSearchProfileNode(
         }
     }
 
-    private static bool TryReadNumber(RespireResult value, out double number)
+    private static bool TryReadNumber(RespireSearchValue value, out double number)
     {
-        if (value.IsNull || RespireSearchReply.IsCollection(value))
+        number = default;
+        return value.Type is RespireDataType.Integer or RespireDataType.Double or RespireDataType.BulkString
+                or RespireDataType.SimpleString or RespireDataType.BigNumber
+            && double.TryParse(value.Scalar, NumberStyles.Float, CultureInfo.InvariantCulture, out number)
+            && double.IsFinite(number);
+    }
+
+    private static string ReadFieldName(RespireSearchValue value)
+    {
+        if (!IsText(value))
         {
-            number = default;
+            throw Unexpected("a non-string or empty field name");
+        }
+
+        return value.Scalar!;
+    }
+
+    private static bool IsText(RespireSearchValue value)
+    {
+        return value.Type is RespireDataType.BulkString or RespireDataType.SimpleString &&
+            !string.IsNullOrEmpty(value.Scalar);
+    }
+
+    private static bool IsLimitedIteratorSummary(RespireSearchValue value)
+    {
+        const string Prefix = "The number of iterators in the union is ";
+
+        if (!IsText(value) || !value.Scalar!.StartsWith(Prefix, StringComparison.Ordinal))
+        {
             return false;
         }
 
-        switch (value.Type)
-        {
-            case RespireDataType.Integer:
-                number = value.AsInteger();
-                return true;
-            case RespireDataType.Double:
-                number = value.AsDouble();
-                return double.IsFinite(number);
-            case RespireDataType.BulkString or RespireDataType.SimpleString or RespireDataType.BigNumber:
-                return double.TryParse(value.AsString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number)
-                    && double.IsFinite(number);
-            default:
-                number = default;
-                return false;
-        }
+        ReadOnlySpan<char> count = value.Scalar.AsSpan(Prefix.Length);
+        return !count.IsEmpty && count.IndexOfAnyExceptInRange('0', '9') == -1;
     }
 
-    private static bool IsName(RespireResult value) => !value.IsNull &&
-        value.Type is RespireDataType.BulkString or RespireDataType.SimpleString && value.AsString().Length != 0;
-
-    private static void RequireObject(RespireResult value)
+    private static RespireSearchValue CopyList(IReadOnlyList<RespireSearchValue> items, int start, int end)
     {
-        if (value.IsNull || value.Type is not (RespireDataType.Array or RespireDataType.Map) || (value.Count & 1) != 0)
+        var copy = new RespireSearchValue[end - start];
+
+        for (int i = 0; i < copy.Length; i++)
         {
-            throw Unexpected("a value that is not a field/value array or map");
+            copy[i] = items[start + i];
         }
+
+        return new(RespireDataType.Array, null, copy);
     }
 
     private static InvalidOperationException Unexpected(string detail) => RespireSearchReply.Unexpected("FT.PROFILE", detail);

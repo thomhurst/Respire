@@ -270,6 +270,58 @@ public class SearchProfileTests
     }
 
     [Test]
+    public async Task LegacyResp2ProfilePreservesOmittedTimingsAndDepthLimitedChildren()
+    {
+        object[] profile =
+        [
+            new object[] { "Total profile time" },
+            new object[] { "Warning", "first warning", "second warning" },
+            new object[] { "Iterators profile", new object?[] { "Type", "UNION", "Child iterators", null,
+                new object?[] { "Type", "NOT", "Child iterator", null }, "Counter", 1L } },
+            new object[] { "Result processors profile", new object[] { "Type", "Index", "Counter", 1L } },
+        ];
+        await using var server = Server(_ => Frame(Envelope(2, "SEARCH", profile), 2));
+#pragma warning disable RESP010 // This profile scenario owns its client and bounded fake profile tree.
+        await using var client = await RespireClient.ConnectAsync(Options(server, 2));
+#pragma warning restore RESP010
+        var result = await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }));
+        await Assert.That(result.Profile.Properties["Total profile time"].Items.Count).IsEqualTo(0);
+        await Assert.That(result.Profile.Metrics.ContainsKey("Total profile time")).IsFalse();
+        await Assert.That(result.Profile.Properties["Warning"].Items.Select(warning => warning.Scalar!).ToArray())
+            .IsEquivalentTo(["first warning", "second warning"], CollectionOrdering.Matching);
+        var iterator = result.Profile.Children.Single(node => node.Name == "Iterators profile");
+        var child = iterator.Children.Single();
+        await Assert.That(child.Name).IsEqualTo("Child iterators #2");
+        await Assert.That(child.Type).IsEqualTo("NOT");
+        await Assert.That(child.Children.Count).IsEqualTo(0);
+        await Assert.That(iterator.Metrics["Counter"]).IsEqualTo(1d);
+        await Assert.That(iterator.Properties["Child iterators"].Items.Count).IsEqualTo(2);
+        await Assert.That(iterator.Properties["Child iterators"].Items[0].Type).IsEqualTo(RespireDataType.Null);
+        await Assert.That(child.Properties["Child iterator"].Type).IsEqualTo(RespireDataType.Null);
+        await Assert.That(result.Profile.Children.Single(node => node.Type == "Index").Metrics["Counter"]).IsEqualTo(1d);
+    }
+
+    [Test]
+    [Arguments(2, false, "The number of iterators in the union is 2")]
+    [Arguments(3, false, "The number of iterators in the union is 2")]
+    [Arguments(2, true, "bad")]
+    [Arguments(3, true, "bad")]
+    [Arguments(2, true, "The number of iterators in the union is two")]
+    [Arguments(3, true, "The number of iterators in the union is two")]
+    public async Task RejectsUnexpectedChildIteratorSummaries(int protocol, bool limited, string summary)
+    {
+        var profile = Object("Iterators profile", Object("Type", "UNION", "Child iterators", summary));
+        await using var server = Server(_ => Frame(Envelope(protocol, "SEARCH", profile), protocol));
+#pragma warning disable RESP010 // This parser rejection scenario owns its client and deliberately malformed fake replies.
+        await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
+#pragma warning restore RESP010
+        var error = await Assert.That(async () =>
+            await client.Search.ProfileSearchAsync("idx", new(All, new() { WithScores = true }), limited))
+            .Throws<InvalidOperationException>();
+        await Assert.That(error!.Message).Contains("a non-array Child iterators");
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task MalformedProfilesAndEnvelopesThrow(int protocol)
@@ -279,7 +331,7 @@ public class SearchProfileTests
             null, "profile", new object[] { "Time" }, Object("Time", "nope"), Object("Time", null),
             Object("Time", "nan"), Object("Time", "inf"), Object("Type", "A", "Type", "B"),
             Object("", 1L), Object(2L, 1L), Object("Shards", "bad"), Object("Shards", new object[] { "bad" }),
-            Object("Iterators profile", null), Object("Iterators profile", Object("Child iterators", "bad")),
+            Object("Iterators profile", null), Object("Iterators profile", Object("Child iterators", 1L)),
             Object("Result processors profile", Object("Type", "Index")),
             Object("Type", 1L), Object("Type", null), Object("Type", ""),
         ];
@@ -287,6 +339,23 @@ public class SearchProfileTests
         invalid.AddRange(["bad", new object[] { QueryResult(protocol, "SEARCH") },
             Object("Results", QueryResult(protocol, "SEARCH")), Object("Profile", Profile(protocol)),
             Object("Results", QueryResult(protocol, "SEARCH"), "Profile", Profile(protocol), "Profile", Profile(protocol))]);
+
+        if (protocol == 2)
+        {
+            invalid.AddRange(new object[]
+            {
+                Envelope(protocol, "SEARCH", new object[] { Array.Empty<object>() }),
+                Envelope(protocol, "SEARCH", new object[] { new object[] { "Time", 1L }, new object[] { "Time", 2L } }),
+            });
+        }
+        else
+        {
+            invalid.AddRange(new object[]
+            {
+                Object("profile", Profile(protocol), "results", Array.Empty<object>()),
+                Object("profile", Profile(protocol), "profile", Profile(protocol), "results", Array.Empty<object>(), "total_results", 0L),
+            });
+        }
 
         foreach (var reply in invalid)
         {
