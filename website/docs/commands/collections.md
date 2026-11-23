@@ -87,7 +87,9 @@ RespireExpiryTimeResult[] secondResolution = await redis.Hashes.ExpiryTimeAsync(
     "user:42", RespireExpiryTimePrecision.Seconds, "name", "role");
 ```
 
-`ExpiryTimeAsync` (Redis 7.4+) uses `HPEXPIRETIME`. Pass `RespireExpiryTimePrecision.Seconds` for `HEXPIRETIME`, which rounds fractional seconds up. Results follow input order, including repeated fields.
+`ExpiryTimeAsync` (Redis 7.4+) uses `HPEXPIRETIME`. Pass `RespireExpiryTimePrecision.Seconds` for `HEXPIRETIME`.
+The server determines whole-second rounding, which can differ between Redis and Valkey. Use the default
+millisecond precision for the exact field deadline. Results follow input order, including repeated fields.
 
 Redis accepts absolute hash-field deadlines up to Unix millisecond `70_368_744_177_663`. A later deadline returns an error. Valkey 9.1 supports later deadlines, including timestamps beyond `DateTimeOffset.MaxValue`.
 
@@ -97,7 +99,8 @@ For a single field's remaining lifetime, `Hashes.ExpiryAsync(key, field, cancell
 |---|---|
 | `Exists` | False for a missing field. |
 | `HasExpiry` | True when an expiration is set. |
-| `UnixTimeMilliseconds` | Always milliseconds, even with `Seconds` precision. Null when missing or persistent. Holds values beyond `DateTimeOffset` range. |
+| `UnixTimeMilliseconds` | Deadline in milliseconds, including timestamps beyond `DateTimeOffset` range. Null for a missing deadline or when a seconds reply does not fit in signed 64-bit milliseconds. |
+| `UnixTimeSeconds` | Deadline in whole seconds. Preserves the server's seconds reply and truncates millisecond replies to whole seconds. |
 | `GetExpiresAt()` | Nullable UTC `DateTimeOffset`. Throws when the timestamp is out of range. |
 | `TryGetExpiresAt(out DateTimeOffset expiresAt)` | Returns false for missing or persistent fields and out-of-range timestamps. |
 

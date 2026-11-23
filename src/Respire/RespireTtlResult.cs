@@ -11,10 +11,10 @@ namespace Respire;
 /// </remarks>
 public readonly struct RespireTtlResult
 {
-    private RespireTtlResult(bool exists, TimeSpan? timeToLive)
+    private RespireTtlResult(bool exists, long? timeToLiveMilliseconds)
     {
         Exists = exists;
-        TimeToLive = timeToLive;
+        TimeToLiveMilliseconds = timeToLiveMilliseconds;
     }
 
     /// <summary>Whether the key or field exists.</summary>
@@ -24,22 +24,54 @@ public readonly struct RespireTtlResult
     }
 
     /// <summary>Whether the key or field exists and has an expiry set.</summary>
-    public bool HasExpiry => TimeToLive.HasValue;
+    public bool HasExpiry => TimeToLiveMilliseconds.HasValue;
 
-    /// <summary>Remaining time to live, or null when the value is missing or has no expiry.</summary>
+    /// <summary>
+    /// Remaining time to live as a <see cref="TimeSpan"/>, or null when missing, persistent,
+    /// or outside the range of <see cref="TimeSpan"/>. Use <see cref="TimeToLiveMilliseconds"/>
+    /// to read large durations.
+    /// </summary>
     public TimeSpan? TimeToLive
+    {
+        get
+        {
+            if (TimeToLiveMilliseconds is { } milliseconds
+                && milliseconds >= long.MinValue / TimeSpan.TicksPerMillisecond
+                && milliseconds <= long.MaxValue / TimeSpan.TicksPerMillisecond)
+            {
+                return TimeSpan.FromMilliseconds(milliseconds);
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>Remaining time to live in server milliseconds, or null when missing or persistent.</summary>
+    public long? TimeToLiveMilliseconds
     {
         get;
     }
 
     internal static RespireTtlResult FromRedisMilliseconds(long milliseconds) => milliseconds switch
     {
-        -2 => new RespireTtlResult(exists: false, timeToLive: null),
-        -1 => new RespireTtlResult(exists: true, timeToLive: null),
-        _ => new RespireTtlResult(exists: true, timeToLive: TimeSpan.FromMilliseconds(milliseconds)),
+        -2 => default,
+        -1 => new RespireTtlResult(exists: true, timeToLiveMilliseconds: null),
+        _ => new RespireTtlResult(exists: true, timeToLiveMilliseconds: milliseconds),
     };
 
     /// <inheritdoc/>
     public override string ToString()
-        => !Exists ? "(missing)" : TimeToLive is { } ttl ? ttl.ToString() : "(no expiry)";
+    {
+        if (!Exists)
+        {
+            return "(missing)";
+        }
+
+        if (TimeToLiveMilliseconds is not { } milliseconds)
+        {
+            return "(no expiry)";
+        }
+
+        return TimeToLive is { } ttl ? ttl.ToString() : $"{milliseconds} ms";
+    }
 }

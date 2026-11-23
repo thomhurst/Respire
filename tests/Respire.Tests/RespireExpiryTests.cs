@@ -45,6 +45,34 @@ public class RespireExpiryTests
     }
 
     [Test]
+    [Arguments(9_999_999_999_999_999L, 999_999_999_999L)]
+    [Arguments(-9_999_999_999_999_999L, -999_999_999_999L)]
+    [Arguments(long.MaxValue, 922_337_203_685_477L)]
+    [Arguments(long.MinValue, -922_337_203_685_477L)]
+    public async Task In_TruncatesLargeDurationsToMilliseconds(long ticks, long milliseconds)
+    {
+        var expiry = RespireExpiry.In(TimeSpan.FromTicks(ticks));
+
+        await Assert.That(expiry.TimeToLive).IsEqualTo(TimeSpan.FromMilliseconds(milliseconds));
+    }
+
+    [Test]
+    [Arguments(-2L, false, false)]
+    [Arguments(-1L, true, false)]
+    [Arguments(0L, true, true)]
+    [Arguments(long.MaxValue / TimeSpan.TicksPerMillisecond, true, true)]
+    [Arguments(long.MaxValue / TimeSpan.TicksPerMillisecond + 1, true, false)]
+    public async Task TtlResultPreservesServerMilliseconds(long milliseconds, bool exists, bool fitsTimeSpan)
+    {
+        var ttl = RespireTtlResult.FromRedisMilliseconds(milliseconds);
+
+        await Assert.That(ttl.Exists).IsEqualTo(exists);
+        await Assert.That(ttl.HasExpiry).IsEqualTo(milliseconds >= 0);
+        await Assert.That(ttl.TimeToLiveMilliseconds).IsEqualTo(milliseconds >= 0 ? milliseconds : (long?)null);
+        await Assert.That(ttl.TimeToLive).IsEqualTo(fitsTimeSpan ? TimeSpan.FromMilliseconds(milliseconds) : (TimeSpan?)null);
+    }
+
+    [Test]
     public async Task At_CarriesTheAbsoluteInstant()
     {
         var instant = DateTimeOffset.FromUnixTimeMilliseconds(1_700_000_000_123);

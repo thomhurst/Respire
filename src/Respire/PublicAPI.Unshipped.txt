@@ -298,6 +298,8 @@ Respire.IRespireHashCommands.ExpireAsync(Respire.RespireKey key, Respire.Respire
 Respire.IRespireHashCommands.ExpiryAsync(Respire.RespireKey key, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireTtlResult>
 Respire.IRespireHashCommands.ExpiryTimeAsync(Respire.RespireKey key, Respire.RespireExpiryTimePrecision precision, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireExpiryTimeResult[]!>
 Respire.IRespireHashCommands.ExpiryTimeAsync(Respire.RespireKey key, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Respire.RespireExpiryTimeResult[]!>
+Respire.RespireExpiryTimeResult.UnixTimeSeconds.get -> long?
+Respire.RespireTtlResult.TimeToLiveMilliseconds.get -> long?
 Respire.IRespireHashCommands.GetAndExpireAsync(Respire.RespireKey key, Respire.RespireExpiry expiry, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>
 Respire.IRespireHashCommands.GetAndRemoveAsync(Respire.RespireKey key, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>
 Respire.IRespireHashCommands.GetManyAsync(Respire.RespireKey key, string! field, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<string?[]!>

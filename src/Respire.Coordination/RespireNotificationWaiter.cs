@@ -3,8 +3,6 @@ namespace Respire.Coordination;
 /// <summary>Retries a coordination predicate after tracked-key invalidations, without polling.</summary>
 internal static class RespireNotificationWaiter
 {
-    internal static readonly TimeSpan MaxExpiryWait = TimeSpan.FromMilliseconds(int.MaxValue);
-
     internal static async ValueTask<TResult> WaitAsync<TTarget, TResult>(
         IRespireClient client,
         RespireKey key,
@@ -65,15 +63,14 @@ internal static class RespireNotificationWaiter
                     continue;
                 }
 
-                if (ttl.TimeToLive is { } remaining)
+                if (ttl.TimeToLiveMilliseconds is { } remaining)
                 {
                     // Redis may defer expiry invalidations until it actively expires the key.
                     // Schedule one wake from PTTL; this is an expiry deadline, not polling.
                     // SemaphoreSlim rejects timeouts above Int32.MaxValue ms (~24.8 days). Waking at
                     // that bound only rechecks ownership and reschedules from the new PTTL.
-                    var delay = remaining <= TimeSpan.Zero ? TimeSpan.FromMilliseconds(1)
-                        : remaining > MaxExpiryWait ? MaxExpiryWait : remaining;
-                    _ = await signal.WaitAsync(delay, linkedCancellation.Token).ConfigureAwait(false);
+                    int delayMilliseconds = (int)Math.Clamp(remaining, 1, int.MaxValue);
+                    _ = await signal.WaitAsync(delayMilliseconds, linkedCancellation.Token).ConfigureAwait(false);
                 }
                 else
                 {

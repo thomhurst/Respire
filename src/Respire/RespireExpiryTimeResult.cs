@@ -21,10 +21,17 @@ public enum RespireExpiryTimePrecision
 /// </remarks>
 public readonly struct RespireExpiryTimeResult
 {
-    private RespireExpiryTimeResult(bool exists, long? unixTimeMilliseconds)
+    private const long MillisecondsPerSecond = 1000;
+
+    // Keep milliseconds as the canonical form unless multiplying a seconds reply would overflow.
+    private readonly long? _timestamp;
+    private readonly bool _isSeconds;
+
+    private RespireExpiryTimeResult(bool exists, long? timestamp, bool isSeconds = false)
     {
         Exists = exists;
-        UnixTimeMilliseconds = unixTimeMilliseconds;
+        _timestamp = timestamp;
+        _isSeconds = isSeconds;
     }
 
     /// <summary>Whether the key or field exists.</summary>
@@ -34,25 +41,36 @@ public readonly struct RespireExpiryTimeResult
     }
 
     /// <summary>Whether the key or field exists and has an expiry set.</summary>
-    public bool HasExpiry => UnixTimeMilliseconds.HasValue;
+    public bool HasExpiry => _timestamp.HasValue;
 
     /// <summary>
-    /// Absolute Unix timestamp in milliseconds, or null when missing or persistent.
-    /// This preserves Redis timestamps outside the range supported by DateTimeOffset.
+    /// Absolute Unix timestamp in milliseconds, or null when missing, persistent, or too large for
+    /// signed 64-bit milliseconds. Use <see cref="UnixTimeSeconds"/> for those large seconds replies.
     /// </summary>
-    public long? UnixTimeMilliseconds
-    {
-        get;
-    }
+    public long? UnixTimeMilliseconds => _isSeconds ? null : _timestamp;
+
+    /// <summary>
+    /// Absolute Unix timestamp in whole seconds, or null when missing or persistent.
+    /// Preserves seconds replies and truncates millisecond replies to whole seconds.
+    /// </summary>
+    public long? UnixTimeSeconds => _isSeconds ? _timestamp : _timestamp / MillisecondsPerSecond;
 
     /// <summary>Absolute expiration in UTC, or null when missing or persistent.</summary>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// The Redis timestamp exceeds the range of DateTimeOffset. Use UnixTimeMilliseconds to
-    /// inspect such timestamps without conversion, or TryGetExpiresAt for a nonthrowing conversion.
+    /// The server timestamp exceeds the range of <see cref="DateTimeOffset"/>.
+    /// Use <see cref="TryGetExpiresAt"/> for a nonthrowing conversion.
     /// </exception>
-    public DateTimeOffset? GetExpiresAt() => UnixTimeMilliseconds is { } timestamp
-        ? DateTimeOffset.FromUnixTimeMilliseconds(timestamp)
-        : null;
+    public DateTimeOffset? GetExpiresAt()
+    {
+        if (_timestamp is not { } timestamp)
+        {
+            return null;
+        }
+
+        return _isSeconds
+            ? DateTimeOffset.FromUnixTimeSeconds(timestamp)
+            : DateTimeOffset.FromUnixTimeMilliseconds(timestamp);
+    }
 
     /// <summary>Attempts to convert an expiry to a UTC instant without throwing.</summary>
     /// <returns>False for missing/persistent values or timestamps outside DateTimeOffset's range.</returns>
@@ -71,12 +89,13 @@ public readonly struct RespireExpiryTimeResult
 
     internal static RespireExpiryTimeResult FromRedis(long timestamp, RespireExpiryTimePrecision precision) => timestamp switch
     {
-        -2 => new RespireExpiryTimeResult(exists: false, unixTimeMilliseconds: null),
-        -1 => new RespireExpiryTimeResult(exists: true, unixTimeMilliseconds: null),
-        > long.MaxValue / 1000 when precision == RespireExpiryTimePrecision.Seconds
-            => throw new RespireProtocolException($"Expiry timestamp cannot be represented in milliseconds: {timestamp}."),
-        >= 0 => new RespireExpiryTimeResult(exists: true, precision == RespireExpiryTimePrecision.Seconds
-            ? checked(timestamp * 1000) : timestamp),
+        -2 => default,
+        -1 => new RespireExpiryTimeResult(exists: true, timestamp: null),
+        > long.MaxValue / MillisecondsPerSecond when precision == RespireExpiryTimePrecision.Seconds
+            => new RespireExpiryTimeResult(exists: true, timestamp, isSeconds: true),
+        >= 0 when precision == RespireExpiryTimePrecision.Seconds
+            => new RespireExpiryTimeResult(exists: true, timestamp * MillisecondsPerSecond),
+        >= 0 => new RespireExpiryTimeResult(exists: true, timestamp),
         _ => throw new RespireProtocolException($"Unexpected expiry timestamp: {timestamp}."),
     };
 }

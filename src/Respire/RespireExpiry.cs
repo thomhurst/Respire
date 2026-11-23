@@ -49,9 +49,14 @@ public readonly struct RespireExpiry : IEquatable<RespireExpiry>
     /// <summary>Removes an existing expiry. Redis: PERSIST.</summary>
     public static readonly RespireExpiry Persist = new(RespireExpiryKind.Persist, 0);
 
-    /// <summary>Expires the key <paramref name="timeToLive"/> from now. Redis: PX milliseconds.</summary>
+    /// <summary>
+    /// Expires the key <paramref name="timeToLive"/> from now, truncating to whole milliseconds.
+    /// Redis: PX milliseconds.
+    /// </summary>
     public static RespireExpiry In(TimeSpan timeToLive)
-        => new(RespireExpiryKind.Relative, (long)timeToLive.TotalMilliseconds);
+    {
+        return new RespireExpiry(RespireExpiryKind.Relative, timeToLive.Ticks / TimeSpan.TicksPerMillisecond);
+    }
 
     /// <summary>Expires the key at <paramref name="instant"/>. Redis: PXAT Unix milliseconds.</summary>
     public static RespireExpiry At(DateTimeOffset instant)
