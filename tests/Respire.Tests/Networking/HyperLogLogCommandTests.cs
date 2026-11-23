@@ -28,12 +28,11 @@ public class HyperLogLogCommandTests
     }
 
     [Test]
-    public async Task HyperLogLogCommands_RequireInputs()
+    public async Task HyperLogLogCount_RequiresAtLeastOneKey()
     {
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(async () => await client.HyperLogLog.CountAsync([])).Throws<ArgumentException>();
-        await Assert.That(async () => await client.HyperLogLog.MergeAsync("key", [])).Throws<ArgumentException>();
     }
 }

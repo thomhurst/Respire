@@ -86,7 +86,7 @@ public sealed partial class RespireTimeSeriesClient
 
     private ValueTask<string[]> QueryLabelValuesUnhookedAsync(string label, IReadOnlyList<string>? filters, CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(label);
+        ArgumentException.ThrowIfNullOrEmpty(label);
         return QueryLabelTokensUnhookedAsync(label, filters, cancellationToken);
     }
 
