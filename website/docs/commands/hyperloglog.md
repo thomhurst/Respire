@@ -25,8 +25,10 @@ bool merged = await redis.HyperLogLog.MergeAsync(
 | `MergeAsync` | PFMERGE | `true` on an `OK` reply |
 
 Counting multiple keys estimates their union without creating a destination.
-`MergeAsync` stores the union in the destination. Counts remain estimates even when
-input values overlap; adding the same value repeatedly does not intentionally count it again.
+`MergeAsync` and deferred `Merge` include any existing destination sketch in the union and
+store the result at the destination key. Use a fresh destination to merge only the supplied
+sketches. Counts remain estimates even when input values overlap. Adding the same value
+repeatedly does not intentionally count it again.
 
 Key prefixes apply to sketch keys, not the values added. All keys in a multi-key count
 or merge must share a Cluster slot after prefixing; the `{visits}` tag above ensures this.

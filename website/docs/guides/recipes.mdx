@@ -19,15 +19,14 @@ both RESP2 and RESP3.
 | Recipe | Server requirement | Data layout |
 | --- | --- | --- |
 | Leaderboard | Redis 7+ or compatible Valkey | Sorted set of scores and hash of member names |
-| Sessions | Redis 8.0+ (`HSETEX`, `HGETEX`) | One hash per user, one expiring field per session |
+| Sessions | Redis 8.0+ or Valkey 9.0+ (`HSETEX`, `HGETEX`) | One hash per user, one expiring field per session |
 | Outbox | Redis 8.4+ (`XREADGROUP CLAIM`) | Business state hash and consumer-group stream in one slot |
 | Leader election | Redis 7+ or compatible Valkey | Expiring lease key and persistent fencing counter |
 | Environment connection | Any server supported by Respire | `REDIS_URL`, then `VALKEY_URL` |
 
 Keep one client for the application lifetime and dispose it at shutdown. Examples use fixed
 keys for clarity; use a [key prefix](../commands/strings-and-keys.md#default-root-namespace) to isolate
-applications and tenants. Select server versions explicitly: a Valkey connection URL does not
-imply support for the Redis 8.x commands used by sessions and the outbox.
+applications and tenants.
 
 ## Connect from the environment
 
