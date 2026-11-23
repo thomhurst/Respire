@@ -450,11 +450,26 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await Assert.That(await Cache.GetAsync("slow-lease-placement")).IsNull();
     }
 
-    // The next tests exercise the correction a delayed set triggers (a send that reached Redis
-    // only after a stall — lazy first connect, reconnect — arms a TTL computed before the delay).
-    // The delay itself cannot be reproduced through the public API, so they execute the
-    // production scripts directly: first the set script with the stale TTL a delayed sender
-    // would arm, then the correction with the remainder it would re-derive after the reply.
+    [Test]
+    [NotInParallel(ClientPause), Category(ClientPause)]
+    public async Task DelayedSet_CrossingAbsoluteDeadlineWithinDelayTolerance_ExpiresEntry()
+    {
+        const string Key = "delayed-set";
+        await using var writer = await RespireClient.ConnectAsync(Server.IsolatedConnectionString);
+        await using var cache = new RespireDistributedCache(writer);
+        await cache.SetAsync(Key, [0], new DistributedCacheEntryOptions());
+
+        using var pause = await Client.ExecuteAsync("CLIENT", "PAUSE", 550, "WRITE");
+        var deadline = DateTimeOffset.UtcNow.AddMilliseconds(350);
+        await cache.SetAsync(Key, [1], new DistributedCacheEntryOptions { AbsoluteExpiration = deadline });
+
+        await Assert.That(DateTimeOffset.UtcNow).IsGreaterThanOrEqualTo(deadline);
+        await Assert.That(await Cache.GetAsync(Key)).IsNull();
+        await Assert.That(await PttlAsync(Key)).IsEqualTo(-2L);
+    }
+
+    // Exercise specific correction inputs directly: first run the set script with a stale TTL,
+    // then run the correction with the remainder a delayed sender would derive after its reply.
 
     private async Task RunDelayedSetAsync(string key, long absexp, long staleTtlMs, long sldexp = -1L)
         => (await Client.Scripts.ExecuteAsync(
