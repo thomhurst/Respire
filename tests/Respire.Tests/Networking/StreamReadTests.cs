@@ -17,14 +17,16 @@ public class StreamReadTests
     [Arguments(true, 2)]
     public async Task ReadsOwnRepliesAndSnapshotKeysAcrossSurfaces(bool map, int surface)
     {
-        var response = Reply(map, ("tenant:{a}:one", ["1-0"]), ("tenant:{a}:two", ["2-0"]));
+        const string Prefix = "tenant:\uD83D";
+        const string JoinedSuffix = "\uDE00:{a}:two";
+        var response = Reply(map, (Prefix + "{a}:one", ["1-0"]), (Prefix + JoinedSuffix, ["2-0"]));
         byte[][] replies = surface == 2
             ? [FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), [.. "*1\r\n"u8, .. response]] : [response];
         await using var server = new FakeRespServer(replies);
         await using var client = Create(server.Port);
-        var view = client.WithKeyPrefix("tenant:");
+        var view = client.WithKeyPrefix(Prefix);
         byte[] key = "{a}:one"u8.ToArray();
-        (RespireKey Key, RespireStreamId After)[] streams = [(key, "0"), ("{a}:two", "1-0")];
+        (RespireKey Key, RespireStreamId After)[] streams = [(key, "0"), (JoinedSuffix, "1-0")];
         RespireStreamReadResult[] result;
         using var batch = surface == 1 ? view.CreateBatch() : null;
         await using var transaction = surface == 2 ? view.CreateTransaction() : null;
@@ -56,10 +58,46 @@ public class StreamReadTests
         }
 
         await client.DisposeAsync();
-        await Assert.That(result.Select(x => x.Key.ToString())).IsEquivalentTo(["{a}:one", "{a}:two"], CollectionOrdering.Matching);
+        await Assert.That(result.Length).IsEqualTo(2);
+        await Assert.That(result[0].Key.ToString()).IsEqualTo("{a}:one");
+        await Assert.That(view.ResolveKey(result[1].Key).ToBytes()).IsEquivalentTo(
+            Encoding.UTF8.GetBytes(Prefix + JoinedSuffix), CollectionOrdering.Matching);
         await Assert.That(result[0].Entries[0].Id).IsEqualTo((RespireStreamId)"1-0");
         await Assert.That(result[1].Entries[0]["field"]!).IsEquivalentTo(new byte[] { 0xff, 0 }, CollectionOrdering.Matching);
-        await Assert.That(server.ReceivedCommands).Contains("XREAD COUNT 2 STREAMS tenant:{a}:one tenant:{a}:two 0 1-0");
+        await Assert.That(server.ReceivedCommands).Contains("XREAD COUNT 2 STREAMS tenant:\uFFFD{a}:one tenant:\U0001F600:{a}:two 0 1-0");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadAllKeepsCursorsForDistinctKeysAcrossSurrogateBoundary(bool hooked)
+    {
+        const string Prefix = "tenant:\uD83D";
+        const string JoinedSuffix = "\uDE00:events";
+        const string PlainSuffix = "\uFFFD:events";
+        byte[] first = Reply(false, (Prefix + JoinedSuffix, ["1-0"]), (Prefix + PlainSuffix, ["2-0"]));
+        byte[] second = Reply(false, (Prefix + JoinedSuffix, ["3-0"]));
+        await using var server = new FakeRespServer(first, second);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            CommandHook = hooked ? new PassThroughHook() : null,
+        });
+        await using var view = client.WithKeyPrefix(Prefix);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var reader = view.Streams
+            .ReadAllAsync([(JoinedSuffix, "0"), (PlainSuffix, "0")], cancellationToken: timeout.Token).GetAsyncEnumerator();
+
+        await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        await Assert.That(reader.Current.Entry.Id).IsEqualTo((RespireStreamId)"1-0");
+        await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        await Assert.That(reader.Current.Entry.Id).IsEqualTo((RespireStreamId)"2-0");
+        await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        await Assert.That(reader.Current.Entry.Id).IsEqualTo((RespireStreamId)"3-0");
+        await Assert.That(server.ReceivedCommands.Last()).IsEqualTo(
+            "XREAD COUNT 64 BLOCK 1000 STREAMS tenant:\U0001F600:events tenant:\uFFFD\uFFFD:events 1-0 2-0");
     }
 
     [Test]
@@ -374,6 +412,19 @@ public class StreamReadTests
 
     private static RespireClient Create(int port, bool cluster = false)
         => RespireClient.Create(new RespireOptions { Protocol = RespireProtocol.Resp2, Connections = 1, UseCluster = cluster, Endpoints = [new("127.0.0.1", port)] });
+
+    private sealed class PassThroughHook : RespireCommandHook
+    {
+        public override object? OnExecuting(RespireCommandContext context)
+        {
+            return null;
+        }
+
+        public override void OnCompleted(RespireCommandContext context, object? state,
+            RespireCommandOutcome outcome, Exception? error)
+        {
+        }
+    }
 
     internal static byte[] Reply(bool map, params (string Key, string[] Ids)[] streams)
     {

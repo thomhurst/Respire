@@ -131,7 +131,8 @@ internal sealed partial class KeyCommands
             var keys = new List<string>(raw.Length);
             var prefix = client.EncodedKeyPrefix;
             var effectiveMatch = prefix is { HasSurrogateBoundary: true } ? null : ScanMatch(prefix, match);
-            byte[]? localPattern = ScanLocalPattern(prefix, match, effectiveMatch);
+            byte[]? wirePattern = ScanJoinedWirePattern(prefix, match);
+            byte[]? localPattern = wirePattern is null ? ScanLocalPattern(prefix, match, effectiveMatch) : null;
 
             foreach (ref readonly var key in raw)
             {
@@ -149,7 +150,8 @@ internal sealed partial class KeyCommands
                 {
                     keys.Add(key.AsString());
                 }
-                else if (ScanKey(in key, prefix, localPattern) is { } stripped)
+                else if ((wirePattern is null || ByteGlob.IsMatch(key.AsSpan(), wirePattern))
+                    && ScanKey(in key, prefix, localPattern) is { } stripped)
                 {
                     keys.Add(stripped);
                 }

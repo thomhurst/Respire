@@ -11,7 +11,7 @@ namespace Respire;
 /// </summary>
 /// <remarks>Binary storage is borrowed, including through prefix views. Keep it unchanged until
 /// the command completes unless the receiving API explicitly snapshots or serializes it earlier.
-/// A scan key with a split UTF-16 scalar retains its namespace and boundary identity; it is not
+/// A returned key with a split UTF-16 scalar retains its namespace and boundary identity; it is not
 /// interchangeable with an unprefixed key containing UTF-8 replacement bytes.</remarks>
 public readonly partial struct RespireKey : IEquatable<RespireKey>, ISpanFormattable, IUtf8SpanFormattable, ISpanParsable<RespireKey>
 {

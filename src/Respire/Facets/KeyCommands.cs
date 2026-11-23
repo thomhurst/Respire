@@ -806,7 +806,7 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         {
             // A leading literal low surrogate can join the prefix before encoding.
             // Otherwise Redis cannot match the prefix independently of the key suffix.
-            if (prefix.HasSurrogateBoundary && !(match is { Length: > 0 } && char.IsLowSurrogate(match[0])))
+            if (prefix.HasSurrogateBoundary && !StartsWithLowSurrogate(match))
             {
                 return null;
             }
@@ -842,6 +842,19 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         return new RespireValue(pattern);
     }
 
+    private static bool StartsWithLowSurrogate(string? match)
+    {
+        return match is { Length: > 0 } && char.IsLowSurrogate(match[0]);
+    }
+
+    // CLUSTERSCAN leaves MATCH off the wire for these prefixes. Match a literal
+    // leading low surrogate against the joined scalar before decoding the suffix.
+    internal static byte[]? ScanJoinedWirePattern(KeyPrefix? prefix, string? match)
+    {
+        return prefix is { HasSurrogateBoundary: true } && StartsWithLowSurrogate(match)
+            ? Encoding.UTF8.GetBytes(EscapeGlob(prefix.Text!) + match) : null;
+    }
+
     private static byte[]? ScanLocalPattern(KeyPrefix? prefix, string? match, RespireValue? serverMatch)
     {
         return serverMatch is null && prefix is { HasSurrogateBoundary: true } && match is not null and not "*"
@@ -850,19 +863,27 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
 
     private static string? ScanKey(in RespValue value, KeyPrefix prefix, byte[]? localPattern)
     {
-        if (prefix.Text is { } text)
+        if (prefix.HasSurrogateBoundary)
         {
-            // Preserve text-prefix behavior, including UTF-16 pairs split at the prefix boundary.
-            string key = value.AsString();
-
-            if (!key.StartsWith(text, StringComparison.Ordinal))
+            if (!prefix.TryGetSuffix(value.AsSpan(), out var tail, out var lowSurrogate))
             {
                 return null;
             }
 
-            string suffix = key[text.Length..];
+            if (lowSurrogate is not { } low)
+            {
+                return localPattern is null || ByteGlob.IsMatch(tail, localPattern) ? Utf8String.GetString(tail) : null;
+            }
+
+            string suffix = low + Utf8String.GetString(tail);
             return localPattern is null || ByteGlob.IsMatch(Encoding.UTF8.GetBytes(suffix), localPattern)
                 ? suffix : null;
+        }
+
+        if (prefix.Text is { } text)
+        {
+            string key = value.AsString();
+            return key.StartsWith(text, StringComparison.Ordinal) ? key[text.Length..] : null;
         }
 
         var bytes = value.AsSpan();

@@ -9,6 +9,22 @@ namespace Respire.Tests;
 public class ValkeyClusterScanParserTests
 {
     [Test]
+    public async Task LiteralLowSurrogateMatchesOnlyItsJoinedWireKey()
+    {
+        const string Prefix = "tenant:*:\uD83D";
+        byte[] selected = Encoding.UTF8.GetBytes(Prefix + "\uDE00:key");
+        using var reply = RespValue.Array(RespValue.BulkString("0"), RespValue.Array(
+            RespValue.BulkString(selected),
+            RespValue.BulkString(Encoding.UTF8.GetBytes(Prefix + "\uDE01:key")),
+            RespValue.BulkString(Encoding.UTF8.GetBytes(Prefix + "\uFFFD:key"))));
+        var prefix = new Respire.Internal.KeyPrefix(Prefix);
+        var page = ValkeyClusterScanParser.ParseWithPrefix(in reply, prefix, "\uDE00:*");
+
+        await Assert.That(page.Keys.Count).IsEqualTo(1);
+        await Assert.That(page.Keys[0].Prepend(prefix).ToBytes().SequenceEqual(selected)).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task JoinedSurrogateKeysKeepDistinctOwnedIdentity(bool binaryTail)

@@ -74,7 +74,7 @@ internal sealed partial class ListCommands
             return owner.Attach(waitFor.HasValue
                 ? PopManyBlockingAsync(operation, command, cancellationToken, owner.Observation)
                 : client.ConvertResponseAsync(operation, command, cancellationToken, client,
-                    static (RespireClient c, in RespValue reply) => ParsePopMany(in reply, c.KeyPrefixBytes), observation: owner.Observation));
+                    static (RespireClient c, in RespValue reply) => ParsePopMany(in reply, c.EncodedKeyPrefix), observation: owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
@@ -105,7 +105,7 @@ internal sealed partial class ListCommands
         string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
-            static (RespireClient owner, in RespValue reply) => ParsePopMany(in reply, owner.KeyPrefixBytes), observation)
+            static (RespireClient owner, in RespValue reply) => ParsePopMany(in reply, owner.EncodedKeyPrefix), observation)
             .ConfigureAwait(false);
     }
 
@@ -113,11 +113,11 @@ internal sealed partial class ListCommands
         string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
-            static (RespireClient owner, in RespValue reply) => ParsePopOne(in reply, owner.KeyPrefixBytes), observation)
+            static (RespireClient owner, in RespValue reply) => ParsePopOne(in reply, owner.EncodedKeyPrefix), observation)
             .ConfigureAwait(false);
     }
 
-    private static RespireListPopResult? ParsePopOne(in RespValue reply, ReadOnlySpan<byte> prefix)
+    private static RespireListPopResult? ParsePopOne(in RespValue reply, KeyPrefix? prefix)
     {
         if (reply.IsNull)
         {
@@ -131,7 +131,7 @@ internal sealed partial class ListCommands
             throw new RespireProtocolException("Expected a selected list key and one popped value.");
         }
 
-        return new RespireListPopResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix), elements[1].AsString());
+        return new RespireListPopResult(MultiKeyPop.ParseReturnedKey(in elements[0], prefix), elements[1].AsString());
     }
 
     internal static (string Operation, CmdN Command) PopManyCommand(
@@ -164,7 +164,7 @@ internal sealed partial class ListCommands
         return (operation, new CmdN(blocking ? Verbs.BLMPop : Verbs.LMPop, arguments));
     }
 
-    internal static RespireListPopManyResult? ParsePopMany(in RespValue reply, ReadOnlySpan<byte> prefix)
+    internal static RespireListPopManyResult? ParsePopMany(in RespValue reply, KeyPrefix? prefix)
     {
         if (reply.IsNull)
         {
@@ -178,7 +178,7 @@ internal sealed partial class ListCommands
             throw new RespireProtocolException("Expected a selected list key and an array of popped values.");
         }
 
-        return new RespireListPopManyResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix), ResponseReader.StringArray(in elements[1]));
+        return new RespireListPopManyResult(MultiKeyPop.ParseReturnedKey(in elements[0], prefix), ResponseReader.StringArray(in elements[1]));
     }
 
 }

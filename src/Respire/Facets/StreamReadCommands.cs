@@ -163,7 +163,7 @@ internal sealed partial class StreamCommands
         {
             var key = snapshot[i].Key.Snapshot();
 
-            if (!seen.Add(key))
+            if (!seen.Add(GetStreamIdentity(client, key)))
             {
                 throw new ArgumentException("Each stream key must appear only once.", nameof(streams));
             }
@@ -244,11 +244,29 @@ internal sealed partial class StreamCommands
                 throw new RespireProtocolException("XREAD returned an invalid stream pair.");
             }
 
-            var key = MultiKeyPop.ParsePoppedKey(in pair[0], client.KeyPrefixBytes);
+            var key = MultiKeyPop.ParseReturnedKey(in pair[0], client.EncodedKeyPrefix);
             result[i] = new(key, ParseEntries(in pair[1], group is null ? null : client, group is null ? default : client.Key(key), group));
         }
 
         return result;
+    }
+
+    // At a surrogate boundary, logical UTF-8 can conflate keys with different resolved bytes.
+    private static RespireKey GetStreamIdentity(RespireClient client, RespireKey key)
+    {
+        return client.EncodedKeyPrefix is { HasSurrogateBoundary: true } ? client.ResolveKey(key) : key;
+    }
+
+    private Dictionary<RespireKey, int> BuildStreamIndexes((RespireKey Key, RespireStreamId After)[] streams)
+    {
+        var indexes = new Dictionary<RespireKey, int>(streams.Length);
+
+        for (int index = 0; index < streams.Length; index++)
+        {
+            indexes.Add(GetStreamIdentity(client, streams[index].Key), index);
+        }
+
+        return indexes;
     }
 
     public IAsyncEnumerable<RespireStreamEntry> ReadAllAsync(RespireKey key, RespireStreamId after = default,
@@ -320,7 +338,7 @@ internal sealed partial class StreamCommands
                     streams[i].After = newest.Length == 0 ? RespireStreamId.Beginning : newest[0].Id;
                 }
 
-                indexes = streams.Select((stream, index) => (stream.Key, index)).ToDictionary(x => x.Key, x => x.index);
+                indexes = BuildStreamIndexes(streams);
                 command = BuildReadCommand(client, streams, batchSize, TimeSpan.FromSeconds(1));
             }
             catch (Exception error) { failure = error; throw; }
@@ -358,7 +376,7 @@ internal sealed partial class StreamCommands
 
                 foreach (var result in results)
                 {
-                    if (!indexes.TryGetValue(result.Key, out var index))
+                    if (!indexes.TryGetValue(GetStreamIdentity(client, result.Key), out var index))
                     {
                         failure = new RespireProtocolException("XREAD returned an unrequested stream.");
                         throw failure;
