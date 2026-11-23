@@ -69,9 +69,7 @@ public readonly record struct RespireStreamTrimOptions
             var separator = text.IndexOf('-');
             var milliseconds = separator < 0 ? text : text[..separator];
 
-            if (!ulong.TryParse(milliseconds, NumberStyles.None, CultureInfo.InvariantCulture, out _)
-                || (separator >= 0 && !ulong.TryParse(text[(separator + 1)..], NumberStyles.None,
-                    CultureInfo.InvariantCulture, out _)))
+            if (!IsNumericIdComponent(milliseconds) || (separator >= 0 && !IsNumericIdComponent(text[(separator + 1)..])))
             {
                 throw new ArgumentException("MINID requires a numeric stream id.", parameterName);
             }
@@ -94,6 +92,16 @@ public readonly record struct RespireStreamTrimOptions
 
         return (hasThreshold ? 2 + (Approximate ? 1 : 0) + (Limit.HasValue ? 2 : 0) : 0)
             + (ReferencePolicy.HasValue ? 1 : 0);
+    }
+
+    private static bool IsNumericIdComponent(ReadOnlySpan<char> component)
+    {
+        if (!component.IsEmpty && component[0] == '+')
+        {
+            component = component[1..];
+        }
+
+        return ulong.TryParse(component, NumberStyles.None, CultureInfo.InvariantCulture, out _);
     }
 
     // Called only after validation; shared by immediate and deferred XADD/XTRIM encoders.
