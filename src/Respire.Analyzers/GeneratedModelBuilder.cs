@@ -287,8 +287,9 @@ internal static class GeneratedModelBuilder
             .Append("    /// <summary>Reads a full model with HGETALL; an absent or empty hash returns null.</summary>\n")
             .Append("    public static async global::System.Threading.Tasks.ValueTask<").Append(modelType).Append("?> GetAsync(")
             .Append(client).Append(", ").Append(key).Append(", ").Append(token).Append(")\n    {\n")
-            .Append("        var fields = await global::Respire.RespireHashModelIO.").Append(binary ? "ReadBinaryAsync" : "ReadAsync").Append("(client, key, cancellationToken).ConfigureAwait(false);\n")
-            .Append("        return fields.Count == 0 ? null : FromFields(fields);\n    }\n")
+            .Append("        var fields = await global::Respire.RespireHashModelIO.")
+            .Append(binary ? "ReadUtf8FieldsBinaryAsync" : "ReadUtf8FieldsAsync").Append("(client, key, cancellationToken).ConfigureAwait(false);\n")
+            .Append("        return fields is null ? null : FromFields(fields);\n    }\n")
             .Append("    /// <summary>Partial model fields. Unselected and selected-but-missing properties remain distinct.</summary>\n")
             .Append("    public sealed class ").Append(partialType).Append("\n    {\n");
 

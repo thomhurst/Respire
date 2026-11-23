@@ -68,6 +68,11 @@ string? name = await redis.Hashes.GetStringAsync("user:42", "name");
 Dictionary<string, string> profile = await redis.Hashes.GetAllAsync("user:42");
 ```
 
+Both `Hashes.GetAllAsync` and `Hashes.GetAllAsync<T>` decode field names as UTF-8 with replacement
+for invalid bytes. If two field names decode to the same string, the last occurrence in the
+server's reply supplies that dictionary entry. `Hashes.GetAllAsync<byte[]>` preserves value bytes.
+Use a [raw `HGETALL` reply](../guides/raw-commands.md) to read field names as bytes.
+
 Use `Hashes.SetExpireAsync` with `RespireExpiry.None` to set multiple fields in one command and clear their field TTLs. Pass `RespireSetWhen.Exists` to write only if every listed field exists, or `RespireSetWhen.NotExists` to write only if none exists. The method returns `false` if the condition fails. A failed condition leaves the values and TTLs unchanged. Use `RespireExpiry.Keep` to preserve TTLs on a successful write.
 
 ```csharp

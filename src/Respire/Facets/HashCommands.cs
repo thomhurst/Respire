@@ -135,9 +135,15 @@ public partial interface IRespireHashCommands
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
     /// <summary>The whole hash as a dictionary. Redis: HGETALL.</summary>
+    /// <remarks>Field names are decoded as UTF-8 with replacement for invalid bytes.
+    /// When distinct names decode to the same string, the last occurrence in the reply
+    /// supplies the value for that dictionary key.</remarks>
     ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>The whole hash with values deserialized as <typeparamref name="T"/>. Redis: HGETALL.</summary>
+    /// <remarks>Field names are decoded as UTF-8 with replacement for invalid bytes.
+    /// When distinct names decode to the same string, the last occurrence in the reply
+    /// supplies the value for that dictionary key, including when <typeparamref name="T"/> is a byte array.</remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<Dictionary<string, T>> GetAllAsync<T>(

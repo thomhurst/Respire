@@ -99,9 +99,10 @@ returns null. These methods do not set a key TTL.
 ### Full read (`GetAsync`)
 
 `GetAsync` sends one `HGETALL`. A missing hash returns null. Missing non-nullable properties throw
-`FormatException`; missing nullable ones become null. A hash with only unknown fields still exists:
-it decodes an all-nullable model but fails required properties. The read does not check that stored
-properties expand to the supplied key.
+`FormatException`; missing nullable ones become null. The mapper ignores unknown field names,
+including binary names that are invalid UTF-8. A hash with only unknown fields still exists and
+decodes an all-nullable model. A model with required properties throws `FormatException` in this
+case. The read does not check that stored properties expand to the supplied key.
 
 ### Partial read (`GetPartialAsync`)
 

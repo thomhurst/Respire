@@ -21,6 +21,18 @@ public class GeneratedHashModelIOTests
     }
 
     [Test]
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task FakeBinaryFieldNames(RespireProtocol protocol)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // Each scenario owns and disposes its client to isolate connection state.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = protocol });
+#pragma warning restore RESP010
+        await GeneratedHashModelScenarios.BinaryFieldNamesAsync(client);
+    }
+
+    [Test]
     public async Task ExactCommandsPreserveTemplateUnicodePrefixAndSelectionOrder()
     {
         await using var server = new FakeRespServer(":3\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(),

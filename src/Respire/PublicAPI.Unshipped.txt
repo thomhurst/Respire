@@ -1,4 +1,6 @@
 #nullable enable
+static Respire.RespireHashModelIO.ReadUtf8FieldsAsync(Respire.IRespireClient! client, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.Dictionary<string!, string!>?>
+static Respire.RespireHashModelIO.ReadUtf8FieldsBinaryAsync(Respire.IRespireClient! client, Respire.RespireKey key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.Dictionary<string!, byte[]!>?>
 Respire.RespireSlowLogEntry.OriginalArgumentCount.get -> long?
 Respire.RespireSlowLogEntry.OriginalArgumentCount.init -> void
 Respire.RespireContinuationDispatch

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Unicode;
 using Respire.Protocol;
 
 namespace Respire;
@@ -231,17 +232,37 @@ public static class RespireHashModelIO
     }
 
     /// <summary>Reads one full hash, validating pairs and preserving case-sensitive field names.</summary>
-    public static ValueTask<Dictionary<string, string>> ReadAsync(IRespireClient client, RespireKey key,
+    public static async ValueTask<Dictionary<string, string>> ReadAsync(IRespireClient client, RespireKey key,
         CancellationToken cancellationToken = default)
-        => ReadCoreAsync(client, key, ReadString, cancellationToken);
+    {
+        return await ReadCoreAsync(client, key, ReadString, ignoreInvalidUtf8Names: false, cancellationToken)
+            .ConfigureAwait(false) ?? new(StringComparer.Ordinal);
+    }
 
     /// <summary>Reads a full hash with binary-safe owned field values.</summary>
-    public static ValueTask<Dictionary<string, byte[]>> ReadBinaryAsync(IRespireClient client, RespireKey key,
+    public static async ValueTask<Dictionary<string, byte[]>> ReadBinaryAsync(IRespireClient client, RespireKey key,
         CancellationToken cancellationToken = default)
-        => ReadCoreAsync(client, key, ReadBytes, cancellationToken);
+    {
+        return await ReadCoreAsync(client, key, ReadBytes, ignoreInvalidUtf8Names: false, cancellationToken)
+            .ConfigureAwait(false) ?? new(StringComparer.Ordinal);
+    }
 
-    private static async ValueTask<Dictionary<string, T>> ReadCoreAsync<T>(IRespireClient client, RespireKey key,
-        Func<RespireResult, T> decode, CancellationToken cancellationToken) where T : class
+    /// <summary>Reads UTF-8 field names and text values. An absent hash returns null.</summary>
+    public static ValueTask<Dictionary<string, string>?> ReadUtf8FieldsAsync(IRespireClient client, RespireKey key,
+        CancellationToken cancellationToken = default)
+    {
+        return ReadCoreAsync(client, key, ReadString, ignoreInvalidUtf8Names: true, cancellationToken);
+    }
+
+    /// <summary>Reads UTF-8 field names and owned binary values. An absent hash returns null.</summary>
+    public static ValueTask<Dictionary<string, byte[]>?> ReadUtf8FieldsBinaryAsync(IRespireClient client, RespireKey key,
+        CancellationToken cancellationToken = default)
+    {
+        return ReadCoreAsync(client, key, ReadBytes, ignoreInvalidUtf8Names: true, cancellationToken);
+    }
+
+    private static async ValueTask<Dictionary<string, T>?> ReadCoreAsync<T>(IRespireClient client, RespireKey key,
+        Func<RespireResult, T> decode, bool ignoreInvalidUtf8Names, CancellationToken cancellationToken) where T : class
     {
         ArgumentNullException.ThrowIfNull(client);
         cancellationToken.ThrowIfCancellationRequested();
@@ -252,14 +273,25 @@ public static class RespireHashModelIO
             throw new RespireProtocolException("HGETALL must return complete field/value pairs.");
         }
 
+        if (reply.Count == 0)
+        {
+            return null;
+        }
+
         var fields = new Dictionary<string, T>(reply.Count / 2, StringComparer.Ordinal);
 
         for (var index = 0; index < reply.Count; index += 2)
         {
-            var name = ReadString(reply[index]);
-            var value = decode(reply[index + 1]);
+            RespireResult field = RequireBulkString(reply[index]);
+            RespireResult value = reply[index + 1];
 
-            if (!fields.TryAdd(name, value))
+            if (ignoreInvalidUtf8Names && !Utf8.IsValid(field.AsSpan()))
+            {
+                RequireBulkString(value);
+                continue;
+            }
+
+            if (!fields.TryAdd(field.AsString(), decode(value)))
             {
                 throw new RespireProtocolException("HGETALL returned a duplicate field.");
             }
@@ -325,12 +357,24 @@ public static class RespireHashModelIO
     }
 
     private static string ReadString(RespireResult reply)
-        => reply.Type == RespireDataType.BulkString ? reply.AsString()
-            : throw new RespireProtocolException("Hash fields and values must be bulk strings.");
+    {
+        return RequireBulkString(reply).AsString();
+    }
 
     private static byte[] ReadBytes(RespireResult reply)
-        => reply.Type == RespireDataType.BulkString ? reply.AsBytes()
-            : throw new RespireProtocolException("Hash fields and values must be bulk strings.");
+    {
+        return RequireBulkString(reply).AsBytes();
+    }
+
+    private static RespireResult RequireBulkString(RespireResult reply)
+    {
+        if (reply.Type != RespireDataType.BulkString)
+        {
+            throw new RespireProtocolException("Hash fields and values must be bulk strings.");
+        }
+
+        return reply;
+    }
 
     private static void ValidateWriteReply(RespireResult reply, int count)
     {

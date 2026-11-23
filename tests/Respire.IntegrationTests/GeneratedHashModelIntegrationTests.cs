@@ -19,4 +19,18 @@ public class GeneratedHashModelIntegrationTests(RedisTestContainer fixture)
         });
         await GeneratedHashModelScenarios.RoundTripAsync(client);
     }
+
+    [Test]
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task RealRedisBinaryFieldNames(RespireProtocol protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
+            Protocol = protocol,
+            Connections = 1,
+        });
+        await GeneratedHashModelScenarios.BinaryFieldNamesAsync(client);
+    }
 }

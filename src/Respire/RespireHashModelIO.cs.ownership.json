@@ -8,6 +8,8 @@
         "ReadBinaryAsync(IRespireClient,RespireKey,CancellationToken):ValueTask<Dictionary<string,byte[]>>",
         "ReadPartialAsync(IRespireClient,RespireKey,string[],string[],CancellationToken):ValueTask<Dictionary<string,string?>>",
         "ReadPartialBinaryAsync(IRespireClient,RespireKey,string[],string[],CancellationToken):ValueTask<Dictionary<string,byte[]?>>",
+        "ReadUtf8FieldsAsync(IRespireClient,RespireKey,CancellationToken):ValueTask<Dictionary<string,string>?>",
+        "ReadUtf8FieldsBinaryAsync(IRespireClient,RespireKey,CancellationToken):ValueTask<Dictionary<string,byte[]>?>",
         "WriteAsync(IRespireClient,RespireKey,IReadOnlyDictionary<string,string>,string[],CancellationToken):ValueTask",
         "WriteAsync(IRespireClient,RespireKey,IReadOnlyDictionary<string,string>,string[],IReadOnlyDictionary<string,long>,RespireHashExpiryMode,CancellationToken):ValueTask",
         "WriteBinaryAsync(IRespireClient,RespireKey,IReadOnlyDictionary<string,byte[]>,string[],CancellationToken):ValueTask",
