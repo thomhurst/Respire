@@ -422,6 +422,35 @@ public class DependencyInjectionOptionsTests
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task DefaultConfiguration_ClientUsesBoundOptionsWithCustomOptionsAccessor(bool registerAccessorFirst)
+    {
+        var services = new ServiceCollection();
+        var section = Section(new() { ["Endpoints:0"] = "localhost:6379" });
+        IOptions<RespireOptions> customAccessor = Options.Create(RespireOptions.Parse("localhost:6380"));
+
+        if (registerAccessorFirst)
+        {
+            services.AddSingleton(customAccessor);
+        }
+
+        services.AddRespire(section, (_, options) => options with { KeyPrefix = "bound:" });
+
+        if (!registerAccessorFirst)
+        {
+            services.AddSingleton(customAccessor);
+        }
+
+        await using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<RespireClient>();
+
+        await Assert.That(provider.GetRequiredService<IOptions<RespireOptions>>()).IsSameReferenceAs(customAccessor);
+        await Assert.That(client.Core.Options.Endpoints[0].Port).IsEqualTo(6379);
+        await Assert.That(client.Core.Options.KeyPrefix.ToString()).IsEqualTo("bound:");
+    }
+
+    [Test]
     public async Task Host_ValidatesDefaultAndNamedOptions_WithoutConnecting_AndUsesCallbackServices()
     {
         var builder = Host.CreateApplicationBuilder();

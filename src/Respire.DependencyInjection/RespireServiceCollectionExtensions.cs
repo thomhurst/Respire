@@ -14,8 +14,8 @@ public static class RespireServiceCollectionExtensions
     /// Registers a lazy singleton client and default <see cref="IOptions{TOptions}"/> from
     /// configuration. Options are validated at host startup without connecting to Redis.
     /// The optional callback runs after binding and can supply serializers, credentials, and logging.
-    /// The singleton client and <see cref="IOptions{TOptions}.Value"/> share the settings captured
-    /// on first access or startup validation.
+    /// The singleton client and the registered default <see cref="IOptions{TOptions}"/> accessor
+    /// share the settings captured on first access.
     /// </summary>
     public static IServiceCollection AddRespire(this IServiceCollection services,
         IConfigurationSection configuration,
@@ -67,8 +67,9 @@ public static class RespireServiceCollectionExtensions
 
         if (serviceKey is null)
         {
-            services.TryAddSingleton<IOptions<RespireOptions>, RespireDefaultOptions>();
-            return AddRespireCore(services, provider => provider.GetRequiredService<IOptions<RespireOptions>>().Value);
+            services.AddSingleton<RespireDefaultOptions>();
+            services.TryAddSingleton<IOptions<RespireOptions>>(provider => provider.GetRequiredService<RespireDefaultOptions>());
+            return AddRespireCore(services, provider => provider.GetRequiredService<RespireDefaultOptions>().Value);
         }
 
         return AddKeyedRespireCore(services, serviceKey,
