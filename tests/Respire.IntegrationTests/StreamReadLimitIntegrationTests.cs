@@ -9,6 +9,52 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task LatestCursorReadsOneEntryPerStreamDirectlyAndFromQueues(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
+            with
+        { Protocol = (RespireProtocol)protocol });
+        var prefix = $"latest:{Guid.NewGuid():N}:";
+        var first = prefix + "one";
+        var second = prefix + "two";
+
+        foreach (var key in new[] { first, second })
+        {
+            await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("value", "old"));
+            await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("value", "latest"));
+        }
+
+        (RespireKey Key, RespireStreamId After)[] streams =
+            [(first, RespireStreamId.Max), (prefix + "missing", RespireStreamId.Max), (second, RespireStreamId.Max)];
+
+        AssertLatest(await client.Streams.ReadAsync(streams, count: 2));
+
+        using var batch = client.CreateBatch();
+        var batched = batch.Streams.Read(streams, count: 2);
+        await batch.ExecuteAsync();
+        AssertLatest(batched.Result);
+
+        await using var transaction = client.CreateTransaction();
+        var queued = transaction.Streams.Read(streams, count: 2);
+        await transaction.CommitAsync();
+        AssertLatest(queued.Result);
+
+        void AssertLatest(RespireStreamReadResult[] result)
+        {
+            result.Select(x => x.Key).Should().Equal((RespireKey)first, (RespireKey)second);
+
+            foreach (var stream in result)
+            {
+                var entry = stream.Entries.Should().ContainSingle().Which;
+                entry.Id.Should().Be((RespireStreamId)"2-0");
+                entry.GetString("value").Should().Be("latest");
+            }
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task AcknowledgingAbsentGroupMatchesRedis(int protocol)
     {
         await using var fake = new Respire.Testing.RespireFakeServer();

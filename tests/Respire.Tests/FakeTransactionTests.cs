@@ -83,6 +83,25 @@ public class FakeTransactionTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task UnknownScriptSubcommandPreservesSpellingAndAbortsTheQueue(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        var options = server.CreateOptions() with { Protocol = (RespireProtocol)protocol };
+        await using var session = await TestRespSession.ConnectAsync(options);
+
+        using var multi = await session.CommandAsync("MULTI");
+        await Assert.That(multi.AsString()).IsEqualTo("OK");
+
+        using var error = await session.CommandAsync("script", "NoSuch");
+        await Assert.That(error.GetErrorMessage()).IsEqualTo("ERR unknown subcommand 'NoSuch'. Try SCRIPT HELP.");
+
+        using var aborted = await session.CommandAsync("EXEC");
+        await Assert.That(aborted.GetErrorMessage()).StartsWith("EXECABORT");
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task ScriptFlushOptionErrorsStayQueued(int protocol)
     {
         await using var server = new RespireFakeServer();

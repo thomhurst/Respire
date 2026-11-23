@@ -136,7 +136,7 @@ a server error that names the command. Each error uses one response slot, so lat
 | Sets | `SPOP`, `SRANDMEMBER` |
 | Lists | `BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`, `BLMOVE`, `RPOPLPUSH`, `BRPOPLPUSH` |
 | Sorted sets | `ZRANDMEMBER`, `BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP`, `ZUNION`, `ZINTER`, `ZDIFF` and their `STORE` forms, `ZRANGESTORE` |
-| Streams | Trimming, `XCLAIM`, `XREADGROUP` `NOACK` and `CLAIM`, `IDMPAUTO`, range commands, stream metadata, other group-administration commands |
+| Streams | `XREAD` with the latest-entry cursor (`+`), trimming, `XCLAIM`, `XREADGROUP` `NOACK` and `CLAIM`, `IDMPAUTO`, range commands, stream metadata, other group-administration commands |
 | Pub/sub | `PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB`, `QUIT`, `RESET` |
 
 ### Strings, keys, and counters
