@@ -274,7 +274,7 @@ public sealed record RespireSearchCollectOptions
         get; init;
     } = [];
 
-    /// <summary>Offset and count within each group, applied after sorting.</summary>
+    /// <summary>Non-negative offset and positive count within each group, applied after sorting.</summary>
     public (int Offset, int Count)? Limit
     {
         get; init;
@@ -326,9 +326,9 @@ public sealed record RespireSearchCollectOptions
 
         if (Limit is { } limit)
         {
-            if (limit.Offset < 0 || limit.Count < 0)
+            if (limit.Offset < 0 || limit.Count <= 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(Limit));
+                throw new ArgumentOutOfRangeException(nameof(Limit), "COLLECT requires a non-negative offset and a positive count.");
             }
 
             args.Add("LIMIT");

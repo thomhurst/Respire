@@ -144,6 +144,7 @@ Cursor paging:
 `RespireSearchReducer.Collect` exposes Redis 8.10's `COLLECT` reducer. Pass `RespireSearchCollectOptions` with nonempty `Fields` or `AllFields`, optional `Distinct`, `SortBy` and `Limit`, and an optional alias. `Fields` and `SortBy` add an `@` prefix to bare names and preserve existing prefixes. Use `@@rank` to reference a field named `@rank`.
 
 - `AllFields` projects fields already loaded by `LOAD` or earlier stages; it does not load whole documents.
+- `Limit` requires a non-negative offset and a positive count. Use the `COUNT` reducer to count rows per group without collecting them.
 - Entries are in `StructuredRows[row][alias].Items`: field/value arrays on RESP2, maps on RESP3 (whose `Items` alternate keys and values).
 
 See [FT.AGGREGATE](https://redis.io/docs/latest/commands/ft.aggregate/).

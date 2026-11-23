@@ -378,6 +378,7 @@ public class SearchOptionTests
     [Arguments(2)]
     [Arguments(3)]
     [Arguments(4)]
+    [Arguments(5)]
     public async Task InvalidCollectOptionsFailDuringReducerConstruction(int option)
     {
         RespireSearchCollectOptions invalid = option switch
@@ -386,6 +387,7 @@ public class SearchOptionTests
             1 => new() { AllFields = true, Fields = ["title"] },
             2 => new() { Fields = ["@@"] },
             3 => new() { AllFields = true, Limit = (-1, 1) },
+            4 => new() { AllFields = true, Limit = (0, 0) },
             _ => new() { AllFields = true, SortBy = [new("title", (RespireSearchSortDirection)99)] },
         };
         await Assert.That(() => RespireSearchReducer.Collect(invalid)).Throws<ArgumentException>();
