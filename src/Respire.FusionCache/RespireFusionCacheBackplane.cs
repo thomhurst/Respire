@@ -9,7 +9,7 @@ namespace Respire.FusionCache;
 /// Redis pub/sub cannot replay lost messages. Disposal never disposes the shared client.</remarks>
 public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane, IAsyncDisposable, IDisposable
 {
-    private static readonly AsyncLocal<SubscriptionState?> CurrentCallback = new();
+    private static readonly AsyncLocal<CallbackInvocation?> s_currentCallback = new();
     private readonly IRespireClient _client;
     private readonly RespireSubscriptionOptions _subscriptionOptions;
     private readonly ILogger<RespireFusionCacheBackplane>? _logger;
@@ -149,14 +149,13 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
         // Re-entrant callbacks await transport shutdown only; other callers also join that callback.
         if (retiring is not null)
         {
-            await (CurrentCallback.Value == retiring ? retiring.TransportStop : retiring.Cleanup).ConfigureAwait(false);
+            await (s_currentCallback.Value?.ActiveSubscription == retiring ? retiring.TransportStop : retiring.Cleanup)
+                .ConfigureAwait(false);
         }
     }
 
     private async Task ConsumeAsync(SubscriptionState state)
     {
-        CurrentCallback.Value = state;
-
         try
         {
             if (!state.Stop.IsCancellationRequested)
@@ -193,18 +192,8 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
                         throw new FormatException("Invalid FusionCache backplane message.");
                     }
 
-                    if (state.SynchronousCallbacks && state.Options.IncomingMessageHandler is { } synchronous)
-                    {
-                        synchronous(message);
-                    }
-                    else if (state.Options.IncomingMessageHandlerAsync is { } asynchronous)
-                    {
-                        await asynchronous(message).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        state.Options.IncomingMessageHandler!(message);
-                    }
+                    await InvokeCallbackAsync(state, message, state.Options.IncomingMessageHandler,
+                        state.Options.IncomingMessageHandlerAsync).ConfigureAwait(false);
                 }
                 catch (Exception error)
                 {
@@ -232,7 +221,6 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
         finally
         {
             state.Started.TrySetResult();
-            CurrentCallback.Value = null;
         }
     }
 
@@ -240,20 +228,8 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
     {
         try
         {
-            var info = new BackplaneConnectionInfo(reconnect);
-
-            if (state.SynchronousCallbacks && state.Options.ConnectHandler is { } synchronous)
-            {
-                synchronous(info);
-            }
-            else if (state.Options.ConnectHandlerAsync is { } asynchronous)
-            {
-                await asynchronous(info).ConfigureAwait(false);
-            }
-            else
-            {
-                state.Options.ConnectHandler!(info);
-            }
+            await InvokeCallbackAsync(state, new BackplaneConnectionInfo(reconnect), state.Options.ConnectHandler,
+                state.Options.ConnectHandlerAsync).ConfigureAwait(false);
         }
         catch (Exception error)
         {
@@ -261,6 +237,34 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
             {
                 LogConnectionFailure(connectionLogger, error);
             }
+        }
+    }
+
+    private static async ValueTask InvokeCallbackAsync<T>(
+        SubscriptionState state, T argument, Action<T>? synchronous, Func<T, ValueTask>? asynchronous)
+    {
+        var invocation = new CallbackInvocation(state);
+        s_currentCallback.Value = invocation;
+
+        try
+        {
+            if (state.SynchronousCallbacks && synchronous is not null)
+            {
+                synchronous(argument);
+            }
+            else if (asynchronous is not null)
+            {
+                await asynchronous(argument).ConfigureAwait(false);
+            }
+            else
+            {
+                synchronous!(argument);
+            }
+        }
+        finally
+        {
+            // Background tasks can inherit this context. Revoke their reentrant access when the callback returns.
+            invocation.Complete();
         }
     }
 
@@ -278,6 +282,18 @@ public sealed partial class RespireFusionCacheBackplane : IFusionCacheBackplane,
 
     [LoggerMessage(5, LogLevel.Warning, "FusionCache backplane connection callback failed; continuing delivery.")]
     private static partial void LogConnectionFailure(ILogger logger, Exception error);
+
+    private sealed class CallbackInvocation(SubscriptionState state)
+    {
+        private SubscriptionState? _activeSubscription = state;
+
+        internal SubscriptionState? ActiveSubscription => Volatile.Read(ref _activeSubscription);
+
+        internal void Complete()
+        {
+            Volatile.Write(ref _activeSubscription, null);
+        }
+    }
 
     private sealed class SubscriptionState(RespireSubscription subscription, BackplaneSubscriptionOptions options, bool synchronousCallbacks)
     {

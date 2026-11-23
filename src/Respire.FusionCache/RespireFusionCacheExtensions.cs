@@ -46,12 +46,17 @@ public static class RespireFusionCacheExtensions
         return services;
     }
 
-    /// <summary>Configures this cache's backplane using the same registered client as Respire's distributed cache.</summary>
+    /// <summary>Configures a provider-owned backplane for this cache using the registered shared client.</summary>
     public static IFusionCacheBuilder WithRespireBackplane(this IFusionCacheBuilder builder,
         RespireSubscriptionOptions subscriptionOptions = default)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        return builder.WithBackplane(provider => Create(provider, subscriptionOptions));
+
+        // DI must dispose the adapter even when FusionCache has only queued its initial subscribe.
+        var serviceKey = new object();
+        builder.Services.AddKeyedTransient<RespireFusionCacheBackplane>(serviceKey,
+            (provider, _) => Create(provider, subscriptionOptions));
+        return builder.WithBackplane(provider => provider.GetRequiredKeyedService<RespireFusionCacheBackplane>(serviceKey));
     }
 
     private static RespireFusionCacheBackplane Create(IServiceProvider provider, RespireSubscriptionOptions options)

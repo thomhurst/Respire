@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Respire.Caching;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -69,6 +70,52 @@ public class BackplaneRegistrationTests(RedisTestContainer fixture)
         await client.SetAsync(Guid.NewGuid().ToString(), "still-alive");
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ProviderDisposalPreventsQueuedBackplaneSubscription(bool disposeAsync)
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var logger = new SubscriptionGateLogger(deadline.Token);
+        string name = "fusion:" + Guid.NewGuid();
+        var services = new ServiceCollection();
+        services.AddSingleton<IRespireClient>(client);
+        services.AddFusionCache(name)
+            .AsKeyedServiceByCacheName()
+            .WithOptions(options => options.EnableBestPracticesAdvisor = false)
+            .WithLogger(logger)
+            .WithRespireBackplane();
+        await using var provider = services.BuildServiceProvider();
+        _ = provider.GetRequiredKeyedService<IFusionCache>(name);
+
+        try
+        {
+            await logger.SubscribeEntered.Task.WaitAsync(deadline.Token);
+
+            if (disposeAsync)
+            {
+                await provider.DisposeAsync();
+            }
+            else
+            {
+                provider.Dispose();
+            }
+
+            await logger.Unsubscribed.Task.WaitAsync(deadline.Token);
+        }
+        finally
+        {
+            logger.ReleaseSubscribe.TrySetResult();
+        }
+
+        string channel = await logger.SubscribeFinished.Task.WaitAsync(deadline.Token);
+        var counts = await client.Server.PubSubSubscriberCountsAsync([channel], cancellationToken: deadline.Token);
+        await Assert.That(counts.Single().Subscribers).IsEqualTo(0L);
+        await client.SetAsync(name, "still-alive", cancellationToken: deadline.Token);
+        await Assert.That(await client.GetStringAsync(name, deadline.Token)).IsEqualTo("still-alive");
+    }
+
     private static ServiceProvider BuildProvider(IRespireClient client, string prefix)
     {
         var services = new ServiceCollection();
@@ -84,5 +131,53 @@ public class BackplaneRegistrationTests(RedisTestContainer fixture)
             .WithRegisteredDistributedCache()
             .WithRespireBackplane();
         return services.BuildServiceProvider();
+    }
+
+    private sealed class SubscriptionGateLogger(CancellationToken deadline) : ILogger<ZiggyCreatures.Caching.Fusion.FusionCache>
+    {
+        internal TaskCompletionSource SubscribeEntered
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource ReleaseSubscribe
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource Unsubscribed
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal TaskCompletionSource<string> SubscribeFinished
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            string message = formatter(state, exception);
+
+            if (message.Contains("before subscribing to backplane on channel", StringComparison.Ordinal))
+            {
+                SubscribeEntered.TrySetResult();
+                ReleaseSubscribe.Task.WaitAsync(deadline).GetAwaiter().GetResult();
+            }
+            else if (message.Contains("after unsubscribing to backplane", StringComparison.Ordinal))
+            {
+                Unsubscribed.TrySetResult();
+            }
+            else if (state is IReadOnlyList<KeyValuePair<string, object?>> fields
+                && (message.Contains("after subscribing to backplane on channel", StringComparison.Ordinal)
+                    || (exception is ObjectDisposedException && fields.Any(field => field is { Key: "RetriesLeft", Value: 0 }))))
+            {
+                SubscribeFinished.TrySetResult((string)fields.Single(field => field.Key == "BackplaneChannel").Value!);
+            }
+        }
     }
 }
