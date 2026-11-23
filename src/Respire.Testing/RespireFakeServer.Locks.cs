@@ -6,7 +6,7 @@ public sealed partial class RespireFakeServer
 {
     // Mirror the exact script in Respire.Coordination without making this testing package
     // depend on every optional feature package. Arbitrary Lua remains unsupported.
-    private static readonly RespireScript FencedLockAcquireScript = RespireScript.Create("""
+    private const string FencedLockAcquireSource = """
         -- Keep the invariant even when this script is invoked without the managed entry point.
         if KEYS[1] == KEYS[2] then
             return redis.error_reply('ERR lock and fencing counter keys must differ')
@@ -24,21 +24,37 @@ public sealed partial class RespireFakeServer
         local fence = redis.call('GET', KEYS[2])
         redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2])
         return fence
-        """);
-    // Raw C# literals preserve checkout line endings, including when optional packages
-    // and this package were built on different platforms.
-    private static readonly RespireScript FencedLockAcquireLfScript =
-        RespireScript.Create(FencedLockAcquireScript.Source.ReplaceLineEndings("\n"));
-    private static readonly RespireScript FencedLockAcquireCrLfScript =
-        RespireScript.Create(FencedLockAcquireScript.Source.ReplaceLineEndings("\r\n"));
+        """;
+
+    private const string EffectsReplicationPrelude = "if redis.replicate_commands then redis.replicate_commands() end\n";
+
+    // The prefix always ends with LF. The raw script body keeps its checkout line endings.
+    // Keep the unprefixed variants for older Respire.Coordination builds.
+    private static readonly RespireScript[] FencedLockAcquireScripts =
+    [
+        RespireScript.Create(EffectsReplicationPrelude + FencedLockAcquireSource.ReplaceLineEndings("\n")),
+        RespireScript.Create(EffectsReplicationPrelude + FencedLockAcquireSource.ReplaceLineEndings("\r\n")),
+        RespireScript.Create(FencedLockAcquireSource.ReplaceLineEndings("\n")),
+        RespireScript.Create(FencedLockAcquireSource.ReplaceLineEndings("\r\n")),
+    ];
 
     private FakeReply BuiltInScript(byte[][] args, bool sha)
     {
         var source = Encoding.UTF8.GetString(args[1]);
-        RespireScript? script = Matches(FencedLockAcquireLfScript) ? FencedLockAcquireLfScript
-            : Matches(FencedLockAcquireCrLfScript) ? FencedLockAcquireCrLfScript
-            : Matches(LockCommands.ReleaseScript) ? LockCommands.ReleaseScript
-            : Matches(LockCommands.ExtendScript) ? LockCommands.ExtendScript : null;
+        RespireScript? acquireScript = null;
+
+        foreach (RespireScript candidate in FencedLockAcquireScripts)
+        {
+            if (Matches(candidate))
+            {
+                acquireScript = candidate;
+                break;
+            }
+        }
+
+        RespireScript? script = acquireScript
+            ?? (Matches(LockCommands.ReleaseScript) ? LockCommands.ReleaseScript
+                : Matches(LockCommands.ExtendScript) ? LockCommands.ExtendScript : null);
 
         if (script is null)
         {
@@ -50,7 +66,7 @@ public sealed partial class RespireFakeServer
             return FakeReply.Error("NOSCRIPT No matching script. Please use EVAL.");
         }
 
-        var acquire = script == FencedLockAcquireLfScript || script == FencedLockAcquireCrLfScript;
+        var acquire = acquireScript is not null;
         var extend = script == LockCommands.ExtendScript;
 
         if (Integer(args[2]) != (acquire ? 2 : 1) || args.Length != (acquire ? 7 : extend ? 6 : 5))
