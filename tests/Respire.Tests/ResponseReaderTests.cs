@@ -9,6 +9,34 @@ namespace Respire.Tests;
 public class ResponseReaderTests
 {
     [Test]
+    public async Task IntegerSentinelReaderPreservesMinusOneAndRejectsOtherTypes()
+    {
+        RespValue sentinel = RespValue.Integer(-1);
+        RespValue zero = RespValue.Integer(0);
+        using var text = RespValue.BulkString("0");
+
+        await Assert.That(ResponseReader.IntegerMinusOneOrNull(in sentinel)).IsNull();
+        await Assert.That(ResponseReader.IntegerMinusOneOrNull(in zero)).IsEqualTo(0L);
+        await Assert.That(() => ResponseReader.IntegerMinusOneOrNull(in text)).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(() => ResponseReader.Integer(in RespValue.Null)).ThrowsExactly<RespireProtocolException>();
+    }
+
+    [Test]
+    public async Task IntegerArrayReadersRequireArraysAndValidateElements()
+    {
+        using var nullable = RespValue.Array(RespValue.Null, RespValue.Integer(0));
+        using var malformed = RespValue.Array(RespValue.Integer(2), RespValue.BulkString("0"));
+        RespValue missing = RespValue.Null;
+
+        await Assert.That(ResponseReader.NullableIntegerArray(in nullable)).IsEquivalentTo(new long?[] { null, 0 });
+        await Assert.That(() => ResponseReader.IntegerArray(in nullable)).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(() => ResponseReader.NullableIntegerArray(in missing)).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(() => ResponseReader.NullableIntegerArray(in malformed)).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(() => ResponseReader.TtlArray(in malformed)).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(() => ResponseReader.HashFieldExpiryResultArray(in malformed)).ThrowsExactly<RespireProtocolException>();
+    }
+
+    [Test]
     [Arguments("inf", double.PositiveInfinity)]
     [Arguments("+inf", double.PositiveInfinity)]
     [Arguments("-inf", double.NegativeInfinity)]

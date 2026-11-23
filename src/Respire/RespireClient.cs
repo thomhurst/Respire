@@ -7349,12 +7349,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                 throw;
             }
 
-            var ran = ResponseReader.Integer(in value);
-            value.Dispose();
-
-            if (ran == 1)
+            using (value)
             {
-                return;
+                if (ResponseReader.Integer(in value) == 1)
+                {
+                    return;
+                }
             }
 
             // The lease expired before the script executed — a stall longer than the TTL that

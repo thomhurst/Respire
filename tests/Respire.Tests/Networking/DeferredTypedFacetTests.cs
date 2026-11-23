@@ -9,6 +9,119 @@ namespace Respire.Tests.Networking;
 public class DeferredTypedFacetTests
 {
     [Test]
+    [Arguments(RespireProtocol.Resp2)]
+    [Arguments(RespireProtocol.Resp3)]
+    public async Task DirectIntegerRepliesRejectWrongTypesAndPreserveValidValues(RespireProtocol protocol)
+    {
+        await using var server = new FakeRespServer(WithHandshake(protocol, IntegerReplies(protocol)));
+        await using var client = await ConnectAsync(server.Port, protocol);
+
+        await Assert.That(async () => await client.Sets.CountAsync("items"))
+            .ThrowsExactly<RespireProtocolException>();
+        await Assert.That(async () => await client.Lists.PositionAsync("list", "value"))
+            .ThrowsExactly<RespireProtocolException>();
+
+        // The first reply is an array with a non-integer element.
+        await Assert.That(async () => await client.Lists.PositionsAsync("list", "value", count: 2))
+            .ThrowsExactly<RespireProtocolException>();
+
+        // The next reply is a scalar where an array is required.
+        await Assert.That(async () => await client.Lists.PositionsAsync("list", "value", count: 2))
+            .ThrowsExactly<RespireProtocolException>();
+
+        await Assert.That(await client.Sets.CountAsync("items")).IsEqualTo(0L);
+        await Assert.That(await client.Lists.PositionAsync("list", "value")).IsEqualTo(0L);
+        await Assert.That(await client.Lists.PositionAsync("list", "value")).IsNull();
+        await Assert.That(await client.Lists.PositionsAsync("list", "value", count: 2))
+            .IsEquivalentTo(new long[] { 0, 2 }, CollectionOrdering.Matching);
+        await Assert.That(await client.Lists.PositionsAsync("list", "value", count: 2)).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(RespireProtocol.Resp2, false)]
+    [Arguments(RespireProtocol.Resp2, true)]
+    [Arguments(RespireProtocol.Resp3, false)]
+    [Arguments(RespireProtocol.Resp3, true)]
+    public async Task DeferredIntegerReplyFailuresFaultOnlyTheirOwnPending(RespireProtocol protocol, bool transaction)
+    {
+        byte[][] replies = DeferredReplies(transaction, IntegerReplies(protocol));
+        await using var server = new FakeRespServer(WithHandshake(protocol, replies));
+        await using var client = await ConnectAsync(server.Port, protocol);
+
+        if (transaction)
+        {
+            await using var queue = client.CreateTransaction();
+            await AssertDeferredIntegerRepliesAsync(queue, async () => await queue.CommitAsync());
+        }
+        else
+        {
+            using var queue = client.CreateBatch();
+            await AssertDeferredIntegerRepliesAsync(queue, async () =>
+            {
+                RespireBatchResult result = await queue.TryExecuteAsync();
+                await Assert.That(result.FailureCount).IsEqualTo(4);
+            });
+        }
+    }
+
+    private static async Task AssertDeferredIntegerRepliesAsync(IRespireCommandQueue queue, Func<Task> execute)
+    {
+        var invalidCount = queue.Sets.Count("items");
+        var invalidPosition = queue.Lists.Position("list", "value");
+        var invalidElement = queue.Lists.Positions("list", "value", count: 2);
+        var invalidArray = queue.Lists.Positions("list", "value", count: 2);
+        var zeroCount = queue.Sets.Count("items");
+        var firstPosition = queue.Lists.Position("list", "value");
+        var missingPosition = queue.Lists.Position("list", "value");
+        var positions = queue.Lists.Positions("list", "value", count: 2);
+        var emptyPositions = queue.Lists.Positions("list", "value", count: 2);
+        await execute();
+
+        await Assert.That(() => _ = invalidCount.Result).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(() => _ = invalidPosition.Result).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(() => _ = invalidElement.Result).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(() => _ = invalidArray.Result).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(zeroCount.Result).IsEqualTo(0L);
+        await Assert.That(firstPosition.Result).IsEqualTo(0L);
+        await Assert.That(missingPosition.Result).IsNull();
+        await Assert.That(positions.Result).IsEquivalentTo(new long[] { 0, 2 }, CollectionOrdering.Matching);
+        await Assert.That(emptyPositions.Result).IsEmpty();
+    }
+
+    private static byte[][] IntegerReplies(RespireProtocol protocol)
+    {
+        return
+        [
+            Bulk("4"),
+            Bulk("bad"),
+            "*2\r\n:2\r\n$3\r\nbad\r\n"u8.ToArray(),
+            Bulk("bad"),
+            ":0\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray(),
+            protocol == RespireProtocol.Resp3 ? "_\r\n"u8.ToArray() : "$-1\r\n"u8.ToArray(),
+            "*2\r\n:0\r\n:2\r\n"u8.ToArray(),
+            "*0\r\n"u8.ToArray(),
+        ];
+    }
+
+    private static byte[][] WithHandshake(RespireProtocol protocol, byte[][] replies)
+    {
+        return protocol == RespireProtocol.Resp3
+            ? ["%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), .. replies]
+            : replies;
+    }
+
+    private static ValueTask<RespireClient> ConnectAsync(int port, RespireProtocol protocol)
+    {
+        return RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = protocol,
+            Endpoints = { new RespireEndpoint("127.0.0.1", port) },
+            Connections = 1,
+        });
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task SingleItemCancellationFormsHaveEquivalentDeferredCommands(bool transaction)
