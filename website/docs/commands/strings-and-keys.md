@@ -398,7 +398,9 @@ For example, `ohmytext` and `mynewtext` have total length 6, with ranges `4-7` /
 
 ## Bounded counters with expiry
 
-Redis 8.8+ `INCREX` atomically increments, applies optional inclusive bounds, and updates the expiry. `Strings.IncrementExtendedAsync` has `long` and `double` overloads, both returning `Value` and `AppliedIncrement`:
+Redis 8.8+ and Valkey 9.2+ support `INCREX`, which atomically increments, applies optional
+inclusive bounds, and updates the expiry. Both the `long` and `double` overloads of
+`Strings.IncrementExtendedAsync` return `Value` and `AppliedIncrement`.
 
 ```csharp
 RespireIncrementResult<long> counter = await redis.Strings.IncrementExtendedAsync(
@@ -433,7 +435,7 @@ long applied = queued.Result.AppliedIncrement;
 - `ExpireOnlyWhenPersistent` sends `ENX` and needs a relative or absolute expiry. It limits only the expiry update; the increment still runs on keys with a TTL.
 - Integer replies keep all 64 bits. Float increments must be finite; bounds may be infinite but not NaN. Redis computes in `long double` and replies convert to .NET `double`, so precision and range can differ.
 - Batches and transactions expose `Strings.IncrementExtended`. Writes invalidate only that key in the client-side cache.
-- Servers without `INCREX` (older Redis, Valkey) return an unsupported-command error. There is no fallback. The coordination fixed-window limiter has its own Lua fallback.
+- Redis versions before 8.8 and Valkey versions before 9.2 return an unsupported-command error. There is no fallback for `IncrementExtendedAsync`. The coordination fixed-window limiter has its own Lua fallback.
 
 ## Resumable Cluster scans
 

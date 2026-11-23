@@ -100,14 +100,6 @@ Model latency grows with context size and dominates loop time. Keep each unit's 
 - When the runtime lets you pick reasoning effort, use lower effort for mechanical units (merges, surveys, conflict-free rebases, disposition replies) and high effort for implementation, conflict resolution in shared code, and CI failure diagnosis.
 - Without subagents, drop the previous item's details once it is pushed or deferred. Send long command output (builds, tests, `gh api` dumps, logs) to a file and read only the lines you need; use `--jq` to select fields.
 
-### Context and delegation
-
-Model latency grows with context size and dominates loop time. Keep each unit's context small.
-
-- When the runtime can start subagents, invoking this loop authorizes one per unit: act as coordinator per [references/coordinator.md](references/coordinator.md). A unit you were handed is already single-unit mode.
-- When the runtime lets you pick reasoning effort, use lower effort for mechanical units (merges, surveys, conflict-free rebases, disposition replies) and high effort for implementation, conflict resolution in shared code, and CI failure diagnosis.
-- Without subagents, drop the previous item's details once it is pushed or deferred. Send long command output (builds, tests, `gh api` dumps, logs) to a file and read only the lines you need; use `--jq` to select fields.
-
 ## Isolation and ownership
 
 Use the shared checkout only for surveys and setup; every implementation, validation, checkout, commit, and push runs in an isolated worktree. Worktree creation, sparse-checkout, location checks, push refspec, hazards, evidence location, and cleanup rules: [repository guidance](references/repository.md). Capture from the shared checkout:

@@ -90,7 +90,9 @@ public sealed class RespireRateLimiters(RespireCoordination coordination)
     /// <summary>Creates a token-bucket rate limiter.</summary>
     /// <remarks>The limiter is asynchronous-only: use <c>AcquireAsync</c>. <c>AttemptAcquire</c> cannot reach Redis and always
     /// returns an unacquired lease without <c>RetryAfter</c>, even when permits are free. A request for more permits than the
-    /// limit returns an unacquired lease without <c>RetryAfter</c>, because it can never succeed.</remarks>
+    /// limit returns an unacquired lease without <c>RetryAfter</c>, because it can never succeed.
+    /// The replenishment period must be at least one millisecond and rounds up to whole milliseconds.
+    /// An asynchronous zero-permit acquisition checks availability without changing Redis state.</remarks>
     public RateLimiter TokenBucket(RespireKey key, int tokenLimit, int tokensPerPeriod, TimeSpan replenishmentPeriod,
         int queueLimit = 0, QueueProcessingOrder queueProcessingOrder = QueueProcessingOrder.OldestFirst)
         => Configure(new RedisRateLimiter(_coordination, key, tokenLimit, queueLimit, queueProcessingOrder,
@@ -257,8 +259,6 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         last = last + math.floor(elapsed / tonumber(ARGV[2])) * tonumber(ARGV[2])
         local requested = tonumber(ARGV[4])
         if requested == 0 then
-            redis.call('HSET', KEYS[1], 'tokens', tokens, 'time', last)
-            redis.call('PEXPIRE', KEYS[1], ARGV[5])
             if tokens > 0 then return {1, 0, tokens} end
             return {0, math.max(1, tonumber(ARGV[2]) - (now - last)), tokens}
         end
@@ -347,8 +347,8 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         _queueLimit = queueLimit;
         _queueOrder = queueOrder;
         _kind = kind;
-        _periodMs = kind == RedisRateLimiterKind.Gcra
-            ? (period.Ticks - 1) / TimeSpan.TicksPerMillisecond + 1
+        _periodMs = kind is RedisRateLimiterKind.Gcra or RedisRateLimiterKind.TokenBucket
+            ? RespireRateLimit.RoundPeriodUpToMilliseconds(period)
             : checked((long)period.TotalMilliseconds);
         _segments = segments;
         _tokensPerPeriod = tokensPerPeriod;

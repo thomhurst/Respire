@@ -42,7 +42,7 @@ public sealed class RespireRateLimit
             throw new ArgumentOutOfRangeException(nameof(period));
         }
 
-        var milliseconds = (period.Ticks - 1) / TimeSpan.TicksPerMillisecond + 1;
+        long milliseconds = RoundPeriodUpToMilliseconds(period);
         var maxMilliseconds = TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerMillisecond;
         var horizon = kind == 2 ? ((long)limit + extra - 1) / extra : kind == 1 ? 2 : kind == 3 ? limit : 1;
 
@@ -56,6 +56,11 @@ public sealed class RespireRateLimit
         PeriodMs = milliseconds;
         Extra = extra;
         Configuration = string.Create(CultureInfo.InvariantCulture, $"{kind},{limit},{milliseconds},{extra}");
+    }
+
+    internal static long RoundPeriodUpToMilliseconds(TimeSpan period)
+    {
+        return (period.Ticks - 1) / TimeSpan.TicksPerMillisecond + 1;
     }
 
     /// <summary>Defines a fixed window beginning with its first successful acquisition.</summary>
