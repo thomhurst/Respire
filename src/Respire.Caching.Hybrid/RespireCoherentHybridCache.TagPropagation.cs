@@ -8,6 +8,7 @@ internal sealed partial class RespireCoherentHybridCache
     // Microsoft's L2 key prefix for tag invalidation markers, and its reserved wildcard tag.
     private const string TagMarkerPrefix = "__MSFT_HCT__";
     private const string WildcardTag = "*";
+    private readonly Dictionary<string, List<FallbackRead>> _fallbackReads = new(StringComparer.Ordinal);
     private readonly Guid _tagSender = Guid.NewGuid();
     private readonly CancellationTokenSource _tagLifetime = new();
     private readonly TaskCompletionSource<bool> _tagStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -173,6 +174,7 @@ internal sealed partial class RespireCoherentHybridCache
         }
 
         _removedTags.Clear();
+        _fallbackReads.Clear();
         RetireAll();
         // New contexts refetch authoritative L2 tag metadata after an unreplayable gap.
         // History exhaustion remains permanent, matching the existing admission contract.
@@ -181,22 +183,156 @@ internal sealed partial class RespireCoherentHybridCache
     private bool CanUseTagLocalCache => _tagMessage is null
         || (Volatile.Read(ref _tagReady) == 1 && Volatile.Read(ref _tagContinuityLost) == 0);
 
-    private async ValueTask<HybridCache> FallbackCacheAsync(IEnumerable<string>? tags, bool reads,
-        CancellationToken cancellationToken)
+    private async ValueTask<T> ReadFallbackAsync<TState, T>(string key, TState state,
+        Func<TState, CancellationToken, ValueTask<T>> factory, HybridCacheEntryOptions options,
+        IEnumerable<string>? tags, CancellationToken cancellationToken)
     {
         if (_tagMessage is null)
         {
-            return _unobserved;
+            return await _unobserved.GetOrCreateAsync(key, state, factory, options, tags, cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        var cache = CreateContext(null, new TagReplayBackend(this));
-
-        if (reads)
+        if (!IsFallbackJoinable(key, tags))
         {
+            HybridCache cache = CreateContext(null, new TagReplayBackend(this));
             await SeedTagMetadataAsync(cache, tags).WaitAsync(cancellationToken).ConfigureAwait(false);
+            return await cache.GetOrCreateAsync(key, state, factory, options, tags, cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        return cache;
+        string[] seeded = GetSeedTags(tags);
+        Array.Sort(seeded, 1, seeded.Length - 1, StringComparer.Ordinal);
+        HybridCacheEntryFlags flags = EffectiveFlags(options);
+        DateTimeOffset[] markers = await ReadTagMarkersAsync(seeded, cancellationToken).ConfigureAwait(false);
+        bool readsL2 = (flags & HybridCacheEntryFlags.DisableDistributedCacheRead) == 0;
+        HybridCacheEntryOptions fillOptions = readsL2
+            ? WithFlags(flags | HybridCacheEntryFlags.DisableDistributedCacheRead)
+            : options;
+
+        if (!readsL2)
+        {
+            return await ReadFillAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        // Each caller checks L2 independently so it can see a remote replacement. Let
+        // HybridCache validate the payload and join the fill only from its miss callback.
+        HybridCache lookup = CreateContext(null, new TagReplayBackend(this));
+        await SeedTagMetadataAsync(lookup, seeded, markers).WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await lookup.GetOrCreateAsync(key, ReadFillAsync,
+            WithFlags(flags | HybridCacheEntryFlags.DisableDistributedCacheWrite), tags, cancellationToken)
+            .ConfigureAwait(false);
+
+        async ValueTask<T> ReadFillAsync(CancellationToken token)
+        {
+            FallbackRead read = AcquireFallbackRead(key, flags, seeded, markers);
+
+            try
+            {
+                await read.TagReplay.WaitAsync(token).ConfigureAwait(false);
+                return await read.Cache.GetOrCreateAsync(key, state, factory, fillOptions, tags, token)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                ReleaseFallbackRead(key, read);
+            }
+        }
+
+        HybridCacheEntryOptions WithFlags(HybridCacheEntryFlags updatedFlags)
+        {
+            return new HybridCacheEntryOptions
+            {
+                Flags = updatedFlags,
+                Expiration = options.Expiration,
+                LocalCacheExpiration = options.LocalCacheExpiration,
+            };
+        }
+    }
+
+    private bool IsFallbackJoinable(string key, IEnumerable<string>? tags)
+    {
+        // Leave HybridCache's validation and uncached factory behavior to an isolated context.
+        return !string.IsNullOrWhiteSpace(key) && key.Length <= _hybridOptions.MaximumKeyLength
+            && !HasControlCharacter(key)
+            && (tags is null || !tags.Any(tag => tag == WildcardTag || string.IsNullOrWhiteSpace(tag)));
+    }
+
+    private FallbackRead AcquireFallbackRead(string key, HybridCacheEntryFlags flags, string[] tags,
+        DateTimeOffset[] markers)
+    {
+        lock (_gate)
+        {
+            if (Volatile.Read(ref _tagContinuityLost) != 0)
+            {
+                _fallbackReads.Clear();
+            }
+
+            MergeRememberedTagMarkers(tags, markers);
+
+            _fallbackReads.TryGetValue(key, out List<FallbackRead>? reads);
+
+            if (reads is not null)
+            {
+                foreach (FallbackRead read in reads)
+                {
+                    if (!read.TagReplay.IsFaulted && read.Flags == flags && tags.AsSpan().SequenceEqual(read.Tags)
+                        && markers.AsSpan().SequenceEqual(read.Markers))
+                    {
+                        read.ActiveCalls++;
+                        return read;
+                    }
+                }
+            }
+
+            FallbackRead newRead = CreateFallbackRead(flags, tags, markers);
+
+            if (reads is null)
+            {
+                _fallbackReads.Add(key, [newRead]);
+            }
+            else
+            {
+                reads.Add(newRead);
+            }
+
+            return newRead;
+        }
+    }
+
+    private FallbackRead CreateFallbackRead(HybridCacheEntryFlags flags, string[] tags, DateTimeOffset[] markers)
+    {
+        HybridCache cache = CreateContext(null, new TagReplayBackend(this));
+        Task tagReplay = ReplayTagMarkers(cache, tags, markers);
+        return new FallbackRead(cache, tagReplay, flags, tags, markers);
+    }
+
+    private void ReleaseFallbackRead(string key, FallbackRead read)
+    {
+        lock (_gate)
+        {
+            if (--read.ActiveCalls == 0 && _fallbackReads.TryGetValue(key, out List<FallbackRead>? reads)
+                && reads.Remove(read) && reads.Count == 0)
+            {
+                _fallbackReads.Remove(key);
+            }
+        }
+    }
+
+    private sealed class FallbackRead(HybridCache cache, Task tagReplay, HybridCacheEntryFlags flags,
+        string[] tags, DateTimeOffset[] markers)
+    {
+        internal readonly HybridCache Cache = cache;
+        internal readonly Task TagReplay = tagReplay;
+        internal readonly HybridCacheEntryFlags Flags = flags;
+        internal readonly string[] Tags = tags;
+        internal readonly DateTimeOffset[] Markers = markers;
+        internal int ActiveCalls = 1;
+    }
+
+    private static string[] GetSeedTags(IEnumerable<string>? tags)
+    {
+        return [WildcardTag, .. (tags ?? []).Where(tag => tag != WildcardTag).Distinct(StringComparer.Ordinal)];
     }
 
     // Microsoft.Extensions.Caching.Hybrid 10.10.0 checks a payload tag whose invalidation time is
@@ -207,35 +343,55 @@ internal sealed partial class RespireCoherentHybridCache
     // and the wildcard's markers first and replay them. The context then has completed metadata.
     private async Task SeedTagMetadataAsync(HybridCache cache, IEnumerable<string>? tags)
     {
-        string[] seeded = [WildcardTag, .. (tags ?? []).Where(tag => tag != WildcardTag).Distinct(StringComparer.Ordinal)];
-        var markers = await Task.WhenAll(seeded.Select(ReadTagMarkerAsync)).ConfigureAwait(false);
-        var replays = new Task[seeded.Length];
-
-        lock (_gate)
-        {
-            for (var i = 0; i < seeded.Length; i++)
-            {
-                // A replay overwrites the context's time for its tag. Under the gate, a newer remembered
-                // invalidation (recorded before the worker or a local removal replays it) is never lost.
-                var timestamp = markers[i];
-
-                if (_removedTags.TryGetValue(seeded[i], out var remembered) && remembered > timestamp)
-                {
-                    timestamp = remembered;
-                }
-
-                replays[i] = ReplayTagAsync(cache, seeded[i], timestamp);
-            }
-        }
-
-        await Task.WhenAll(replays).ConfigureAwait(false);
+        string[] seeded = GetSeedTags(tags);
+        DateTimeOffset[] markers = await ReadTagMarkersAsync(seeded, CancellationToken.None).ConfigureAwait(false);
+        await SeedTagMetadataAsync(cache, seeded, markers).ConfigureAwait(false);
     }
 
-    private async Task<DateTimeOffset> ReadTagMarkerAsync(string tag)
+    private Task SeedTagMetadataAsync(HybridCache cache, string[] tags, DateTimeOffset[] markers)
+    {
+        lock (_gate)
+        {
+            MergeRememberedTagMarkers(tags, markers);
+            return ReplayTagMarkers(cache, tags, markers);
+        }
+    }
+
+    private void MergeRememberedTagMarkers(string[] tags, DateTimeOffset[] markers)
+    {
+        // A replay overwrites the context's time for its tag. Under the gate, a newer
+        // invalidation recorded by the worker or a local removal is never lost.
+        for (int i = 0; i < tags.Length; i++)
+        {
+            if (_removedTags.TryGetValue(tags[i], out DateTimeOffset remembered) && remembered > markers[i])
+            {
+                markers[i] = remembered;
+            }
+        }
+    }
+
+    private Task ReplayTagMarkers(HybridCache cache, string[] tags, DateTimeOffset[] markers)
+    {
+        var replays = new Task[tags.Length];
+
+        for (int i = 0; i < tags.Length; i++)
+        {
+            replays[i] = ReplayTagAsync(cache, tags[i], markers[i]);
+        }
+
+        return Task.WhenAll(replays);
+    }
+
+    private Task<DateTimeOffset[]> ReadTagMarkersAsync(string[] tags, CancellationToken cancellationToken)
+    {
+        return Task.WhenAll(tags.Select(tag => ReadTagMarkerAsync(tag, cancellationToken)));
+    }
+
+    private async Task<DateTimeOffset> ReadTagMarkerAsync(string tag, CancellationToken cancellationToken)
     {
         try
         {
-            var marker = await _distributed.GetAsync(TagMarkerPrefix + tag).ConfigureAwait(false);
+            var marker = await _distributed.GetAsync(TagMarkerPrefix + tag, cancellationToken).ConfigureAwait(false);
 
             if (marker is null)
             {
@@ -252,7 +408,7 @@ internal sealed partial class RespireCoherentHybridCache
                 }
             }
         }
-        catch (Exception)
+        catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             // Fall through to the fail-closed result below.
         }
@@ -312,6 +468,8 @@ internal sealed partial class RespireCoherentHybridCache
             // The public HybridCache API keeps stored tags opaque. Retire all active fills
             // conservatively, including callers whose tag list differs from the stored L2 tags.
             // Idle unrelated L1 entries remain available through their updated tag metadata.
+            _fallbackReads.Clear();
+
             foreach (var observation in observations)
             {
                 if (tag == "*" || observation.ActiveCalls != 0)

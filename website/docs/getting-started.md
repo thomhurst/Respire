@@ -170,7 +170,7 @@ minutes. Replace its factory with your database or service lookup. The starter
 includes a shared DI client, Redis readiness checks, and OpenTelemetry traces and
 metrics. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable export to your collector.
 
-The container requires Docker Compose and uses Redis 7. Set
+The container requires Docker Compose and uses Redis 8. Set
 `ConnectionStrings__Redis` to use an existing Redis 7+ server instead.
 Stop the app with Ctrl+C and run `docker compose down` to remove the local container.
 The generated README covers configuration and custom HTTP ports.

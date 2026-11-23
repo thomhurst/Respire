@@ -107,12 +107,21 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
 
         try
         {
-            var cache = await SelectCacheAsync(observation, tags, reads: true, cancellationToken).ConfigureAwait(false);
-            return await cache.GetOrCreateAsync(key, state, underlyingDataCallback,
-                observation is null || !ReferenceEquals(cache, observation.Cache) ? WithoutLocalCache(options) : options,
-                tags, cancellationToken).ConfigureAwait(false);
+            HybridCache? cache = await SelectObservedCacheAsync(observation, cancellationToken).ConfigureAwait(false);
+
+            if (cache is null)
+            {
+                return await ReadFallbackAsync(key, state, underlyingDataCallback, WithoutLocalCache(options), tags,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            return await cache.GetOrCreateAsync(key, state, underlyingDataCallback, options, tags,
+                cancellationToken).ConfigureAwait(false);
         }
-        finally { Release(observation); }
+        finally
+        {
+            Release(observation);
+        }
     }
 
     public override async ValueTask SetAsync<T>(string key, T value,
@@ -133,13 +142,21 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
 
         try
         {
-            // SetAsync never reads L2, so a fallback context needs no tag metadata.
-            var cache = await SelectCacheAsync(observation, tags, reads: false, cancellationToken).ConfigureAwait(false);
-            await cache.SetAsync(key, value,
-                observation is null || !ReferenceEquals(cache, observation.Cache) ? WithoutLocalCache(options) : options,
-                tags, cancellationToken).ConfigureAwait(false);
+            HybridCache? cache = await SelectObservedCacheAsync(observation, cancellationToken).ConfigureAwait(false);
+
+            if (cache is null)
+            {
+                // SetAsync never reads L2, so a fallback context needs no tag metadata.
+                cache = _tagMessage is null ? _unobserved : CreateContext(null, new TagReplayBackend(this));
+                options = WithoutLocalCache(options);
+            }
+
+            await cache.SetAsync(key, value, options, tags, cancellationToken).ConfigureAwait(false);
         }
-        finally { Release(observation); }
+        finally
+        {
+            Release(observation);
+        }
     }
 
     public override ValueTask RemoveAsync(string key, CancellationToken cancellationToken = default)
@@ -387,12 +404,12 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         return false;
     }
 
-    private async ValueTask<HybridCache> SelectCacheAsync(Observation? observation, IEnumerable<string>? readTags,
-        bool reads, CancellationToken cancellationToken)
+    private async ValueTask<HybridCache?> SelectObservedCacheAsync(Observation? observation,
+        CancellationToken cancellationToken)
     {
         if (observation is null)
         {
-            return await FallbackCacheAsync(readTags, reads, cancellationToken).ConfigureAwait(false);
+            return null;
         }
 
         try
@@ -400,23 +417,21 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
             await observation.Tracking.WaitAsync(cancellationToken).ConfigureAwait(false);
             await observation.TagReplay.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch
         {
             // Tracking failure must never turn an ordinary L2 request into an unobserved L1 hit.
             Retire(observation);
-            return await FallbackCacheAsync(readTags, reads, cancellationToken).ConfigureAwait(false);
+            return null;
         }
 
         lock (_gate)
         {
-            if (!observation.Retired && CanUseTagLocalCache)
-            {
-                return observation.Cache;
-            }
+            return !observation.Retired && CanUseTagLocalCache ? observation.Cache : null;
         }
-
-        return await FallbackCacheAsync(readTags, reads, cancellationToken).ConfigureAwait(false);
     }
 
     private void Release(Observation? observation)
@@ -499,9 +514,14 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     {
         lock (_gate)
         {
-            if (key is not null && _observations.TryGetValue(key, out var observation))
+            if (key is not null)
             {
-                Retire(observation);
+                _fallbackReads.Remove(key);
+
+                if (_observations.TryGetValue(key, out var observation))
+                {
+                    Retire(observation);
+                }
             }
         }
 
@@ -648,6 +668,7 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
                 throw new InvalidOperationException("Cannot dispose the cache from its active retirement cleanup.");
             }
 
+            _fallbackReads.Clear();
             return Interlocked.Exchange(ref _disposed, 1) == 0;
         }
     }
