@@ -42,9 +42,10 @@ var percentiles = await probabilistic.TDigestQuantileAsync("latency:api", [0.5, 
 | Top-K | Reserve options, add, weighted increment, query, count, list (optionally with counts), info |
 | t-digest | Create/reset, merge options, add, min/max, quantile, CDF, rank/reverse rank, by-rank/by-reverse-rank, trimmed mean, info |
 
+- `BloomInsertAsync` and `BloomMultiAddAsync` throw `RespireBloomBatchException` when Redis returns an error for an individual item. Earlier writes can already have taken effect. `ItemResults` lists the replies in input order. `true` means inserted, `false` means the filter reported the item as already present, and `null` means Redis rejected that item. `ItemErrors` gives the Redis error text by zero-based input index. `SkippedCount` counts the inputs at the end of the batch that Redis did not process.
 - Cuckoo insert and insert-if-absent return a `RespireCuckooInsertResult` per item (`Inserted`, `AlreadyExists` or `FilterFull`), so a full filter is not reported as success.
 - Count-Min and Top-K increment batches accept zero deltas. Each zero delta is sent to Redis with its item.
-- Top-K add and increment return evicted items as nullable byte arrays, preserving binary items.
+- `TopKIncrementAsync` accepts deltas from 0 to 100,000. A delta outside this range rejects the whole batch before sending it to Redis. Top-K add and increment return evicted items as nullable byte arrays, preserving binary items.
 - t-digest CDF, rank, and reverse-rank queries accept `double.NegativeInfinity` and `double.PositiveInfinity` as probes for the distribution bounds. Observations added to a t-digest must be finite.
 - Keys receive the `WithKeyPrefix` prefix. Multi-key merges route by destination and source keys and enforce Cluster slot rules.
 - Mutations, including merges, invalidate only the written key (the merge destination) in the client-side cache.

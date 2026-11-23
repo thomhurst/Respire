@@ -173,6 +173,25 @@ public class ProbabilisticCommandHookTests
     }
 
     [Test]
+    public async Task BloomNestedErrorsFailTheHookAndPreserveLaterReplies()
+    {
+        await using var server = Server("BF.MADD", "*4\r\n:1\r\n-ERR first failure\r\n:0\r\n-ERR second failure\r\n");
+        var hook = new RecordingHook();
+        await using var client = await Connect(server, hook);
+
+        var error = await Failure(async () => await client.Probabilistic.BloomMultiAddAsync("key", ["a", "b", "c", "d"]));
+
+        await Assert.That(error is RespireBloomBatchException).IsTrue();
+        var failure = (RespireBloomBatchException)error;
+        await Assert.That(failure.ItemResults.SequenceEqual(new bool?[] { true, null, false, null })).IsTrue();
+        await Assert.That(failure.ItemErrors.Count).IsEqualTo(2);
+        await Assert.That(failure.ItemErrors[1]).IsEqualTo("ERR first failure");
+        await Assert.That(failure.ItemErrors[3]).IsEqualTo("ERR second failure");
+        await Assert.That(failure.SkippedCount).IsEqualTo(0);
+        await Check(hook, "BF.MADD", RespireCommandOutcome.Failed, error);
+    }
+
+    [Test]
     public async Task HookReentrancyAndCompletionExceptionsDoNotChangeResults()
     {
         await using var server = Server("BF.ADD", ":1\r\n");

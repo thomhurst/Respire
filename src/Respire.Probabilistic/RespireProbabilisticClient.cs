@@ -6,6 +6,8 @@ namespace Respire.Probabilistic;
 /// <summary>Typed operations for Redis Bloom, Cuckoo, Count-Min, Top-K, and t-digest structures.</summary>
 public sealed class RespireProbabilisticClient
 {
+    private const long MaximumTopKIncrement = 100_000;
+
     private readonly RespireProbabilisticCommandsImplementation _commands;
     private readonly IRespireClient _client;
 
@@ -69,6 +71,7 @@ public sealed class RespireProbabilisticClient
     }
 
     /// <summary>Adds multiple items to a Bloom filter.</summary>
+    /// <exception cref="RespireBloomBatchException">Redis rejected an item in the batch.</exception>
     public ValueTask<bool[]> BloomMultiAddAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "BF.MADD", cancellationToken,
@@ -79,8 +82,9 @@ public sealed class RespireProbabilisticClient
     private async ValueTask<bool[]> BloomMultiAddUnhookedAsync(RespireKey key, IReadOnlyList<RespireValue> items, CancellationToken cancellationToken = default)
     {
         ValidateItems(items);
-        using var result = await DispatchAsync(BloomMultiAddCommand, [key, .. items], cancellationToken).ConfigureAwait(false);
-        return ReadBooleans(result);
+        RespireValue[] arguments = [key, .. items];
+        using var result = await DispatchAsync(BloomMultiAddCommand, arguments, cancellationToken).ConfigureAwait(false);
+        return ReadBloomBatch(result, arguments.Length - 1);
     }
 
     /// <summary>Checks multiple items against a Bloom filter.</summary>
@@ -99,6 +103,7 @@ public sealed class RespireProbabilisticClient
     }
 
     /// <summary>Creates a Bloom filter when needed and inserts multiple items.</summary>
+    /// <exception cref="RespireBloomBatchException">Redis rejected an item in the batch.</exception>
     public ValueTask<bool[]> BloomInsertAsync(RespireKey key, IReadOnlyList<RespireValue> items, RespireBloomInsertOptions? options = null, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "BF.INSERT", cancellationToken,
@@ -109,8 +114,9 @@ public sealed class RespireProbabilisticClient
     private async ValueTask<bool[]> BloomInsertUnhookedAsync(RespireKey key, IReadOnlyList<RespireValue> items, RespireBloomInsertOptions? options = null, CancellationToken cancellationToken = default)
     {
         var arguments = (options ?? new()).ToArguments(items);
+        int itemCount = items.Count;
         using var result = await DispatchAsync(BloomInsertCommand, [key, .. arguments], cancellationToken).ConfigureAwait(false);
-        return ReadBooleans(result);
+        return ReadBloomBatch(result, itemCount);
     }
 
     /// <summary>Returns the raw BF.INFO response. Dispose the result when done.</summary>
@@ -463,6 +469,7 @@ public sealed class RespireProbabilisticClient
     }
 
     /// <summary>Increments item counts in a Top-K sketch.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">An increment is outside the range 0 to 100,000.</exception>
     public ValueTask<byte[]?[]> TopKIncrementAsync(RespireKey key, IReadOnlyDictionary<RespireValue, long> increments, CancellationToken cancellationToken = default)
         => _client is RespireClient client && client.Core.Options.CommandHook is { } hook
             ? CommandHookScope.RunAsync(hook, "TOPK.INCRBY", cancellationToken,
@@ -472,7 +479,7 @@ public sealed class RespireProbabilisticClient
 
     private async ValueTask<byte[]?[]> TopKIncrementUnhookedAsync(RespireKey key, IReadOnlyDictionary<RespireValue, long> increments, CancellationToken cancellationToken = default)
     {
-        var args = BuildIncrementArguments(increments);
+        var args = BuildIncrementArguments(increments, MaximumTopKIncrement);
         using var result = await DispatchAsync(TopKIncrementCommand, [key, .. args], cancellationToken).ConfigureAwait(false);
         return ReadNullableBytes(result);
     }
@@ -842,7 +849,7 @@ public sealed class RespireProbabilisticClient
         return new(result[0].AsInteger(), result[1].IsNull ? null : result[1].AsBytes());
     }
 
-    private static RespireValue[] BuildIncrementArguments(IReadOnlyDictionary<RespireValue, long> increments)
+    private static RespireValue[] BuildIncrementArguments(IReadOnlyDictionary<RespireValue, long> increments, long maximum = long.MaxValue)
     {
         ArgumentNullException.ThrowIfNull(increments);
 
@@ -856,7 +863,7 @@ public sealed class RespireProbabilisticClient
 
         foreach (var (item, amount) in increments)
         {
-            if (amount < 0)
+            if (amount < 0 || amount > maximum)
             {
                 throw new ArgumentOutOfRangeException(nameof(increments));
             }
@@ -920,6 +927,57 @@ public sealed class RespireProbabilisticClient
         }
 
         return values;
+    }
+
+    private static bool[] ReadBloomBatch(RespireResult result, int itemCount)
+    {
+        if (result.Type != RespireDataType.Array || result.Count > itemCount)
+        {
+            throw new RespireProtocolException("Unexpected reply to a Bloom insertion batch.");
+        }
+
+        var values = new bool[result.Count];
+
+        for (int index = 0; index < values.Length; index++)
+        {
+            var item = result[index];
+
+            if (item.IsError)
+            {
+                throw ReadBloomBatchError(result, index, itemCount - values.Length);
+            }
+
+            values[index] = ReadBoolean(item);
+        }
+
+        if (values.Length != itemCount)
+        {
+            throw new RespireProtocolException("The Bloom batch reply ended before all items had a result.");
+        }
+
+        return values;
+    }
+
+    private static RespireBloomBatchException ReadBloomBatchError(RespireResult result, int firstErrorIndex, int skippedCount)
+    {
+        var itemResults = new bool?[result.Count];
+        var itemErrors = new Dictionary<int, string>();
+
+        for (int index = 0; index < itemResults.Length; index++)
+        {
+            var item = result[index];
+
+            if (item.IsError)
+            {
+                itemErrors.Add(index, item.ErrorMessage);
+            }
+            else
+            {
+                itemResults[index] = ReadBoolean(item);
+            }
+        }
+
+        return new RespireBloomBatchException(itemErrors[firstErrorIndex], itemResults, itemErrors, skippedCount);
     }
 
     private static RespireCuckooInsertResult[] ReadCuckooInsertResults(RespireResult result)
