@@ -218,6 +218,12 @@ public sealed class RespireServerException : RespireException
         get;
     }
 
+    // A reply to a redirected command can require correction at a node with no slots.
+    internal RespireEndpoint? AskTarget
+    {
+        get; set;
+    }
+
     /// <summary>Whether retrying may succeed without changing the command.</summary>
     public bool IsTransient => Code is
         RespireErrorCodes.Loading or

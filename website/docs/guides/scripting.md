@@ -134,7 +134,7 @@ A library created with `RespireFunctionLibrary.Create` lets immediate calls reco
 2. Only Redis's exact `ERR Function not found` reply triggers one reload and one retry. Other errors, and a second missing-function reply, are returned to you.
 3. The reload checks the named library with `FUNCTION LIST LIBRARYNAME ... WITHCODE`, accepts identical source, and loads it if missing.
 
-This also recovers from a flush or restart.
+This also recovers from a flush or restart. In Cluster, the reload also includes the importing primary when a slot migration redirects the call there with `ASK`.
 
 :::warning
 Do not return `Function not found` from your own functions. Respire treats it as proof that the call did not run.

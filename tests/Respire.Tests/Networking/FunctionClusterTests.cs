@@ -96,6 +96,52 @@ public class FunctionClusterTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReloadIncludesAskTargetOnceWhetherOrNotItOwnsSlots(bool importerOwnsSlots)
+    {
+        const string source = "#!lua name=sample\nreturn 1";
+        const string call = "FCALL function 1 {foo}:key";
+        byte[] missing = "-ERR Function not found\r\n"u8.ToArray();
+        byte[] emptyList = "*0\r\n"u8.ToArray();
+        byte[] loaded = "$6\r\nsample\r\n"u8.ToArray();
+        byte[] libraryList = FunctionLibraryList(source);
+        int importerLoaded = 0;
+
+        await using var importer = new FakeRespServer(4, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                call => Volatile.Read(ref importerLoaded) == 0 ? missing : ":123\r\n"u8.ToArray(),
+                "FUNCTION LIST LIBRARYNAME sample WITHCODE" => Volatile.Read(ref importerLoaded) == 0 ? emptyList : libraryList,
+                var text when text == $"FUNCTION LOAD {source}" => Interlocked.Increment(ref importerLoaded) == 1
+                    ? loaded : "-ERR Library 'sample' already exists\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+
+        byte[] redirect = Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{importer.Port}\r\n");
+        await using var owner = new FakeRespServer(redirect, emptyList, loaded, libraryList, redirect);
+        await using var otherPrimary = new FakeRespServer(emptyList, loaded, libraryList);
+        await using var seed = new FakeRespServer(Topology(
+            importerOwnsSlots ? importer.Port : otherPrimary.Port, owner.Port));
+
+#pragma warning disable RESP010 // This function scenario owns its client, scripted cluster topology, and library propagation state.
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+#pragma warning restore RESP010
+        var function = RespireFunctionLibrary.Create(source).Function("function");
+
+        await Assert.That(await client.Functions.ExecuteIntegerAsync(function, ["{foo}:key"])).IsEqualTo(123);
+        await Assert.That(importer.ReceivedCommands).IsEquivalentTo([
+            "ASKING", call, "FUNCTION LIST LIBRARYNAME sample WITHCODE", $"FUNCTION LOAD {source}",
+            "FUNCTION LIST LIBRARYNAME sample WITHCODE", "ASKING", call]);
+        await Assert.That(owner.ReceivedCommands).IsEquivalentTo([
+            call, "FUNCTION LIST LIBRARYNAME sample WITHCODE", $"FUNCTION LOAD {source}",
+            "FUNCTION LIST LIBRARYNAME sample WITHCODE", call]);
+        await Assert.That(otherPrimary.CommandsSeen).IsEqualTo(importerOwnsSlots ? 0 : 3);
+    }
+
+    [Test]
     public async Task RegisteredFunctionWaitsForReplicaPropagationBeforeRetrying()
     {
         var source = "#!lua name=sample\nreturn 1";

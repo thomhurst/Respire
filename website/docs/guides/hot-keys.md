@@ -2,6 +2,12 @@
 
 Redis 8.6+ HOTKEYS finds the keys that cost the most execution time and network bytes. Use it to diagnose load hotspots. Each server has one shared tracking session: starting a second active session fails, and other administrators can inspect, stop, or replace it. Respire claims no exclusive ownership and offers no substitute on older servers.
 
+The typed tracker and all-node HOTKEYS methods use the Redis 8.6+ format. Valkey 9.2 returns ranked rows with `key`, `db`, and estimated `qps`. Read those rows from a client connected to the node you want to inspect. [Valkey HOTKEYS GET](https://valkey.io/commands/hotkeys-get/).
+
+```csharp
+using var rows = await redis.ExecuteAsync(RespireCommands.Server.HOTKEYS_GET, []);
+```
+
 ## Keep the lifecycle on one server
 
 Get a pinned tracker before starting. Every operation uses that original physical connection, even with multiple connections or changing Cluster routing.

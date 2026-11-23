@@ -4170,6 +4170,11 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     scriptReplicaMiss.Connection = connection;
                     throw;
                 }
+                catch (RespireServerException error) when (sendAsking)
+                {
+                    error.AskTarget = new(connection.Host, connection.Port);
+                    throw;
+                }
             }
         }
         catch (Exception error)
