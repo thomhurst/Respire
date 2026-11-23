@@ -100,6 +100,26 @@ public class RateLimiterUpdateTests
     }
 
     [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    public async Task IdenticalTokenBucketUpdatePreservesRefillTime(int fractionalTicks)
+    {
+        await using var client = await RespireClient.ConnectAsync(Redis.CreateOptions());
+        var factory = client.Coordination.RateLimiters;
+        var key = SharedRespireContainer.Key("update-identical-tokens");
+        var period = Hour + TimeSpan.FromTicks(fractionalTicks);
+        await using var limiter = factory.TokenBucket(key, 1, 1, period);
+        long now = (await client.Server.TimeAsync()).ToUnixTimeMilliseconds();
+        using var seeded = await client.ExecuteAsync("HSET", [key, "time", now - 1_800_000, "tokens", 0]);
+        using var before = await client.ExecuteAsync("HGET", [key, "time"]);
+
+        await factory.UpdateAsync(limiter, RespireRateLimit.TokenBucket(1, 1, period));
+
+        using var after = await client.ExecuteAsync("HGET", [key, "time"]);
+        await Assert.That(after.AsString()).IsEqualTo(before.AsString());
+    }
+
+    [Test]
     public async Task TokenBucketSettlesOldRefillClampsAndStartsNewPeriod()
     {
         await using var client = await RespireClient.ConnectAsync(Redis.CreateOptions());

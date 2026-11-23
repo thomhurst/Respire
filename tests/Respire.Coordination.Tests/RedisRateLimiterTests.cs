@@ -378,6 +378,45 @@ public class RedisRateLimiterTests
     }
 
     [Test]
+    public async Task TokenBucketProbeLeavesUnusedKeyAbsent()
+    {
+        await using var client = await RespireClient.ConnectAsync(Redis74.CreateOptions());
+        var key = SharedRespireContainer.Key("bucket-probe-unused");
+        await using var limiter = client.Coordination.RateLimiters.TokenBucket(key, 1, 1, TimeSpan.FromHours(1));
+
+        using var probe = await limiter.AcquireAsync(0);
+
+        await Assert.That(probe.IsAcquired).IsTrue();
+        await Assert.That(await client.Keys.ExistsAsync(key)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(0, false)]
+    [Arguments(2, true)]
+    public async Task TokenBucketProbeLeavesExistingStateAndExpiryUnchanged(int elapsedPeriods, bool expectedAvailability)
+    {
+        await using var client = await RespireClient.ConnectAsync(Redis74.CreateOptions());
+        var key = SharedRespireContainer.Key("bucket-probe-existing");
+        await using var limiter = client.Coordination.RateLimiters.TokenBucket(key, 4, 1, TimeSpan.FromHours(1));
+        long now = (await client.Server.TimeAsync()).ToUnixTimeMilliseconds();
+        long lastRefill = now - elapsedPeriods * 3_600_000L;
+        long expiresAt = now + 3_600_000;
+        using var seeded = await client.ExecuteAsync("HSET", [key, "time", lastRefill, "tokens", 0]);
+        using var expiry = await client.ExecuteAsync("PEXPIREAT", [key, expiresAt]);
+        using var before = await client.ExecuteAsync("HGET", [key, "time"]);
+
+        using var probe = await limiter.AcquireAsync(0);
+
+        await Assert.That(probe.IsAcquired).IsEqualTo(expectedAvailability);
+        using var time = await client.ExecuteAsync("HGET", [key, "time"]);
+        using var tokens = await client.ExecuteAsync("HGET", [key, "tokens"]);
+        using var expiryAfterProbe = await client.ExecuteAsync("PEXPIRETIME", [key]);
+        await Assert.That(time.AsString()).IsEqualTo(before.AsString());
+        await Assert.That(tokens.AsString()).IsEqualTo("0");
+        await Assert.That(expiryAfterProbe.AsInteger()).IsEqualTo(expiresAt);
+    }
+
+    [Test]
     public async Task TokenBucketRejectsRefillExpiryOutsideLuaExactIntegerRange()
     {
         await using var client = RespireClient.Create(new RespireOptions

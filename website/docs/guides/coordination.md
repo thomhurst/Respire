@@ -831,7 +831,10 @@ using var limiter = coordination.RateLimiters.SlidingWindow(
 
 ### Token bucket
 
-The limiter stores only its token count and last server refill time.
+The limiter stores only its token count and last server refill time. The replenishment period
+must be at least one millisecond. Respire rounds the period up to whole milliseconds when
+creating or updating a token bucket. `AcquireAsync(0)` checks whether one token is available
+without creating a key or changing the stored refill time, token count, or expiry.
 
 ```csharp
 using Respire.Coordination;
