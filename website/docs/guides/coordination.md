@@ -625,7 +625,8 @@ if (!attempt.Acquired) return;
 - Pass `null` as the expiry for a permit that lasts until released.
 - Expiry uses whole milliseconds and Redis server time. Expired permits are pruned on the next
   operation, so no cleanup worker is needed.
-- `RemainingEstimate` is a conservative local estimate from when the command was sent.
+- `RemainingEstimate` counts from when the command was sent and accounts for Redis rounding its
+  clock down to whole milliseconds. A short permit may run out locally before the reply arrives.
 - Every contender must use the same positive capacity. While any permit is active, a different
   capacity throws `RespireSemaphoreCapacityMismatchException`. Lowering capacity never revokes
   permits.
