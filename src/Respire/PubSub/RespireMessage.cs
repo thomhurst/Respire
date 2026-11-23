@@ -93,7 +93,8 @@ public readonly struct RespireMessage
     }
 
     /// <summary>Parses a keyspace, keyevent, or Redis 8.8 subkey notification without allocating.</summary>
-    /// <remarks>Unknown event names remain lossless. Ordinary messages and malformed frames return false.</remarks>
+    /// <remarks>Parsing uses the channel and payload format, regardless of how the message was published
+    /// or which subscription delivered it. Unknown event names remain lossless.</remarks>
     public bool TryParseKeyNotification(out RespireKeyNotification notification)
         => KeyNotificationParser.TryParse(in this, out notification);
 

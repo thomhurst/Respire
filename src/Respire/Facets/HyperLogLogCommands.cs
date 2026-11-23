@@ -6,7 +6,9 @@ namespace Respire;
 /// <summary>Probabilistic cardinality commands. Redis: PFADD, PFCOUNT, PFMERGE.</summary>
 public interface IRespireHyperLogLogCommands
 {
-    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    /// <summary>Adds a value to a HyperLogLog. Redis: PFADD.</summary>
+    /// <returns><see langword="true"/> if the sketch was created or updated, otherwise <see langword="false"/>.</returns>
+    /// <remarks>The estimated cardinality can stay the same when the sketch changes.</remarks>
     ValueTask<bool> AddAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken);
 
     /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
@@ -17,10 +19,14 @@ public interface IRespireHyperLogLogCommands
     [OverloadResolutionPriority(1)]
     ValueTask<bool> MergeAsync(RespireKey destination, RespireKey sourceKey, CancellationToken cancellationToken);
 
-    /// <summary>Adds values and returns whether estimated cardinality changed. Redis: PFADD.</summary>
+    /// <summary>Adds values to a HyperLogLog. Redis: PFADD.</summary>
+    /// <returns><see langword="true"/> if the sketch was created or updated, otherwise <see langword="false"/>.</returns>
+    /// <remarks>The estimated cardinality can stay the same when the sketch changes.</remarks>
     ValueTask<bool> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> values);
 
-    /// <summary>Adds values and returns whether estimated cardinality changed. Redis: PFADD.</summary>
+    /// <summary>Adds values to a HyperLogLog. Redis: PFADD.</summary>
+    /// <returns><see langword="true"/> if the sketch was created or updated, otherwise <see langword="false"/>.</returns>
+    /// <remarks>The estimated cardinality can stay the same when the sketch changes.</remarks>
     ValueTask<bool> AddAsync(RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken);
 
     /// <summary>Returns estimated cardinality across one or more HyperLogLogs. Redis: PFCOUNT.</summary>
@@ -39,7 +45,7 @@ public interface IRespireHyperLogLogCommands
 
 internal sealed class HyperLogLogCommands(RespireClient client) : IRespireHyperLogLogCommands
 {
-    /// <summary>Runs the command for one item with cancellation; preserves the multi-item result shape.</summary>
+    /// <inheritdoc/>
     public ValueTask<bool> AddAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken)
         => AddAsync(key, [value], cancellationToken);
 

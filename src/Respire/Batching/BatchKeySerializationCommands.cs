@@ -5,7 +5,8 @@ namespace Respire;
 
 public partial interface IRespireBatchKeyCommands
 {
-    /// <summary>An owned Redis-serialized payload, or null for a missing key. Does not include expiry. Redis: DUMP.</summary>
+    /// <summary>An owned Redis-serialized payload, or null for a missing key. Redis: DUMP.</summary>
+    /// <remarks>The payload excludes key-level expiry and can include hash field expiration deadlines.</remarks>
     RespirePending<byte[]?> Dump(RespireKey key);
 
     /// <summary>Restores a Redis-serialized payload; true on OK. Redis: RESTORE.</summary>

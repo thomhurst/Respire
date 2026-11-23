@@ -24,7 +24,7 @@ Rules that apply across this page unless a section says otherwise:
 
 ## Binary key serialization
 
-`Keys.DumpAsync(key)` returns Redis's serialized bytes as an owned `byte[]`, or `null` for a missing key. These are not Respire serializer payloads. [DUMP](https://redis.io/docs/latest/commands/dump/) omits expiry; read `Keys.ExpiryAsync` separately.
+`Keys.DumpAsync(key)` returns Redis's serialized bytes as an owned `byte[]`, or `null` for a missing key. These are not Respire serializer payloads. [DUMP](https://redis.io/docs/latest/commands/dump/) omits the key's expiry. Read it separately with `Keys.ExpiryAsync`. The payload can preserve hash field expiration deadlines, even when restored to a persistent key.
 
 ```csharp
 byte[]? payload = await redis.Keys.DumpAsync("source");

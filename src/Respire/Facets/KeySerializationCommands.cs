@@ -26,7 +26,8 @@ public readonly record struct RespireRestoreOptions
 
 public partial interface IRespireKeyCommands
 {
-    /// <summary>Returns an owned Redis-serialized payload, or null for a missing key. Does not include expiry. Redis: DUMP.</summary>
+    /// <summary>Returns an owned Redis-serialized payload, or null for a missing key. Redis: DUMP.</summary>
+    /// <remarks>The payload excludes key-level expiry and can include hash field expiration deadlines.</remarks>
     ValueTask<byte[]?> DumpAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Restores a Redis-serialized payload; true on OK. Redis: RESTORE.</summary>
