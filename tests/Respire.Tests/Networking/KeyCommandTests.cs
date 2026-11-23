@@ -104,6 +104,114 @@ public class KeyCommandTests
         ]);
     }
 
+    [Test]
+    [MatrixDataSource]
+    public async Task CopyAndRenameRejectCrossSlotBeforeDispatchOrQueueing(
+        [Matrix("RENAME", "RENAMENX", "COPY", "COPY REPLACE")] string operation,
+        [Matrix("immediate", "batch", "transaction")] string surface,
+        [Matrix(false, true)] bool includeKeyContext)
+    {
+        await using var server = new FakeRespServer();
+#pragma warning disable RESP010 // Test-owned client lets the test verify rejection before discovery.
+        await using var root = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            IncludeCrossSlotKeyContext = includeKeyContext,
+        });
+#pragma warning restore RESP010
+        var client = root.WithKeyPrefix("tenant:");
+        RespireKey source = (byte[])[255, .. "source"u8];
+        RespireKey destination = (byte[])[0, 128, .. "target"u8];
+        RespireKey physicalSource = (byte[])[.. "tenant:"u8, 255, .. "source"u8];
+        byte[] physicalDestination = [.. "tenant:"u8, 0, 128, .. "target"u8];
+        using var batch = client.CreateBatch();
+        await using var transaction = client.CreateTransaction();
+
+        async Task Invoke()
+        {
+            if (surface == "immediate")
+            {
+                _ = await (operation switch
+                {
+                    "RENAME" => client.Keys.RenameAsync(source, destination),
+                    "RENAMENX" => client.Keys.TryRenameAsync(source, destination),
+                    _ => client.Keys.CopyAsync(source, destination, replace: operation == "COPY REPLACE"),
+                });
+                return;
+            }
+
+            var keys = surface == "batch" ? batch.Keys : transaction.Keys;
+            _ = operation switch
+            {
+                "RENAME" => keys.Rename(source, destination),
+                "RENAMENX" => keys.TryRename(source, destination),
+                _ => keys.Copy(source, destination, replace: operation == "COPY REPLACE"),
+            };
+        }
+
+        var error = (await Assert.That(Invoke).ThrowsExactly<RespireCrossSlotException>())!;
+        await Assert.That(error.CommandName).IsEqualTo(operation == "COPY REPLACE" ? "COPY" : operation);
+        await Assert.That(error.ExpectedSlot).IsEqualTo(physicalSource.ClusterSlot);
+        await Assert.That(error.ConflictingSlot).IsEqualTo(((RespireKey)physicalDestination).ClusterSlot);
+        await Assert.That(error.ConflictingKeyHex)
+            .IsEqualTo(includeKeyContext ? Convert.ToHexString(physicalDestination) : null);
+        await Assert.That(batch.Count).IsEqualTo(0);
+        await Assert.That(transaction.Count).IsEqualTo(0);
+        _ = transaction.Set("{unrelated}:key", "value");
+        await Assert.That(transaction.Count).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task CopyAndRenameRouteByThePrefixHashTag()
+    {
+        byte[] success = ":1\r\n"u8.ToArray();
+        await using var owner = new FakeRespServer(
+            FakeRespServer.OkReply, success, success, FakeRespServer.OkReply, success, success);
+        RespireKey physicalSource = "{tenant}:{first}:source";
+        int slot = physicalSource.ClusterSlot;
+        byte[] topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+#pragma warning disable RESP010 // Test-owned client uses the scripted cluster slot map.
+        await using var root = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+        });
+#pragma warning restore RESP010
+        var client = root.WithKeyPrefix("{tenant}:");
+        const string Source = "{first}:source";
+        const string Destination = "{second}:target";
+        await Assert.That(await client.Keys.RenameAsync(Source, Destination)).IsTrue();
+        await Assert.That(await client.Keys.TryRenameAsync(Source, Destination)).IsTrue();
+        await Assert.That(await client.Keys.CopyAsync(Source, Destination)).IsTrue();
+
+        using var batch = client.CreateBatch();
+        var renamed = batch.Keys.Rename(Source, Destination);
+        var tryRenamed = batch.Keys.TryRename(Source, Destination);
+        var copied = batch.Keys.Copy(Source, Destination, replace: true);
+        await batch.ExecuteAsync();
+
+        await Assert.That(renamed.Result).IsTrue();
+        await Assert.That(tryRenamed.Result).IsTrue();
+        await Assert.That(copied.Result).IsTrue();
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+        await Assert.That(owner.ReceivedCommands).IsEquivalentTo([
+            "RENAME {tenant}:{first}:source {tenant}:{second}:target",
+            "RENAMENX {tenant}:{first}:source {tenant}:{second}:target",
+            "COPY {tenant}:{first}:source {tenant}:{second}:target",
+            "RENAME {tenant}:{first}:source {tenant}:{second}:target",
+            "RENAMENX {tenant}:{first}:source {tenant}:{second}:target",
+            "COPY {tenant}:{first}:source {tenant}:{second}:target REPLACE",
+        ]);
+    }
+
     private static async Task<string[]> CollectAsync(IAsyncEnumerable<string> source)
     {
         var values = new List<string>();

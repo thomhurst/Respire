@@ -171,31 +171,34 @@ internal sealed partial class BatchKeyCommands(IPendingSink sink) : IRespireBatc
 
     public RespirePending<bool> Rename(RespireKey key, RespireKey newKey)
     {
+        var (source, destination) = KeyCommands.ResolveSameSlotKeys(sink.Client, "RENAME", key, newKey);
         return sink.Add<Cmd2, bool>(
-            "RENAME", new Cmd2(Verbs.Rename, sink.Client.Key(in key), sink.Client.Key(in newKey)),
+            "RENAME", new Cmd2(Verbs.Rename, source, destination),
             key, newKey,
             static (c, v) => ResponseReader.Ok(in v));
     }
 
     public RespirePending<bool> TryRename(RespireKey key, RespireKey newKey)
     {
+        var (source, destination) = KeyCommands.ResolveSameSlotKeys(sink.Client, "RENAMENX", key, newKey);
         return sink.Add<Cmd2, bool>(
-            "RENAMENX", new Cmd2(Verbs.RenameNx, sink.Client.Key(in key), sink.Client.Key(in newKey)),
+            "RENAMENX", new Cmd2(Verbs.RenameNx, source, destination),
             key, newKey,
             static (c, v) => ResponseReader.Flag(in v));
     }
 
     public RespirePending<bool> Copy(RespireKey source, RespireKey destination, bool replace = false)
     {
+        var (resolvedSource, resolvedDestination) = KeyCommands.ResolveSameSlotKeys(sink.Client, "COPY", source, destination);
         return replace
             ? sink.Add<Cmd3, bool>(
                 "COPY",
-                new Cmd3(Verbs.Copy, sink.Client.Key(in source), sink.Client.Key(in destination), "REPLACE"),
+                new Cmd3(Verbs.Copy, resolvedSource, resolvedDestination, "REPLACE"),
                 source,
                 destination,
                 static (c, v) => ResponseReader.Flag(in v))
             : sink.Add<Cmd2, bool>(
-                "COPY", new Cmd2(Verbs.Copy, sink.Client.Key(in source), sink.Client.Key(in destination)),
+                "COPY", new Cmd2(Verbs.Copy, resolvedSource, resolvedDestination),
                 source, destination,
                 static (c, v) => ResponseReader.Flag(in v));
     }

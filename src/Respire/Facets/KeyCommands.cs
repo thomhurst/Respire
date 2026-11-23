@@ -488,9 +488,14 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         catch (Exception error) { owner.Fail(error); throw; }
     }
 
-    private ValueTask<bool> RenameBorrowedAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => client.OkResultAsync(
-            "RENAME", new Cmd2(Verbs.Rename, client.Key(in key), client.Key(in newKey)), cancellationToken, observation: observation);
+    private ValueTask<bool> RenameBorrowedAsync(
+        RespireKey key, RespireKey newKey,
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+    {
+        var (source, destination) = ResolveSameSlotKeys(client, "RENAME", key, newKey);
+        return client.OkResultAsync(
+            "RENAME", new Cmd2(Verbs.Rename, source, destination), cancellationToken, observation: observation);
+    }
 
     public ValueTask<bool> TryRenameAsync(
         RespireKey key,
@@ -510,8 +515,11 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         RespireKey key,
         RespireKey newKey,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => client.FlagAsync(
-            "RENAMENX", new Cmd2(Verbs.RenameNx, client.Key(in key), client.Key(in newKey)), cancellationToken, observation: observation);
+    {
+        var (source, destination) = ResolveSameSlotKeys(client, "RENAMENX", key, newKey);
+        return client.FlagAsync(
+            "RENAMENX", new Cmd2(Verbs.RenameNx, source, destination), cancellationToken, observation: observation);
+    }
 
     public ValueTask<bool> CopyAsync(
         RespireKey source,
@@ -533,13 +541,16 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         RespireKey destination,
         bool replace,
         CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
-        => replace
+    {
+        var (resolvedSource, resolvedDestination) = ResolveSameSlotKeys(client, "COPY", source, destination);
+        return replace
             ? client.FlagAsync(
-                "COPY", new Cmd3(Verbs.Copy, client.Key(in source), client.Key(in destination), "REPLACE"),
+                "COPY", new Cmd3(Verbs.Copy, resolvedSource, resolvedDestination, "REPLACE"),
                 cancellationToken, observation: observation)
             : client.FlagAsync(
-                "COPY", new Cmd2(Verbs.Copy, client.Key(in source), client.Key(in destination)),
+                "COPY", new Cmd2(Verbs.Copy, resolvedSource, resolvedDestination),
                 cancellationToken, observation: observation);
+    }
 
     public ValueTask<bool> CopyAsync(
         RespireKey source,
@@ -578,12 +589,26 @@ internal sealed partial class KeyCommands(RespireClient client, TimeProvider? sc
         RespireClient client, RespireKey source, RespireKey destination, int destinationDatabase)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(destinationDatabase);
+        return ResolveSameSlotKeys(client, "COPY", source, destination);
+    }
+
+    internal static (RespireValue Source, RespireValue Destination) ResolveSameSlotKeys(
+        RespireClient client, string operation, RespireKey source, RespireKey destination)
+    {
         var resolvedSource = client.Key(in source);
         var resolvedDestination = client.Key(in destination);
 
-        if (client.Core.Cluster is not null && resolvedSource.AsKey().ClusterSlot != resolvedDestination.AsKey().ClusterSlot)
+        if (client.Core.Cluster is not null)
         {
-            throw RespireCrossSlotException.Create(client.Core.Options.IncludeCrossSlotKeyContext, "COPY", resolvedSource.AsKey().ClusterSlot, resolvedDestination.AsKey().ClusterSlot, resolvedDestination);
+            int sourceSlot = resolvedSource.AsKey().ClusterSlot;
+            int destinationSlot = resolvedDestination.AsKey().ClusterSlot;
+
+            if (sourceSlot != destinationSlot)
+            {
+                throw RespireCrossSlotException.Create(
+                    client.Core.Options.IncludeCrossSlotKeyContext, operation, sourceSlot, destinationSlot,
+                    resolvedDestination);
+            }
         }
 
         return (resolvedSource, resolvedDestination);
