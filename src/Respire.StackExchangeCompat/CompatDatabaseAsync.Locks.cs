@@ -29,6 +29,11 @@ internal abstract partial class CompatDatabaseAsync
 
     public Task<long> PublishAsync(RedisChannel channel, RedisValue message, CommandFlags flags)
     {
+        if (channel.IsSharded)
+        {
+            throw Compatibility.Unsupported("Sharded channels");
+        }
+
         if (this is CompatTransaction)
         {
             if (channel.IsPattern)

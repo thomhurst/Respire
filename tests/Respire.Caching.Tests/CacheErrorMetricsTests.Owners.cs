@@ -207,7 +207,8 @@ public partial class CacheErrorMetricsTests
                     return await send().ConfigureAwait(false);
                 }) : client;
             await using var cache = new RespireDistributedCache(cacheClient, new() { ValueCodec = new FailingCacheCodec(expected) });
-            using var errors = new CacheErrorCapture();
+            // The endpoint identifies this measurement if completion runs outside the test's execution context.
+            using var errors = new CacheErrorCapture(server.Port);
             var failure = await Assert.That(async () =>
             {
                 if (buffer)
@@ -221,8 +222,10 @@ public partial class CacheErrorMetricsTests
             }).Throws<InvalidOperationException>();
             await Assert.That(failure).IsSameReferenceAs(expected);
             await Assert.That(errors.Items.Count).IsEqualTo(1);
-            await Assert.That((bool)errors.Items.Single()["redis.client.errors.internal"]!).IsFalse();
-            await Assert.That(errors.Items.Single()["redis.client.operation.retry_attempts"]).IsEqualTo(0);
+            Dictionary<string, object?> measurement = errors.Items.Single();
+            await Assert.That(measurement["server.port"]).IsEqualTo(server.Port);
+            await Assert.That((bool)measurement["redis.client.errors.internal"]!).IsFalse();
+            await Assert.That(measurement["redis.client.operation.retry_attempts"]).IsEqualTo(0);
         }
         finally { RespireMetrics.Configure(previous); }
     }
