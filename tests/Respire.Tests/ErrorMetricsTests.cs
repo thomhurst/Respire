@@ -434,7 +434,7 @@ public partial class ErrorMetricsTests
     public async Task SingleHashExpiryConversionRetainsFinalOwner(
         [Matrix(2, 3)] int protocol, [Matrix(false, true)] bool commandMetrics,
         [Matrix("standalone", "cluster", "moved")] string route,
-        [Matrix("empty", "extra", "non-array", "non-integer", "overflow", "server", "success", "missing", "persistent")] string outcome)
+        [Matrix("empty", "extra", "non-array", "non-integer", "large-ttl", "server", "success", "missing", "persistent")] string outcome)
     {
         using var configuration = new MetricConfigurationScope(new()
         {
@@ -447,7 +447,7 @@ public partial class ErrorMetricsTests
             "extra" => "*2\r\n:1\r\n:2\r\n"u8.ToArray(),
             "non-array" => ":1\r\n"u8.ToArray(),
             "non-integer" => "*1\r\n$3\r\nbad\r\n"u8.ToArray(),
-            "overflow" => "*1\r\n:9223372036854775807\r\n"u8.ToArray(),
+            "large-ttl" => "*1\r\n:9223372036854775807\r\n"u8.ToArray(),
             "server" => "-NOPERM private-field\r\n"u8.ToArray(),
             "missing" => "*1\r\n:-2\r\n"u8.ToArray(),
             "persistent" => "*1\r\n:-1\r\n"u8.ToArray(),
@@ -498,7 +498,8 @@ public partial class ErrorMetricsTests
         }
         catch (Exception caught) { error = caught; }
 
-        var success = outcome is "success" or "missing" or "persistent";
+        bool hasExpiry = outcome is "success" or "large-ttl";
+        bool success = hasExpiry || outcome is "missing" or "persistent";
         await Assert.That(error is null).IsEqualTo(success);
         var items = capture.Items.ToArray();
         var final = items.Where(item => !(bool)item.Tags["redis.client.errors.internal"]!).ToArray();
@@ -522,11 +523,16 @@ public partial class ErrorMetricsTests
         else
         {
             await Assert.That(ttl.Exists).IsEqualTo(outcome != "missing");
-            await Assert.That(ttl.HasExpiry).IsEqualTo(outcome == "success");
+            await Assert.That(ttl.HasExpiry).IsEqualTo(hasExpiry);
 
             if (outcome == "success")
             {
                 await Assert.That(ttl.TimeToLive).IsEqualTo(TimeSpan.FromMilliseconds(2500));
+            }
+            else if (outcome == "large-ttl")
+            {
+                await Assert.That(ttl.TimeToLiveMilliseconds).IsEqualTo(long.MaxValue);
+                await Assert.That(ttl.TimeToLive).IsNull();
             }
         }
 
