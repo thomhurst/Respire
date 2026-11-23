@@ -249,6 +249,51 @@ public class PubSubTests
         await Assert.That(messages.Current.Text).IsEqualTo("hello");
     }
 
+    [Test]
+    public async Task DisposeAsync_UnsubscribeTimeout_ClosesSocketAndRestoresOnlyLiveRoutes()
+    {
+        await using var server = new FakeRespServer(
+            2,
+            SubscribeConfirmation,
+            "*3\r\n$9\r\nsubscribe\r\n$5\r\nfirst\r\n:2\r\n"u8.ToArray(),
+            "*3\r\n$9\r\nsubscribe\r\n$6\r\nsecond\r\n:3\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command == "UNSUBSCRIBE first",
+            ReplyOverride = (_, command) => command == "UNSUBSCRIBE ch"
+                ? "*3\r\n$11\r\nunsubscribe\r\n$2\r\nch\r\n:0\r\n"u8.ToArray()
+                : null,
+        };
+
+        // The test owns the connection so it can set the unsubscribe deadline.
+#pragma warning disable RESP010
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            CommandTimeout = TimeSpan.FromSeconds(1),
+        });
+#pragma warning restore RESP010
+        await using var retained = await client.SubscribeAsync("ch");
+        await using var released = await client.SubscribeAsync(["first", "second"]);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var reader = retained.GetAsyncEnumerator(deadline.Token);
+
+        await released.DisposeAsync();
+        await Assert.That(await released.Completion).IsEqualTo(RespireSubscriptionEndReason.Disposed);
+
+        // The withheld acknowledgement leaves the first command uncertain and the second
+        // target subscribed. Closing the original socket releases both targets on the server.
+        await server.PeerClosed.WaitAsync(deadline.Token);
+        await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        await Assert.That(reader.Current.Gap?.Reason).IsEqualTo(RespireSubscriptionGapReason.Reconnect);
+        await Assert.That(server.ReceivedCommands)
+            .IsEquivalentTo(["SUBSCRIBE ch", "SUBSCRIBE first", "SUBSCRIBE second", "UNSUBSCRIBE first", "SUBSCRIBE ch"]);
+
+        await server.SendRawAsync(MessageFrame, server.ReceivedConnectionIds[^1]);
+        await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        await Assert.That(reader.Current.Text).IsEqualTo("hello");
+    }
+
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));

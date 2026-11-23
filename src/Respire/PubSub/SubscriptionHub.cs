@@ -293,7 +293,9 @@ internal sealed partial class SubscriptionHub : IAsyncDisposable
             }
             catch (RespireException)
             {
-                // The connection died mid-unsubscribe; the server forgets the subscription anyway.
+                // A failed unsubscribe can leave this socket subscribed to routes we removed.
+                // Closing it releases those routes; recovery replays only the routes still in use.
+                AbandonConnection(connection);
                 break;
             }
         }
