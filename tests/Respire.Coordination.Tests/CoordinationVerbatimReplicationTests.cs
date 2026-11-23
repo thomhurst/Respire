@@ -4,11 +4,6 @@ using TUnit.Core;
 
 namespace Respire.Coordination.Tests;
 
-public sealed class Redis62VerbatimReplication() : RedisTestContainer("--lua-replicate-commands", "no")
-{
-    protected override string ServerImage => "redis:6.2.14-alpine";
-}
-
 [ClassDataSource<Redis62VerbatimReplication>(Shared = SharedType.PerTestSession)]
 public class CoordinationVerbatimReplicationTests(Redis62VerbatimReplication fixture)
 {

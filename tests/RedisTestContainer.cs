@@ -213,6 +213,12 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
     }
 }
 
+/// <summary>Redis 6.2 configured to replicate scripts verbatim unless they opt into effects replication.</summary>
+public sealed class Redis62VerbatimReplication() : RedisTestContainer("--lua-replicate-commands", "no")
+{
+    protected override string ServerImage => "redis:6.2.14-alpine";
+}
+
 /// <summary>
 /// Skips a test or class when <c>RESPIRE_TEST_REDIS_IMAGE</c> selects Garnet, before its fixture starts.
 /// The reason names the Garnet version and the missing command, so the report shows each known gap.

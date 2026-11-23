@@ -86,7 +86,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     //   the same entry. This skew is undetectable (an inflated absexp is indistinguishable
     //   from a genuinely distant one), so the only cap that could contain it is refusing to
     //   ever extend the TTL, which would disable sliding refresh for every honest entry.
-    internal static readonly RespireScript GetAndRefreshScript = RespireScript.Create("""
+    internal static readonly RespireScript GetAndRefreshScript = RespireScript.CreateWithEffectsReplication("""
         local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp', 'data')
         if entry[1] == false and entry[3] == false then
           return nil
@@ -125,7 +125,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           return {capped, entry[3]}
         end
         return {capped}
-        """, readOnly: false, cacheReadOnly: false, accessesOnlyDeclaredKeys: true);
+        """, accessesOnlyDeclaredKeys: true);
 
     // Shrink-only TTL correction for a set whose send was delayed (see CapDelayedTtlAsync).
     // ARGV: [1] absexp and [2] sldexp exactly as the delayed set stored them — a mismatch on
@@ -135,7 +135,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // remaining ms (<= 0: the deadline has already passed, remove the entry). The TTL is only
     // ever shortened (PTTL -1, a lost TTL, counts as infinite), so racing reads or writers can
     // never be extended by it.
-    internal static readonly RespireScript CapTtlScript = RespireScript.Create("""
+    internal static readonly RespireScript CapTtlScript = RespireScript.CreateWithEffectsReplication("""
         local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp')
         if entry[1] ~= ARGV[1] or entry[2] ~= ARGV[2] then
           return 0
@@ -150,7 +150,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           redis.call('PEXPIRE', KEYS[1], remaining)
         end
         return 1
-        """, readOnly: false, cacheReadOnly: false, accessesOnlyDeclaredKeys: true);
+        """, accessesOnlyDeclaredKeys: true);
 
     // Shrink-only TTL correction for a sliding read whose send was delayed. ARGV: [1] a
     // fresh app-clock "now" (UTC ticks), optionally followed by the absolute and sliding
@@ -159,7 +159,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // With proof, match both the metadata and the expiration before changing the key.
     // Return the new timestamp after a shrink so retries can recognize that expiration.
     // Without proof, metadata alone can appear expired on a live Microsoft-written key.
-    internal static readonly RespireScript CapRefreshedTtlScript = RespireScript.Create("""
+    internal static readonly RespireScript CapRefreshedTtlScript = RespireScript.CreateWithEffectsReplication("""
         local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp')
         local absexp = tonumber(entry[1]) or -1
         local sldexp = tonumber(entry[2]) or -1
@@ -192,7 +192,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           end
         end
         return 0
-        """, readOnly: false, cacheReadOnly: false, accessesOnlyDeclaredKeys: true);
+        """, accessesOnlyDeclaredKeys: true);
 
     private readonly IRespireClient _client;
     private readonly IRespireValueCodec? _valueCodec;

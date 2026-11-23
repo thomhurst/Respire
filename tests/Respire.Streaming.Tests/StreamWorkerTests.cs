@@ -694,7 +694,7 @@ public partial class StreamWorkerTests
     {
         await using var fixture = await Fixture.CreateAsync();
         using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Disconnect(afterExecution),
-            firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.AckSource));
+            firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.Ack.Source));
         await fixture.AddAsync(0);
         await fixture.StartAsync();
         await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline)).Throws<Exception>();

@@ -92,9 +92,9 @@ public partial class StreamWorkerTests
             DeleteAcknowledgedEntries = true,
             MinimumIdleTime = TimeSpan.FromMilliseconds(1),
         });
-        var source = nack ? StreamWorkerScripts.NackSource : StreamWorkerScripts.AckAndDeleteSource;
+        var script = nack ? StreamWorkerScripts.Nack : StreamWorkerScripts.AckAndDelete;
         using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Disconnect(afterExecution),
-            firstArgument: Encoding.UTF8.GetBytes(source));
+            firstArgument: Encoding.UTF8.GetBytes(script.Source));
         await fixture.AddAsync(0);
         await fixture.StartAsync();
         await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline)).Throws<Exception>();

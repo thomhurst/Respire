@@ -22,6 +22,10 @@ public sealed class RespireScript
     private const int StackallocThreshold = 256;
     private const string HexDigits = "0123456789abcdef";
 
+    // Redis 6 can reject writes after non-deterministic commands in verbatim replication mode.
+    // Redis 7 always replicates effects, and compatible servers may omit this API.
+    private const string EffectsReplicationPrelude = "if redis.replicate_commands then redis.replicate_commands() end\n";
+
     private RespireScript(string source, string sha1, bool readOnly, bool cacheReadOnly,
         RespireCommandRetryCategory retryCategory = RespireCommandRetryCategory.Never,
         bool accessesOnlyDeclaredKeys = false)
@@ -109,6 +113,9 @@ public sealed class RespireScript
     /// <summary>Creates a reusable script. Read-only execution requires Redis 7 or later.</summary>
     public static RespireScript Create(string source, bool readOnly)
         => Create(source, readOnly, cacheReadOnly: readOnly);
+
+    internal static RespireScript CreateWithEffectsReplication(string source, bool accessesOnlyDeclaredKeys = false)
+        => Create(EffectsReplicationPrelude + source, readOnly: false, cacheReadOnly: false, accessesOnlyDeclaredKeys);
 
     internal static RespireScript Create(string source, bool readOnly, bool cacheReadOnly,
         bool accessesOnlyDeclaredKeys = false)

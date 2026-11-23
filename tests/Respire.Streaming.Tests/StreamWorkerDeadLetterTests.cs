@@ -159,7 +159,7 @@ public partial class StreamWorkerTests
         await using var fixture = await Fixture.CreateAsync(state: state,
             options: new() { DeadLetterStream = "dlq" }, keyPrefix: "{worker}tenant:");
         using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Disconnect(afterExecution),
-            firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.DeadLetterSource));
+            firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.DeadLetter.Source));
         await fixture.AddAsync(0);
         await fixture.StartAsync();
         await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline)).Throws<Exception>();
@@ -181,7 +181,7 @@ public partial class StreamWorkerTests
             options: new() { DeadLetterStream = "dlq" }, keyPrefix: "{worker}tenant:");
         var gate = new RespireFakeGate();
         using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Pause(gate, afterExecution),
-            firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.DeadLetterSource));
+            firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.DeadLetter.Source));
 
         try
         {
@@ -208,7 +208,7 @@ public partial class StreamWorkerTests
         await using var fixture = await Fixture.CreateAsync(state: state,
             options: new() { DeadLetterStream = "dlq" }, keyPrefix: "{worker}tenant:");
         using var fault = fixture.Server.InjectFault("EVAL", loading ? RespireFakeFault.Loading() : RespireFakeFault.ReadOnly(),
-            firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.DeadLetterSource));
+            firstArgument: Encoding.UTF8.GetBytes(StreamWorkerScripts.DeadLetter.Source));
         await fixture.AddAsync(0);
         await fixture.StartAsync();
         await Assert.That(async () => await fixture.Service.ExecuteTask!.WaitAsync(Deadline)).Throws<Exception>();

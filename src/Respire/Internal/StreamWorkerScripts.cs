@@ -39,7 +39,7 @@ internal static class StreamWorkerScripts
         return {page[1], entries}
         """;
 
-    internal const string AckSource = """
+    private const string AckSource = """
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
         if #pending == 1 and pending[1][2] == ARGV[2] and tostring(pending[1][4]) == ARGV[4] then
             return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3])
@@ -49,7 +49,7 @@ internal static class StreamWorkerScripts
 
     internal static readonly RespireScript Replay = RespireScript.Create(ReplaySource);
     internal static readonly RespireScript Claim = RespireScript.Create(ClaimSource);
-    internal static readonly RespireScript Ack = RespireScript.Create(AckSource);
+    internal static readonly RespireScript Ack = RespireScript.CreateWithEffectsReplication(AckSource);
 
     // Discovery executes inside the operation's script, on its actual serving server.
     // No capability evidence survives a redirect, failover, or reconnect. Denied INFO
@@ -69,6 +69,8 @@ internal static class StreamWorkerScripts
 
         """;
 
+    // Job queue scripts embed these fragments. Apply the replication guard
+    // where the full script is built so that it runs before the first write.
     internal const string CapabilityClaimSource = CapabilitySource + """
         -- Cleanup permissions are additional to compatible recovery. Check them
         -- before CLAIM mutates the PEL: Lua errors cannot roll back those writes.
@@ -121,6 +123,7 @@ internal static class StreamWorkerScripts
 
     // Return 0 for a stale delivery and 1 for a current delivery, even when
     // ordinary pending recovery handles the nack instead of XNACK.
+    // Only Redis 8.8+ reaches XNACK. Redis 6.2 leaves the pending entry untouched.
     internal const string NackSource = CapabilitySource + """
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
         if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
@@ -132,11 +135,13 @@ internal static class StreamWorkerScripts
         return 1
         """;
 
-    internal static readonly RespireScript CapabilityClaim = RespireScript.Create(CapabilityClaimSource);
-    internal static readonly RespireScript AckAndDelete = RespireScript.Create(AckAndDeleteSource);
+    internal static readonly RespireScript CapabilityClaim =
+        RespireScript.CreateWithEffectsReplication(CapabilityClaimSource);
+    internal static readonly RespireScript AckAndDelete =
+        RespireScript.CreateWithEffectsReplication(AckAndDeleteSource);
     internal static readonly RespireScript Nack = RespireScript.Create(NackSource);
 
-    internal const string DeadLetterSource = """
+    private const string DeadLetterSource = """
         if KEYS[1] == KEYS[2] then return redis.error_reply('ERR source and dead-letter keys must differ') end
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
         if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
@@ -164,5 +169,6 @@ internal static class StreamWorkerScripts
         return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3])
         """;
 
-    internal static readonly RespireScript DeadLetter = RespireScript.Create(DeadLetterSource);
+    // Redis 6.2 can acknowledge a deleted body without the ACL preflight required for an append.
+    internal static readonly RespireScript DeadLetter = RespireScript.CreateWithEffectsReplication(DeadLetterSource);
 }

@@ -7,10 +7,6 @@ namespace Respire.Coordination;
 /// <summary>Coordination primitives using a caller-owned Redis client.</summary>
 public sealed class RespireCoordination
 {
-    // Redis 6 and older can reject writes after TIME or TTL reads in verbatim replication mode.
-    // Redis 7 always replicates effects. The guard also works on compatible servers without this API.
-    internal const string EffectsReplicationPrelude = "if redis.replicate_commands then redis.replicate_commands() end\n";
-
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(1);
     private readonly IRespireClient _client;
     private readonly TimeProvider _fencedLockClock;
@@ -291,7 +287,7 @@ public sealed class RespireCoordination
         return new RespireCountdownLatch(_client, snapshot, generation, channel);
     }
 
-    internal static readonly RespireScript AcquireFencedLock = RespireScript.Create(EffectsReplicationPrelude + """
+    internal static readonly RespireScript AcquireFencedLock = RespireScript.CreateWithEffectsReplication("""
         -- Keep the invariant even when this script is invoked without the managed entry point.
         if KEYS[1] == KEYS[2] then
             return redis.error_reply('ERR lock and fencing counter keys must differ')
@@ -316,7 +312,7 @@ public sealed class RespireCoordination
 
     // Shared by every read/write script: read Redis server time, prune expired owners, and
     // keep the key's expiry at its latest owner deadline (or delete it once no owner remains).
-    private const string ReadWritePrelude = EffectsReplicationPrelude + """
+    private const string ReadWritePrelude = """
         local t = redis.call('TIME')
         local now = t[1] * 1000 + math.floor(t[2] / 1000)
         local deadlineNow = t[1] * 1000 + math.ceil(t[2] / 1000)
@@ -333,7 +329,7 @@ public sealed class RespireCoordination
 
         """;
 
-    internal static readonly RespireScript AcquireReadWriteLock = RespireScript.Create(ReadWritePrelude + $$"""
+    internal static readonly RespireScript AcquireReadWriteLock = RespireScript.CreateWithEffectsReplication(ReadWritePrelude + $$"""
         local role = ARGV[3]
         if role == '{{WriterRole}}' and redis.call('ZCARD', KEYS[1]) ~= 0 then return 0 end
         if role == '{{ReaderRole}}' then
@@ -353,7 +349,7 @@ public sealed class RespireCoordination
         return added
         """);
 
-    internal static readonly RespireScript RenewReadWriteLock = RespireScript.Create(ReadWritePrelude + """
+    internal static readonly RespireScript RenewReadWriteLock = RespireScript.CreateWithEffectsReplication(ReadWritePrelude + """
         local member = ARGV[2] .. ARGV[1]
         if not redis.call('ZSCORE', KEYS[1], member) then return 0 end
         redis.call('ZADD', KEYS[1], 'XX', deadlineNow + tonumber(ARGV[3]), member)
@@ -361,13 +357,13 @@ public sealed class RespireCoordination
         return 1
         """);
 
-    internal static readonly RespireScript ReleaseReadWriteLock = RespireScript.Create(ReadWritePrelude + """
+    internal static readonly RespireScript ReleaseReadWriteLock = RespireScript.CreateWithEffectsReplication(ReadWritePrelude + """
         local removed = redis.call('ZREM', KEYS[1], ARGV[2] .. ARGV[1])
         refreshExpiry()
         return removed
         """);
 
-    internal static readonly RespireScript VerifyReadWriteLock = RespireScript.Create(ReadWritePrelude + """
+    internal static readonly RespireScript VerifyReadWriteLock = RespireScript.CreateWithEffectsReplication(ReadWritePrelude + """
         if redis.call('ZSCORE', KEYS[1], ARGV[2] .. ARGV[1]) then return 1 end
         return 0
         """);

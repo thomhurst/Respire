@@ -59,7 +59,7 @@ internal sealed partial class RedisRateLimiter
     // One hash, with a configuration signature and one packed integer list per component. Decimal
     // formatting preserves millisecond timestamps beyond Lua/cjson's default string precision.
     // All reads and calculations precede writes; rejection and zero-permit probes leave state untouched.
-    private static readonly RespireScript CompositeScript = RespireScript.Create(RespireCoordination.EffectsReplicationPrelude + """
+    private static readonly RespireScript CompositeScript = RespireScript.CreateWithEffectsReplication("""
         local function decode(value)
             local values = {}
             if value then

@@ -73,7 +73,7 @@ internal static class JobQueueControls
     internal static readonly RespireScript Replay = Wrap(StreamWorkerScripts.ReplaySource, "ARGV[4]");
     internal static readonly RespireScript Claim = Wrap(StreamWorkerScripts.CapabilityClaimSource, "ARGV[4]");
 
-    private static RespireScript Wrap(string source, string cursor, int controlKey = 2) => RespireScript.Create(
+    private static RespireScript Wrap(string source, string cursor, int controlKey = 2) => RespireScript.CreateWithEffectsReplication(
         "local lifecycleKey = KEYS[" + (controlKey + 1) + "]\n" + JobDeduplication.Lifecycle
         + "local control = KEYS[" + controlKey + "]\nlocal cursor = " + cursor + "\n" + AdmissionSource
         + source + "\nend\n" + CompletionSource);
