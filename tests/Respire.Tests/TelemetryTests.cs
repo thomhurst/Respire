@@ -244,10 +244,18 @@ public class TelemetryTests
     }
 
     [Test]
-    public async Task RedisError_EmitsStatusCodeAndMatchingErrorType()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RedisError_EmitsStatusCodeAndMatchingErrorType(bool throwOnActivityStop)
     {
         await using var server = new FakeRespServer("-WRONGTYPE rejected my-secret\r\n"u8.ToArray());
-        using var capture = new TelemetryCapture();
+        using var capture = new TelemetryCapture(activity =>
+        {
+            if (throwOnActivityStop && activity.OperationName == "GET")
+            {
+                throw new InvalidOperationException("Activity listener failed.");
+            }
+        });
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(async () => await client.GetStringAsync("key"))
@@ -264,6 +272,23 @@ public class TelemetryTests
         var measurement = capture.SingleMeasurement("GET", server.Port);
         await Assert.That(measurement.Tags["error.type"]).IsEqualTo("WRONGTYPE");
         await Assert.That(measurement.Tags["db.response.status_code"]).IsEqualTo("WRONGTYPE");
+    }
+
+    [Test]
+    public async Task ThrowingActivityStopListenerClearsCurrentWhenParentStopped()
+    {
+        using var capture = new TelemetryCapture(static _ => throw new InvalidOperationException("Activity listener failed."));
+        using var parent = new Activity("command-parent").Start();
+        var telemetry = RespireTelemetry.StartOperation("GET", "example.test", 6379, 0);
+        var command = Activity.Current;
+
+        // Stop the parent in a separate execution context so the command stays current here.
+        await Task.Run(parent.Stop);
+        await Assert.That(Activity.Current).IsSameReferenceAs(command);
+        telemetry.Complete("GET", "example.test", 6379, 0);
+
+        await Assert.That(capture.Activities.Single()).IsSameReferenceAs(command);
+        await Assert.That(Activity.Current).IsNull();
     }
 
     [Test]
@@ -536,7 +561,7 @@ public class TelemetryTests
             get; private set;
         }
 
-        public TelemetryCapture()
+        public TelemetryCapture(Action<Activity>? onStopped = null)
         {
             _activityListener = new ActivityListener
             {
@@ -548,7 +573,11 @@ public class TelemetryTests
                     return ActivitySamplingResult.AllDataAndRecorded;
                 },
                 SampleUsingParentId = static (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
-                ActivityStopped = Activities.Enqueue,
+                ActivityStopped = activity =>
+                {
+                    Activities.Enqueue(activity);
+                    onStopped?.Invoke(activity);
+                },
             };
             ActivitySource.AddActivityListener(_activityListener);
 
