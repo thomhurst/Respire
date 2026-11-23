@@ -59,7 +59,9 @@ VADD options (null keeps the server default):
 
 **Repeat creation settings on every VADD.** Quantization and reduction are fixed when the set is created. Redis 8.6 requires later VADD calls to send compatible quantization, `M` and `REDUCE`. Omitting them sends server defaults, which fails on a set created with other settings. Respire does not remember per-key settings.
 
-VSIM options: result count, scores, attributes, `ExplorationFactor`, `Filter`, `FilterExplorationFactor`, `Epsilon`, `Exact` (`TRUTH`) and `NoThread` (`NOTHREAD`). Exact search scans the whole set. `NoThread` can increase latency on the server's main thread. Scores are similarities, not distances.
+VSIM options: result count, scores, attributes, `ExplorationFactor`, `Filter`, `FilterExplorationFactor`, `Epsilon`, `Exact` (`TRUTH`) and `NoThread` (`NOTHREAD`).
+`Epsilon` sets the maximum distance and must be finite, greater than zero, and at most one.
+Exact search scans the whole set. `NoThread` can increase latency on the server's main thread. Scores are similarities, not distances.
 
 | Method | Command | Missing result |
 | --- | --- | --- |

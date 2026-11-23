@@ -105,7 +105,7 @@ public readonly record struct RespireVectorSearchOptions
         get; init;
     }
 
-    /// <summary>EPSILON maximum distance, from zero through one.</summary>
+    /// <summary>EPSILON maximum distance. Must be finite, greater than zero, and at most one.</summary>
     public double? Epsilon
     {
         get; init;
