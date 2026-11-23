@@ -160,9 +160,15 @@ jobs:
             return 1
           }
 
-          draft_ids=$(gh api --paginate "$repo/releases?per_page=100" \
-            --jq '.[] | select(.draft and ((.body // "") | contains(env.DRAFT_MARKER))) | .id')
-          draft_id=${draft_ids%%$'\n'*}
+          drafts=$(gh api --paginate "$repo/releases?per_page=100" \
+            --jq '.[] | select(.draft and ((.body // "") | contains(env.DRAFT_MARKER))) | [.created_at, .id] | @tsv')
+          # Newest first. More than one marked draft means one was copied or created by hand: update
+          # the newest and name them all, so the others can be deleted.
+          drafts=$(sort -r <<< "$drafts")
+          draft_id=$(head -n 1 <<< "$drafts" | cut -f2)
+          if [ "$(grep -c . <<< "$drafts")" -gt 1 ]; then
+            echo "::warning::Several drafts carry $DRAFT_MARKER (ids: $(cut -f2 <<< "$drafts" | paste -sd ' ' -)); updating the newest, $draft_id. Delete the others."
+          fi
           kept=""
 
           if [ -n "$draft_id" ]; then
