@@ -19,6 +19,11 @@ internal static class CompletionGuards
             && SymbolEqualityComparer.Default.Equals(instance.Local, local);
     }
 
+    public static bool ProvesSuccessfulCompletion(IOperation? condition, bool value, ILocalSymbol local)
+    {
+        return FindTrueProperties(condition, value).Any(check => IsSuccessfulTaskCheck(check) && ChecksLocal(check, local));
+    }
+
     public static IEnumerable<IPropertyReferenceOperation> FindChecks(
         SemanticModel model, SyntaxNode scope, SyntaxNode read, CancellationToken cancellationToken)
     {

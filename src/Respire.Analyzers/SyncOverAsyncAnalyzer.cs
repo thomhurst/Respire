@@ -69,11 +69,9 @@ public sealed class SyncOverAsyncAnalyzer : DiagnosticAnalyzer
             operand = instance;
         }
 
-        SyntaxNode read = context.Operation.Syntax;
         return operand is ILocalReferenceOperation { Local: { RefKind: RefKind.None } local }
-            && ScopeWalker.GetEnclosingScope(read) is { } scope
-            && CompletionGuards.FindChecks(model, scope, read, context.CancellationToken).Any(check =>
-                CompletionGuards.IsSuccessfulTaskCheck(check) && CompletionGuards.ChecksLocal(check, local));
+            && ScopeWalker.GetEnclosingScope(context.Operation.Syntax) is { } scope
+            && ScopeWalker.IsReadAfterSuccessfulCompletion(model, scope, context.Operation, local, context.CancellationToken);
     }
 
     internal static IOperation? GetAwaitable(IOperation operation) => operation switch

@@ -325,6 +325,48 @@ internal static partial class ScopeWalker
             barrierArray, startPolicy, cancellationToken, origin: before);
     }
 
+    public static bool IsReadAfterSuccessfulCompletion(
+        SemanticModel model, SyntaxNode scope, IOperation read, ILocalSymbol local, CancellationToken cancellationToken)
+    {
+        // Avoid constructing a graph for the usual unguarded read.
+        if (!scope.DescendantNodes().Any(static node => node is IdentifierNameSyntax { Identifier.ValueText: "IsCompletedSuccessfully" })
+            || CreateControlFlowGraph(model, scope, cancellationToken) is not { } graph)
+        {
+            return false;
+        }
+
+        // A lowered operation may share syntax with an enclosing expression in another block.
+        // Match the read itself so that facts established after it cannot suppress its diagnostic.
+        BasicBlock? readBlock = null;
+
+        foreach (BasicBlock block in graph.Blocks)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!block.Operations.Any(ContainsRead) && !ContainsRead(block.BranchValue))
+            {
+                continue;
+            }
+
+            if (readBlock is not null)
+            {
+                return false;
+            }
+
+            readBlock = block;
+        }
+
+        return readBlock is not null && !new ReachabilityWalker(graph, model, graph.Blocks[0], int.MinValue,
+            readBlock, read.Syntax.SpanStart, [], BarrierStartPolicy.Exclude, cancellationToken, origin: null,
+            completionLocal: local).Search();
+
+        bool ContainsRead(IOperation? operation)
+        {
+            return operation is not null && operation.DescendantsAndSelf().Any(candidate =>
+                candidate.Kind == read.Kind && !candidate.IsImplicit && IsSame(candidate.Syntax, read.Syntax));
+        }
+    }
+
     private static bool PathExistsAvoiding(
         ControlFlowGraph graph,
         SemanticModel semanticModel,

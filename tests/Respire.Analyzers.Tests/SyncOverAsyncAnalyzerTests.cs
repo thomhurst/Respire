@@ -40,6 +40,109 @@ public class SyncOverAsyncAnalyzerTests
     }
 
     [Test]
+    [Arguments("if (!command.IsCompletedSuccessfully) { return await command; } return command.Result;")]
+    [Arguments("if (!command.IsCompletedSuccessfully || skip) { throw new System.InvalidOperationException(); } return command.Result;")]
+    [Arguments("if (skip) { if (!command.IsCompletedSuccessfully) { return await command; } } else { if (!command.IsCompletedSuccessfully) { return await command; } } return command.Result;")]
+    [Arguments("while (command.IsCompletedSuccessfully) { return command.Result; } return await command;")]
+    [Arguments("for (; command.IsCompletedSuccessfully && !skip;) { return command.ConfigureAwait(false).GetAwaiter().GetResult(); } return await command;")]
+    [Arguments("do { if (skip) { continue; } } while (!command.IsCompletedSuccessfully); return command.Result;")]
+    [Arguments("if (!other.IsCompletedSuccessfully) { return await command; } return {|RESP009:command.Result|};")]
+    [Arguments("if (!command.IsCompletedSuccessfully && skip) { return await command; } return {|RESP009:command.Result|};")]
+    [Arguments("while (command.IsCompletedSuccessfully || skip) { return {|RESP009:command.Result|}; } return await command;")]
+    [Arguments("while (command.IsCompletedSuccessfully) { break; } return {|RESP009:command.Result|};")]
+    [Arguments("do { if (skip) { return {|RESP009:command.Result|}; } } while (command.IsCompletedSuccessfully); return await command;")]
+    [Arguments("if (skip) { goto Read; } if (!command.IsCompletedSuccessfully) { return await command; } Read: return {|RESP009:command.Result|};")]
+    [Arguments("try { if (!command.IsCompletedSuccessfully) { throw new System.InvalidOperationException(); } } catch (System.InvalidOperationException) { } return {|RESP009:command.Result|};")]
+    [Arguments("try { if (!command.IsCompletedSuccessfully) { return await command; } } finally { _ = {|RESP009:command.Result|}; } return command.Result;")]
+    [Arguments("""
+        async Task<RespireResult> ReadAsync()
+        {
+            if (!command.IsCompletedSuccessfully)
+            {
+                return await command;
+            }
+
+            return command.Result;
+        }
+
+        return await ReadAsync();
+        """)]
+    [Arguments("""
+        System.Func<Task<RespireResult>> read = async () =>
+        {
+            while (command.IsCompletedSuccessfully)
+            {
+                return command.Result;
+            }
+
+            return await command;
+        };
+        return await read();
+        """)]
+    public Task ReadsAfterControlFlowGuards(string statements)
+    {
+        return Verify.VerifyAsync($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task<RespireResult> RunAsync(RespireClient client, bool skip)
+                {
+                    var command = client.ExecuteAsync("PING");
+                    var other = client.ExecuteAsync("PING");
+                    {{statements}}
+                }
+            }
+            """);
+    }
+
+    [Test]
+    public Task LoopInitializerDiscardsPreviousCompletion()
+    {
+        return Verify.VerifyAsync("""
+            using System.Threading.Tasks;
+            using Respire;
+            class Caller
+            {
+                async Task<RespireResult> RunAsync(RespireClient client, bool skip)
+                {
+                    while (true)
+                    {
+                        var command = client.ExecuteAsync("PING");
+                        if (!skip)
+                        {
+                            return {|RESP009:command.Result|};
+                        }
+
+                        if (!command.IsCompletedSuccessfully)
+                        {
+                            return await command;
+                        }
+
+                        skip = false;
+                    }
+                }
+            }
+            """);
+    }
+
+    [Test]
+    public Task ReadsAfterTopLevelSuccessGuard()
+    {
+        return Verify.VerifyTopLevelAsync("""
+            using Respire;
+            RespireClient client = null!;
+            var command = client.ExecuteAsync("PING");
+            if (!command.IsCompletedSuccessfully)
+            {
+                return;
+            }
+
+            _ = command.Result;
+            """);
+    }
+
+    [Test]
     [Arguments("command.IsCompletedSuccessfully ? command.Result : await command")]
     [Arguments("!command.IsCompletedSuccessfully ? await command : command.Result")]
     public Task ReadsInConditionalExpressions(string expression)

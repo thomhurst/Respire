@@ -15,6 +15,7 @@ internal sealed class FlowConditions
     // Each predicate occupies one bit in the ulong known/value masks.
     private const int MaxPredicates = sizeof(ulong) * 8;
     internal const ulong UnknownPathFlag = 0;
+    private static readonly object s_successfulCompletion = new();
     private readonly CancellationToken _cancellationToken;
     private readonly SyntaxNode _scope;
     private readonly Dictionary<CaptureId, IOperation> _captures = new();
@@ -37,6 +38,13 @@ internal sealed class FlowConditions
         // Non-variable facts share the bounded path-state masks without write invalidation.
         _predicates.Add((null, null, BinaryOperatorKind.None));
         return flag;
+    }
+
+    internal ulong ReserveCompletionFlag(ILocalSymbol local)
+    {
+        // A write to the local, including reinitialization on a back edge, clears the fact.
+        int index = PredicateIndex(local, s_successfulCompletion, BinaryOperatorKind.None);
+        return index >= 0 ? 1UL << index : UnknownPathFlag;
     }
 
     internal FlowConditions(ControlFlowGraph graph, BasicBlock originBlock, CancellationToken cancellationToken)

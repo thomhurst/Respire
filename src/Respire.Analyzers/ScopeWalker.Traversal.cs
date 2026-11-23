@@ -18,11 +18,13 @@ internal static partial class ScopeWalker
         IEnumerable<SyntaxNode> barriers,
         BarrierStartPolicy startPolicy,
         CancellationToken cancellationToken,
-        SyntaxNode? origin)
+        SyntaxNode? origin,
+        ILocalSymbol? completionLocal = null)
     {
         private const int MaxProcessedStates = 16384;
         private readonly INamedTypeSymbol? _systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
         private readonly FlowConditions _conditions = new(graph, startBlock, cancellationToken);
+        private ulong _completionFlag;
         private readonly Dictionary<int, List<int>> _barrierPositions = new();
         private HashSet<int>? _asyncLoopCompletions;
         private readonly Dictionary<(int Block, int Position), List<(int TriggerBlock, ulong Flag)>> _transferGuards = new();
@@ -100,6 +102,11 @@ internal static partial class ScopeWalker
 
         internal bool Search()
         {
+            if (completionLocal is not null)
+            {
+                _completionFlag = _conditions.ReserveCompletionFlag(completionLocal);
+            }
+
             foreach (var barrier in barriers)
             {
                 if (barrier is ForEachStatementSyntax loop)
@@ -139,6 +146,7 @@ internal static partial class ScopeWalker
             // Start at entry so reaching an origin retains the branch that selected it.
             _pending.Push(new(graph.Blocks[0], continuation: 0, started: false, known: 0, values: 0, dispatch: 0));
             var remaining = MaxProcessedStates;
+            bool reachedGuardedRead = false;
 
             while (_pending.Count > 0)
             {
@@ -182,7 +190,12 @@ internal static partial class ScopeWalker
                     && ComparePositions(block, targetPosition, entryPosition) > 0
                     && ComparePositions(block, targetPosition, firstBarrier) <= 0)
                 {
-                    return true;
+                    if ((known & values & _completionFlag) == 0)
+                    {
+                        return true;
+                    }
+
+                    reachedGuardedRead = true;
                 }
 
                 EnqueueIteratorDisposal(block, entryPosition, firstBarrier, started, known, values);
@@ -204,7 +217,8 @@ internal static partial class ScopeWalker
                 Follow(block.ConditionalSuccessor, continuation, started, known, values, dispatch);
             }
 
-            return false;
+            // A completion proof needs a reachable guarded read.
+            return completionLocal is not null && !reachedGuardedRead;
         }
 
         private (BasicBlock? Block, int Position) FindBarrierLocation(SyntaxNode barrier)
@@ -1287,6 +1301,13 @@ internal static partial class ScopeWalker
                     || !_conditions.Constrain(branch.Source.BranchValue, expected, ref known, ref values))
                 {
                     return;
+                }
+
+                if (completionLocal is not null
+                    && CompletionGuards.ProvesSuccessfulCompletion(branch.Source.BranchValue, expected, completionLocal))
+                {
+                    known |= _completionFlag;
+                    values |= _completionFlag;
                 }
             }
 

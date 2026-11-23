@@ -60,6 +60,10 @@ marked `[RespireCommands]` and their implementing methods. It follows `AsTask()`
 passed by reference. It does not trace tasks through fields, parameters, arbitrary
 helper methods, or reassignment, so it will not catch every blocking call.
 
+RESP009 allows a synchronous read when every path to it establishes
+`IsCompletedSuccessfully` for the same operation. This includes an early return
+on unsuccessful completion or a loop body entered through a successful check.
+
 The fix preserves `ConfigureAwait` and `WaitAsync` arguments. It can add `async`
 to an existing task-returning method or local function when the edited document
 compiles without changing its signature. Otherwise, make the containing method
