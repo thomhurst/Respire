@@ -99,13 +99,13 @@ Typed overloads match the client: hash `Set<T>` and `TryGet<T>`, set `Contains<T
 - Typed list pops return the default value for an empty list.
 - Booleans in set membership and sorted-set adds use Redis `1`/`0`, as in the client.
 
-:::warning Omitting the type argument changes the encoding
-Without a type argument, deferred hash writes, set membership checks, and sorted-set adds use the raw `RespireValue` conversion. This covers GUIDs, timestamps, durations, and byte buffers. The immediate facet uses typed serialization instead.
+With C# 13 or later, inferred set membership checks and sorted-set adds use the same `RespireValue` conversion in direct calls, batches, and transactions. This covers values such as `Guid`, `DateTimeOffset`, `TimeSpan`, and byte buffers. Supply an explicit type argument to use the typed encoding.
 
-When you move `client.Hashes.SetAsync(key, field, id)` into a queue, write `batch.Hashes.Set<Guid>(key, field, id)` to keep the same encoding. The inferred `batch.Hashes.Set(key, field, id)` sends raw GUID text.
-
-This relies on C# 13 or later, as do the library's `params` span APIs. Older compilers ignore overload priority and may pick a different encoding; specify the type argument or `RespireValue` conversion explicitly.
+:::warning Keep typed hash writes consistent
+When you move `client.Hashes.SetAsync(key, field, id)` into a queue, write `batch.Hashes.Set<Guid>(key, field, id)` or `transaction.Hashes.Set<Guid>(key, field, id)` to keep the serialized format. An inferred queued write sends raw GUID text, which a typed `GetAsync<Guid>` with the default serializer cannot read. The same applies to `DateTimeOffset` and `TimeSpan`.
 :::
+
+Older C# compilers ignore overload priority. Use an explicit type argument or an explicit `RespireValue` conversion to select the encoding.
 
 ### Shared helpers
 

@@ -220,6 +220,7 @@ string? random = await redis.Sets.PopAsync("available");
 string[] randomBatch = await redis.Sets.PopManyAsync("available", count: 2);
 ```
 
+- With C# 13 or later, `ContainsAsync(key, member)` uses the same `RespireValue` conversion as `AddAsync` for implicitly convertible members such as `Guid`, `DateTimeOffset`, and `TimeSpan`. For members stored in serialized form, specify the type argument, for example `ContainsAsync<Guid>(key, id)`.
 - `ContainsManyAsync` ([SMISMEMBER](https://redis.io/docs/latest/commands/smismember/), Redis 6.2+) keeps input order and duplicates. Missing members are `false`. It needs at least one member.
 - `MoveAsync` moves one member atomically. It returns `false` if the member was not in the source, including a missing source. A member already in the destination still counts as moved.
 - `IntersectCountAsync` ([SINTERCARD](https://redis.io/docs/latest/commands/sintercard/), Redis 7+) counts without fetching members. The limit overload puts `limit` before the keys; zero means unlimited, and negative is rejected. It needs at least one key.
@@ -267,7 +268,9 @@ double? increased = await redis.SortedSets.IncrementAsync("scores",
 - The options overload of `IncrementAsync` uses `ZADD INCR` for one member. It returns the new score, or null when a condition rejects the update. `Gt`/`Lt` compare the resulting score; `Ch` does not affect the result.
 - The options-free `IncrementAsync` uses `ZINCRBY` and returns `double`.
 - Queued `SortedSets.Add` and `SortedSets.Increment` return `RespirePending<bool>`, `RespirePending<long>`, or `RespirePending<double?>`.
-- Generic single-member adds use typed serialization, including `1`/`0` for booleans.
+- With C# 13 or later, single-member adds use the same `RespireValue` conversion as score and rank lookups for implicitly convertible values. An explicit type argument selects typed encoding, including `1`/`0` for booleans.
+
+If an older inferred `AddAsync` call already stored a serialized member, use the same serialized bytes for lookups and removals. Use an explicit type argument, such as `AddAsync<Guid>(key, id, score)`, to continue updating that member.
 
 ### Reads and other operations
 

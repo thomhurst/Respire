@@ -71,15 +71,13 @@ public partial interface IRespireSetCommands
 
     /// <summary>
     /// Whether a serialized <typeparamref name="T"/> is in the set. Redis: SISMEMBER.
-    /// <para>
-    /// Text, binary payloads and <see cref="RespireValue"/> pick non-generic overloads;
-    /// any other type picks this one. Boolean members retain the Redis-native <c>1</c>/<c>0</c>
-    /// encoding used by <see cref="AddAsync(RespireKey, ReadOnlySpan{RespireValue})"/>; other types
-    /// use normal typed serialization.
-    /// </para>
+    /// Boolean members use the Redis-native <c>1</c>/<c>0</c> encoding.
     /// </summary>
+    /// <remarks>Specify the type argument explicitly to select serialization for types with an implicit
+    /// <see cref="RespireValue"/> conversion.</remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     ValueTask<bool> ContainsAsync<T>(RespireKey key, T member, CancellationToken cancellationToken = default);
 
     /// <summary>Tests each member in input order, including duplicates. Redis 6.2+: SMISMEMBER.</summary>
@@ -244,6 +242,7 @@ internal sealed partial class SetCommands(RespireClient client) : IRespireSetCom
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     public ValueTask<bool> ContainsAsync<T>(RespireKey key, T member, CancellationToken cancellationToken = default)
         => client.FlagAsync(
             "SISMEMBER",
