@@ -839,7 +839,7 @@ internal sealed partial class SubscriptionHub
         List<(ClusterNotificationNode Node, RespireConnection Connection, RespireSubscriptionKind Kind, RespireChannel Name)> unsubscribe = [];
         List<RespireEndpoint> collateralEndpoints = [];
         List<RespireEndpoint> recoveredEndpoints = [];
-        List<(ClusterNotificationNode Node, RespireConnection Connection, RespireSubscriptionKind Kind, RespireChannel Name, CancellationTokenSource Timeout, Task Ack)> cleanupAcks = [];
+        List<(ClusterNotificationNode Node, RespireConnection Connection, RespireSubscriptionKind Kind, RespireChannel Name, CommandTimeoutCancellation.TimeoutScope Timeout, Task Ack)> cleanupAcks = [];
         await _controlGate.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
 
         try
@@ -906,7 +906,8 @@ internal sealed partial class SubscriptionHub
             // the control gate is released.
             foreach (var (other, connection, kind, name) in unsubscribe)
             {
-                var timeout = new CancellationTokenSource(core.Options.CommandTimeout ?? core.Options.ConnectTimeout);
+                var timeout = CommandTimeoutCancellation.CreateForTimeout(
+                    CancellationToken.None, core.Options.CommandTimeout ?? core.Options.ConnectTimeout);
                 var ack = SendControlAsync(connection, UnsubscribeVerb(kind), UnsubscribeOperation(kind), name,
                     timeout.Token, instrument: true, observeDeadlineCancellation: true).AsTask();
                 cleanupAcks.Add((other, connection, kind, name, timeout, ack));
@@ -1092,7 +1093,8 @@ internal sealed partial class SubscriptionHub
         if (connection is { IsConnected: true } && released.Count != 0)
         {
             // Pipeline the removals under one deadline instead of one round trip each.
-            using var timeout = new CancellationTokenSource(core.Options.CommandTimeout ?? core.Options.ConnectTimeout);
+            using var timeout = CommandTimeoutCancellation.CreateForTimeout(
+                CancellationToken.None, core.Options.CommandTimeout ?? core.Options.ConnectTimeout);
             var acks = new Task[released.Count];
 
             for (var index = 0; index < released.Count; index++)

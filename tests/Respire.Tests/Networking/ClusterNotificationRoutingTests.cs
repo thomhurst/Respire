@@ -753,6 +753,51 @@ public class ClusterNotificationRoutingTests
     }
 
     [Test]
+    public async Task ReconnectExhaustionUnsubscribesFromSurvivingPrimaryWithLongCommandTimeout()
+    {
+        await using var first = new FakeRespServer(20);
+        await using var second = new FakeRespServer(20);
+        var topology = Topology(first.Port, second.Port);
+        Configure(first, topology, resp3: false);
+        Configure(second, topology, resp3: false);
+#pragma warning disable RESP010 // Test-owned client isolates subscription acknowledgments, replay, and topology state for this scenario.
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true,
+            Protocol = RespireProtocol.Resp2,
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromDays(50),
+            ReconnectPolicy = new RespireReconnectPolicy
+            {
+                InitialDelay = TimeSpan.FromMilliseconds(1),
+                MaxDelay = TimeSpan.FromMilliseconds(1),
+                JitterRatio = 0,
+                MaxAttempts = 1,
+            },
+            Endpoints = [new("127.0.0.1", first.Port)],
+        });
+#pragma warning restore RESP010
+
+        var descriptor = RespireChannel.KeySpacePrefix("tenant:", 0);
+        var unsubscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        first.GateCommand($"PUNSUBSCRIBE {descriptor}", Task.CompletedTask, _ => unsubscribed.TrySetResult());
+
+        var key = Enumerable.Range(0, 100_000).Select(static index => $"stable:{index}")
+            .First(static value => ClusterHash.GetSlot(value) < 8192);
+        var stable = await client.SubscribeAsync(RespireChannel.KeySpaceSingleKey(key, 0))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var subscription = await client.SubscribeAsync(descriptor)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        await second.DisposeAsync();
+
+        await Assert.That(await subscription.Completion.WaitAsync(TimeSpan.FromSeconds(10)))
+            .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        await unsubscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(stable.Completion.IsCompleted).IsFalse();
+    }
+
+    [Test]
     public async Task CancellationDuringFinalEndpointAckRollsBackAndAllowsRetry()
     {
         await using var first = new FakeRespServer(20);
