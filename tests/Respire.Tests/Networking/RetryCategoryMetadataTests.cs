@@ -178,7 +178,7 @@ public class RetryCategoryMetadataTests
         await Assert.That(RespireCommands.Scripting.EVAL_RO.ReadKind).IsEqualTo(ReadCommandKind.Read);
         await Assert.That(RespireCommands.Search.FT_CURSOR_READ.CacheMutation)
             .IsEqualTo(RespireCacheMutation.ReadOnly);
-        await Assert.That(RespireCommands.Json.JSON_GET.IsReadOnly).IsFalse();
+        await Assert.That(RespireCommands.Json.JSON_GET.IsReadOnly).IsTrue();
         // Baseline measured on the 64-bit runtime before adding retry metadata.
         await Assert.That(Unsafe.SizeOf<Verb>()).IsEqualTo(IntPtr.Size == 8 ? 32 : 24);
         await Assert.That(Unsafe.SizeOf<RespireCommand>())
