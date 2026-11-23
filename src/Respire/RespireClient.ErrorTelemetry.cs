@@ -11,7 +11,8 @@ public sealed partial class RespireClient
     // failure is propagated or handled. Preserve normal script retries and cache fences.
     internal ValueTask<RespireResult> ExecuteScriptBorrowedAsync(
         RespireScript script, RespireKey[] keys, RespireValue[] args,
-        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation,
+        bool cancelBeforeSubmissionOnly = false)
     {
         if (_core.Disposed)
         {
@@ -23,7 +24,8 @@ public sealed partial class RespireClient
         ClientSideCacheCoordinator.MutationFence fence = cache is null || script.IsCacheReadOnly
             ? default
             : BeginScriptMutation(cache, script, keys);
-        var response = ExecuteScriptWithRetriesAsync(script, tail, cancellationToken, fence, observation);
+        var response = ExecuteScriptWithRetriesAsync(script, tail, cancellationToken, fence, observation,
+            cancelBeforeSubmissionOnly);
         return fence.IsRequired ? CompleteMutationAsync(response, cache!, fence) : response;
     }
 
@@ -31,11 +33,13 @@ public sealed partial class RespireClient
     // The cache fence spans every attempt. Argument bytes are copied before the first send.
     private ValueTask<RespireResult> ExecuteScriptWithRetriesAsync(RespireScript script, RespireValue[] tail,
         CancellationToken cancellationToken, ClientSideCacheCoordinator.MutationFence mutationFence,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, bool cancelBeforeSubmissionOnly = false)
     {
+        var scriptAdmissionToken = cancelBeforeSubmissionOnly ? cancellationToken : CancellationToken.None;
+
         if (!CanRetryDeclared(script.RetryCategory))
         {
-            return ExecuteScriptCoreAsync(script, tail, cancellationToken, mutationFence, observation);
+            return ExecuteScriptCoreAsync(script, tail, cancellationToken, mutationFence, observation, scriptAdmissionToken);
         }
 
         var stable = new RespireValue[tail.Length];
@@ -46,9 +50,9 @@ public sealed partial class RespireClient
         }
 
         return RunWithDeclaredRetriesAsync(script.EvalShaOperation, script.RetryCategory,
-            (Client: this, Script: script, Tail: stable, Fence: mutationFence, Observation: observation),
+            (Client: this, Script: script, Tail: stable, Fence: mutationFence, Observation: observation, Admission: scriptAdmissionToken),
             static (state, attempt) => state.Client.ExecuteScriptCoreAsync(state.Script, state.Tail, attempt.Token,
-                state.Fence, state.Observation),
+                state.Fence, state.Observation, state.Admission),
             observation, cancellationToken);
     }
 

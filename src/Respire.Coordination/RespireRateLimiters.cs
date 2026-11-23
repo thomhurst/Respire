@@ -529,8 +529,8 @@ internal sealed partial class RedisRateLimiter : RateLimiter
             {
                 return new RedisRateLimitLease(false, null);
             }
-            // Caller cancellation may stop waiting, but migration must still drain the server reply.
-            return await ExecuteAcquisitionAsync(permitCount, CancellationToken.None).ConfigureAwait(false);
+            // Caller cancellation may stop waiting, but migration must still drain accepted replies.
+            return await ExecuteAcquisitionAsync(permitCount, cancellationToken).ConfigureAwait(false);
         }
         finally { ExitRedisAttempt(); }
     }
@@ -554,9 +554,8 @@ internal sealed partial class RedisRateLimiter : RateLimiter
             RedisRateLimiterKind.Gcra => [_periodMs, _permitLimit, permitCount],
             _ => [_permitLimit, _periodMs, _tokensPerPeriod, permitCount, _tokenBucketExpiryMs],
         };
-        using var result = await (_kind == RedisRateLimiterKind.Composite
-            ? _coordination.ExecuteCompositeRateLimitAsync(_script, _key, args, cancellationToken)
-            : _coordination.ExecuteRateLimitScriptAsync(_script, _key, args, cancellationToken))
+        using var result = await _coordination.ExecuteRateLimitAcquisitionAsync(
+            _script, _key, args, _kind == RedisRateLimiterKind.Composite, cancellationToken)
             .ConfigureAwait(false);
         var expectedCount = _kind == RedisRateLimiterKind.FixedWindow ? 4 : 3;
 

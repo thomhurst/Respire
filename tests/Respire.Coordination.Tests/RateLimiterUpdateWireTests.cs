@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using System.Text;
 using System.Threading.RateLimiting;
 using Respire.Tests.Networking;
@@ -10,6 +11,186 @@ namespace Respire.Coordination.Tests;
 public class RateLimiterUpdateWireTests
 {
     private static readonly byte[] Accepted = "*3\r\n:1\r\n:0\r\n:1\r\n"u8.ToArray();
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task AcquisitionCanceledWhileConnectingDoesNotSendScript(bool composite)
+    {
+        var opening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowConnection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(Accepted);
+        await using var client = CreateGatedClient(server, opening, allowConnection);
+        var factory = client.Coordination.RateLimiters;
+        var limit = RespireRateLimit.TokenBucket(1, 1, TimeSpan.FromMinutes(1));
+        var newLimit = RespireRateLimit.TokenBucket(2, 1, TimeSpan.FromMinutes(1));
+        await using var limiter = composite
+            ? factory.Composite("key", [limit])
+            : factory.TokenBucket("key", 1, 1, TimeSpan.FromMinutes(1));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var caller = new CancellationTokenSource();
+        var acquisition = limiter.AcquireAsync(1, caller.Token).AsTask();
+
+        try
+        {
+            await opening.Task.WaitAsync(deadline.Token);
+            await caller.CancelAsync();
+            var canceled = await Assert.That(async () => await acquisition.WaitAsync(deadline.Token))
+                .Throws<OperationCanceledException>();
+            await Assert.That(canceled!.CancellationToken == caller.Token).IsTrue();
+        }
+        finally
+        {
+            allowConnection.TrySetResult();
+        }
+
+        // Adoption drains the canceled attempt before the next acquisition can submit.
+        var adoption = composite
+            ? factory.UpdateAsync(limiter, [newLimit], RespireRateLimitUpdateMode.Adopt, deadline.Token)
+            : factory.UpdateAsync(limiter, newLimit, RespireRateLimitUpdateMode.Adopt, deadline.Token);
+        await adoption;
+        using var next = await limiter.AcquireAsync(1, deadline.Token);
+        await Assert.That(next.IsAcquired).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task AcquisitionCanceledBeforeNoScriptReplyDoesNotSendEval()
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(Accepted)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var factory = client.Coordination.RateLimiters;
+        var window = TimeSpan.FromMinutes(1);
+        await using var limiter = factory.Gcra("key", 1, window);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var caller = new CancellationTokenSource();
+        var acquisition = limiter.AcquireAsync(1, caller.Token).AsTask();
+
+        await received.Task.WaitAsync(deadline.Token);
+        await caller.CancelAsync();
+        await Assert.That(async () => await acquisition.WaitAsync(deadline.Token)).Throws<OperationCanceledException>();
+        await server.SendRawAsync("-NOSCRIPT No matching script. Please use EVAL.\r\n"u8.ToArray());
+        await factory.UpdateAsync(limiter, RespireRateLimit.Gcra(2, window), RespireRateLimitUpdateMode.Adopt, deadline.Token);
+
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task MigrationCanceledWhileConnectingLeavesOldSettingsUsable()
+    {
+        var opening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowConnection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(Accepted)
+        {
+            ReplyOverride = (_, command) => command.StartsWith("EVAL ", StringComparison.Ordinal)
+                ? ":1\r\n"u8.ToArray() : Accepted,
+        };
+        await using var client = CreateGatedClient(server, opening, allowConnection);
+        var factory = client.Coordination.RateLimiters;
+        var window = TimeSpan.FromMinutes(1);
+        await using var limiter = factory.Gcra("key", 1, window);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var caller = new CancellationTokenSource();
+        var update = factory.UpdateAsync(limiter, RespireRateLimit.Gcra(2, window),
+            cancellationToken: caller.Token).AsTask();
+
+        try
+        {
+            await opening.Task.WaitAsync(deadline.Token);
+            await caller.CancelAsync();
+            var canceled = await Assert.That(async () => await update.WaitAsync(deadline.Token))
+                .Throws<OperationCanceledException>();
+            await Assert.That(canceled!.CancellationToken == caller.Token).IsTrue();
+        }
+        finally
+        {
+            allowConnection.TrySetResult();
+        }
+
+        using var oversized = await limiter.AcquireAsync(2, deadline.Token);
+        await Assert.That(oversized.IsAcquired).IsFalse();
+        using var accepted = await limiter.AcquireAsync(1, deadline.Token);
+        await Assert.That(accepted.IsAcquired).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task MigrationCanceledAfterSubmissionAppliesNewSettings()
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(Accepted)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("EVAL ", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var factory = client.Coordination.RateLimiters;
+        var window = TimeSpan.FromMinutes(1);
+        await using var limiter = factory.Gcra("key", 1, window);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var caller = new CancellationTokenSource();
+        var update = factory.UpdateAsync(limiter, RespireRateLimit.Gcra(2, window),
+            cancellationToken: caller.Token).AsTask();
+
+        await received.Task.WaitAsync(deadline.Token);
+        await caller.CancelAsync();
+        await Assert.That(update.IsCompleted).IsFalse();
+        await server.SendRawAsync(":1\r\n"u8.ToArray());
+        await update.WaitAsync(deadline.Token);
+
+        using var accepted = await limiter.AcquireAsync(2, deadline.Token);
+        await Assert.That(accepted.IsAcquired).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
+    private static RespireClient CreateGatedClient(FakeRespServer server, TaskCompletionSource opening,
+        TaskCompletionSource allowConnection)
+    {
+        return RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            Endpoints = [new RespireEndpoint("127.0.0.1", server.Port)],
+            Connections = 1,
+            ConnectionFactory = async (endpoint, token) =>
+            {
+                opening.TrySetResult();
+                await allowConnection.Task.WaitAsync(token);
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+
+                try
+                {
+                    await socket.ConnectAsync(endpoint.Host, endpoint.Port, token);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            },
+        });
+    }
 
     [Test]
     [Arguments(false)]

@@ -725,8 +725,11 @@ if (!lease.IsAcquired
 - Queued acquisitions honor cancellation and disposal and wait for the server-calculated
   availability time instead of polling. Queue order is local: other processes, and new local
   callers during a retry, can take permits first.
-- If cancellation, disposal or a disconnect races an accepted script, the permit is consumed even
-  without an acquired lease.
+- With `RespireClient`, cancellation while waiting for a connection or for the script to enter
+  the connection's write queue leaves permits untouched. With a custom `IRespireClient`, the
+  cutoff is when Respire hands the script to that client.
+- If cancellation, disposal or a disconnect races a script that grants permits, Redis can
+  consume them even when the caller receives no lease.
 - `GetStatistics()` reports this instance's granted and rejected leases, queued permits, and
   available permits from the latest Redis response. `IdleDuration` lets `PartitionedRateLimiter`
   dispose idle limiters; shared state stays in Redis.
