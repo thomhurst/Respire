@@ -90,7 +90,8 @@ public sealed partial class RespireClient
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(1),
+                _core.Options.DedicatedPool.TimeProvider);
             var reusable = false;
 
             try
