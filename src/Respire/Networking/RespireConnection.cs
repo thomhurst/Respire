@@ -49,6 +49,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private const int ReceiveTailCompactionLimit = 4 * 1024;
     private const int ReceiveTailCapacityDivisor = 8;
     private const int MaxResponseSize = 512 * 1024 * 1024;
+    private const long MaximumCapacityWaitMilliseconds = uint.MaxValue - 1L;
     private static readonly TimeSpan MinWatchdogDelay = TimeSpan.FromMilliseconds(1);
     private static readonly TimeSpan MaxWatchdogSleep = TimeSpan.FromDays(1);
     private static readonly Verb ClientSetInfo = new(-1, "CLIENT", "SETINFO");
@@ -3333,22 +3334,31 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return;
         }
 
-        var remaining = deadline.Ticks - Environment.TickCount64;
+        while (true)
+        {
+            var remaining = deadline.RemainingMilliseconds;
 
-        if (remaining <= 0)
-        {
-            throw CreateCapacityTimeout(commandName, _commandTimeout!.Value);
-        }
+            if (remaining == 0)
+            {
+                throw CreateCapacityTimeout(commandName, _commandTimeout!.Value);
+            }
 
-        try
-        {
-            await capacityAvailable
-                .WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (TimeoutException)
-        {
-            throw CreateCapacityTimeout(commandName, _commandTimeout!.Value);
+            // Task.WaitAsync caps timer durations. A capped wait can expire before the deadline.
+            var waitMilliseconds = Math.Min(remaining, MaximumCapacityWaitMilliseconds);
+
+            try
+            {
+                await capacityAvailable.WaitAsync(TimeSpan.FromMilliseconds(waitMilliseconds), cancellationToken)
+                    .ConfigureAwait(false);
+                return;
+            }
+            catch (TimeoutException)
+            {
+                if (remaining == waitMilliseconds)
+                {
+                    throw CreateCapacityTimeout(commandName, _commandTimeout!.Value);
+                }
+            }
         }
     }
 

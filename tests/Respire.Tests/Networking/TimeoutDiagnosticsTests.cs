@@ -729,6 +729,60 @@ public class TimeoutDiagnosticsTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task LongCommandTimeout_WaitsForFullRingCapacity(bool maintenance)
+    {
+        var firstReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n+proto\r\n:3\r\n"u8.ToArray(),
+                "CLIENT MAINT_NOTIFICATIONS ON" => FakeRespServer.OkReply,
+                _ => null,
+            },
+        };
+        server.GateCommand("PING hold", releaseFirstReply.Task, () => firstReceived.TrySetResult());
+
+        using var testDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions
+            {
+                Protocol = maintenance ? RespireProtocol.Resp3 : RespireProtocol.Resp2,
+                MaintenanceNotifications = maintenance
+                    ? RespireMaintenanceNotificationMode.Enabled : RespireMaintenanceNotificationMode.Disabled,
+                MaxInflightCommands = 1,
+                CommandTimeout = TimeSpan.FromDays(50),
+            }, cancellationToken: testDeadline.Token);
+
+        var heldCommand = new RawCommand("*2\r\n$4\r\nPING\r\n$4\r\nhold\r\n"u8.ToArray());
+        var first = connection.SendAsync(heldCommand, testDeadline.Token).AsTask();
+        await firstReceived.Task.WaitAsync(testDeadline.Token);
+
+        var command = new RawCommand(FakeRespServer.PingFrame);
+        using var cancellation = new CancellationTokenSource();
+        var cancelled = connection.SendAsync(command, cancellation.Token).AsTask();
+        cancellation.Cancel();
+        var error = await Assert.That(async () =>
+        {
+            using var _ = await cancelled.WaitAsync(testDeadline.Token);
+        }).ThrowsExactly<RespireCommandNotSubmittedException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+
+        var waiting = connection.SendAsync(command).AsTask();
+        await Assert.That(waiting.IsCompleted).IsFalse();
+        releaseFirstReply.SetResult();
+
+        using var firstReply = await first.WaitAsync(testDeadline.Token);
+        using var reply = await waiting.WaitAsync(testDeadline.Token);
+        await Assert.That(firstReply.AsString()).IsEqualTo("PONG");
+        await Assert.That(reply.AsString()).IsEqualTo("PONG");
+        await Assert.That(server.ReceivedCommands.Count(text => text == "PING")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task TransactionTimeout_ReportsSharedOrDedicatedConnection(bool watched)
     {
         var written = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
