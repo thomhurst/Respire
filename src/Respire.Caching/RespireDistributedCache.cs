@@ -20,8 +20,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 {
     private const long NotPresent = -1;
 
-    // Staleness a set may accumulate before its TTL gets corrected. One second, because that is
-    // the expiry granularity the Microsoft implementation already truncates to (EXPIRE seconds).
+    // Tolerated send delay while an absolute deadline is still ahead. One second matches the
+    // expiry granularity of the Microsoft implementation (EXPIRE seconds).
     private static readonly TimeSpan SendDelayTolerance = TimeSpan.FromSeconds(1);
 
     // A correction pass legitimately queues behind the very stall it chases, so its wait must
@@ -516,17 +516,26 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 throw;
             }
 
-            if (absoluteExpiration is { } absolute && DateTimeOffset.UtcNow - now >= SendDelayTolerance)
+            if (absoluteExpiration is not { } absolute)
             {
-                var correctionTarget = trackedExecution?.ConnectionIdentity ?? default;
-
-                if (correctionTarget.Connection is not { Multiplexer: null })
-                {
-                    correctionTarget = default;
-                }
-
-                await CapDelayedTtlAsync(key, absolute, options, correctionTarget, observation, trackedExecution).ConfigureAwait(false);
+                return;
             }
+
+            var completedAt = DateTimeOffset.UtcNow;
+
+            if (completedAt < absolute && completedAt - now < SendDelayTolerance)
+            {
+                return;
+            }
+
+            var correctionTarget = trackedExecution?.ConnectionIdentity ?? default;
+
+            if (correctionTarget.Connection is not { Multiplexer: null })
+            {
+                correctionTarget = default;
+            }
+
+            await CapDelayedTtlAsync(key, absolute, options, correctionTarget, observation, trackedExecution).ConfigureAwait(false);
         }
         finally
         {
