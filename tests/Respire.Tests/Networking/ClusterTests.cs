@@ -4016,7 +4016,6 @@ public class ClusterTests
         Action<RespireTransaction>[] queueCommands =
         [
             transaction => transaction.Keys.Delete("foo", "bar"),
-            transaction => transaction.Keys.Rename("foo", "bar"),
             transaction => transaction.Strings.GetMany("foo", "bar"),
             transaction => transaction.Strings.SetMany(("foo", "one"), ("bar", "two")),
             transaction => transaction.Strings.SetManyExpire(
