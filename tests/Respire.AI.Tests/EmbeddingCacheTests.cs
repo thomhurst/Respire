@@ -338,6 +338,94 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
         (await Keys(redis)).Should().BeEmpty();
     }
 
+    [Test, Arguments("properties"), Arguments("raw"), Arguments("subclass"), Arguments("identity")]
+    public async Task CacheBypassStillValidatesProviderResults(string bypass)
+    {
+        await using var redis = await Connect(3);
+        var provider = new Generator { Empty = true };
+        using var cache = Build(provider, redis, new() { FailOpen = false });
+        var options = bypass switch
+        {
+            "properties" => new EmbeddingGenerationOptions
+            {
+                Dimensions = 2,
+                AdditionalProperties = new() { ["task"] = "query" },
+            },
+            "raw" => new EmbeddingGenerationOptions { RawRepresentationFactory = _ => new object() },
+            "subclass" => new CustomOptions(),
+            "identity" => new EmbeddingGenerationOptions(),
+            _ => throw new ArgumentOutOfRangeException(nameof(bypass)),
+        };
+
+        if (bypass == "identity")
+        {
+            provider.Provider = "provider-\uD800";
+        }
+
+        // A strict cache with a disposed client also proves that bypass avoids Redis.
+        await redis.DisposeAsync();
+        string[] inputs = ["same", "other", "same"];
+        Func<Task> generate = () => cache.GenerateAsync(inputs, options);
+        await generate.Should().ThrowAsync<InvalidOperationException>().WithMessage("*one embedding per input*");
+        provider.Empty = false;
+        provider.WrongDimensions = true;
+        await generate.Should().ThrowAsync<InvalidOperationException>().WithMessage("*invalid dimensions*");
+
+        provider.WrongDimensions = false;
+        options.Dimensions = null;
+        options.ModelId = "other";
+        provider.AlternateDimensions = 0;
+        await generate.Should().ThrowAsync<InvalidOperationException>().WithMessage("*invalid dimensions*");
+
+        provider.AlternateDimensions = 1;
+        var result = await cache.GenerateAsync(inputs, options);
+        result.Select(embedding => embedding.Vector.Span[0]).Should().Equal(4, 5, 4);
+        result.Usage!.InputTokenCount.Should().Be(3);
+        provider.Batches.Should().AllSatisfy(batch => batch.Should().Equal(inputs));
+        provider.LastOptions.Should().BeSameAs(options);
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task MalformedReturnedModelIdsAreNeverCached(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var provider = new Generator { ReturnedModelId = "model-\uD800" };
+        using var cache = Build(provider, redis);
+
+        (await cache.GenerateAsync(["same"]))[0].ModelId.Should().Be("model-\uD800");
+        (await cache.GenerateAsync(["same"]))[0].ModelId.Should().Be("model-\uD800");
+        provider.Batches.Should().HaveCount(2);
+        (await Keys(redis)).Should().BeEmpty();
+
+        provider.ReturnedModelId = "model-\U0001F680";
+        (await cache.GenerateAsync(["same"]))[0].ModelId.Should().Be("model-\U0001F680");
+        (await cache.GenerateAsync(["same"]))[0].ModelId.Should().Be("model-\U0001F680");
+        provider.Batches.Should().HaveCount(3);
+        (await Keys(redis)).Should().ContainSingle();
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task OnlyVerifiedReplacementCharactersAreReplayedFromCache(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var provider = new Generator { ReturnedModelId = "model-\uFFFD" };
+        using var cache = Build(provider, redis);
+
+        (await cache.GenerateAsync(["same"]))[0].ModelId.Should().Be("model-\uFFFD");
+        (await cache.GenerateAsync(["same"]))[0].ModelId.Should().Be("model-\uFFFD");
+        provider.Batches.Should().ContainSingle();
+
+        var key = (await Keys(redis)).Single();
+        var legacy = (await redis.Strings.GetBytesAsync(key))!;
+        // Restore the legacy model-present boolean. Legacy UTF-8 could have replaced an unpaired surrogate.
+        legacy[0] = 1;
+        await redis.Strings.SetAsync(key, (RespireValue)legacy);
+
+        provider.ReturnedModelId = "model-\uD800";
+        (await cache.GenerateAsync(["same"]))[0].ModelId.Should().Be("model-\uD800");
+        provider.Batches.Should().HaveCount(2);
+    }
+
     [Test, Arguments(2), Arguments(3)]
     public async Task CancellationProviderErrorsAndInvalidResponsesDoNotPopulate(int protocol)
     {
@@ -495,6 +583,11 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
             get; set;
         } = "model";
 
+        public string? ReturnedModelId
+        {
+            get; set;
+        }
+
         public string Provider
         {
             get; set;
@@ -573,7 +666,7 @@ public class EmbeddingCacheTests(ModernRedisTestContainer fixture)
                 Enumerable.Repeat((float)input.Length, WrongDimensions ? 1 : options?.Dimensions
                     ?? (options?.ModelId is { } model && model != Model ? AlternateDimensions : 2)).ToArray())
             {
-                ModelId = options?.ModelId ?? Model,
+                ModelId = ReturnedModelId ?? options?.ModelId ?? Model,
                 CreatedAt = new DateTimeOffset(2026, 10, 17, 12, 0, 0, TimeSpan.FromHours(2)),
                 AdditionalProperties = Properties,
             }))

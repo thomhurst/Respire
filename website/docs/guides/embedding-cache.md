@@ -63,7 +63,8 @@ Request `ModelId` and `Dimensions` override generator metadata for key identity.
 The effective dimensions also validate provider responses and cached vectors.
 Custom option subclasses, `RawRepresentationFactory`, and nonempty request
 `AdditionalProperties` bypass all caching, since they may change the vector.
-Embeddings with provider-specific `AdditionalProperties` are returned but not stored.
+Embeddings with provider-specific `AdditionalProperties` or returned model IDs
+containing unpaired UTF-16 surrogates are returned without being stored.
 
 Vectors use lossless, little-endian FLOAT32 bytes with a compact header preserving
 `ModelId`, `CreatedAt`, and vector length. Lookups and writes use explicit pipelines, allowing
