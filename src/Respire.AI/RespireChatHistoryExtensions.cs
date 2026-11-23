@@ -111,18 +111,42 @@ public static class RespireChatHistoryExtensions
 
             // The store's JSON contract copies nested content such as tool arguments and data buffers.
             var snapshot = SnapshotJson(content);
-
-            // Adjacent chunks can split a UTF-16 surrogate pair. Keep the original text until aggregation.
-            if (content is TextContent text && snapshot is TextContent copiedText)
-            {
-                copiedText.Text = text.Text;
-            }
-            else if (content is TextReasoningContent reasoning && snapshot is TextReasoningContent copiedReasoning)
-            {
-                copiedReasoning.Text = reasoning.Text;
-            }
-
+            RestoreStreamingText(content, snapshot);
             return snapshot;
+        }
+
+        // The SDK coalesces text recursively inside code interpreter content. Keep the original
+        // UTF-16 code units until then because the JSON copy replaces isolated surrogates.
+        private static void RestoreStreamingText(AIContent content, AIContent snapshot)
+        {
+            switch (content, snapshot)
+            {
+                case (TextContent text, TextContent copiedText):
+                    copiedText.Text = text.Text;
+                    break;
+                case (TextReasoningContent reasoning, TextReasoningContent copiedReasoning):
+                    copiedReasoning.Text = reasoning.Text;
+                    break;
+                case (CodeInterpreterToolCallContent call, CodeInterpreterToolCallContent copiedCall):
+                    RestoreNestedStreamingText(call.Inputs, copiedCall.Inputs);
+                    break;
+                case (CodeInterpreterToolResultContent result, CodeInterpreterToolResultContent copiedResult):
+                    RestoreNestedStreamingText(result.Outputs, copiedResult.Outputs);
+                    break;
+            }
+        }
+
+        private static void RestoreNestedStreamingText(IList<AIContent>? contents, IList<AIContent>? snapshots)
+        {
+            if (contents is null || snapshots is null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < contents.Count; i++)
+            {
+                RestoreStreamingText(contents[i], snapshots[i]);
+            }
         }
 
         private static T SnapshotJson<T>(T value) where T : class

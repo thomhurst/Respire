@@ -245,6 +245,33 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         await store.ClearAsync("chat");
     }
 
+    [Test, Arguments(2), Arguments(3)]
+    public async Task StreamingPreservesSplitUnicodeInCodeInterpreterContent(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var store = Store(redis);
+        var provider = new RecordingChatClient(
+        [
+            new(ChatRole.Assistant, [new CodeInterpreterToolCallContent("code") { Inputs = [new TextContent("\uD83D")] }]),
+            new(null, [new CodeInterpreterToolCallContent("code") { Inputs = [new TextContent("\uDE00")] }]),
+            new(null, [new CodeInterpreterToolResultContent("code") { Outputs = [new TextReasoningContent("\uD83D")] }]),
+            new(null, [new CodeInterpreterToolResultContent("code") { Outputs = [new TextReasoningContent("\uDE00")] }]),
+        ]);
+        using var chat = new ChatClientBuilder(provider).UseRespireChatHistory(store, "chat").Build();
+
+        await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "run code")]))
+        {
+        }
+
+        await chat.GetResponseAsync([new(ChatRole.User, "follow up")]);
+        var savedReply = provider.LastRequest[1];
+        var savedCall = savedReply.Contents.OfType<CodeInterpreterToolCallContent>().Should().ContainSingle().Which;
+        var savedResult = savedReply.Contents.OfType<CodeInterpreterToolResultContent>().Should().ContainSingle().Which;
+        savedCall.Inputs!.Should().ContainSingle().Which.Should().BeOfType<TextContent>().Which.Text.Should().Be("\U0001F600");
+        savedResult.Outputs!.Should().ContainSingle().Which.Should().BeOfType<TextReasoningContent>().Which.Text.Should().Be("\U0001F600");
+        await store.ClearAsync("chat");
+    }
+
     [Test]
     public async Task StreamingReportsHistorySerializationFailureAfterDeliveringUpdates()
     {
