@@ -616,6 +616,55 @@ public partial class StreamWorkerTests
     }
 
     [Test, NotInParallel]
+    [Arguments(RespireStreamWorkerResult.Ack, 8)]
+    [Arguments(RespireStreamWorkerResult.Nack, 8)]
+    [Arguments(RespireStreamWorkerResult.Nack, 0)]
+    public async Task TelemetryReportsStaleCompletionAfterClaim(RespireStreamWorkerResult result, int serverMinor)
+    {
+        using var metrics = new WorkerMetrics();
+        var stopped = new ConcurrentQueue<Activity>();
+        using var tracing = ListenToWorker(stopped.Enqueue);
+        var release = NewSignal();
+        var state = new State
+        {
+            Handle = async (_, token) =>
+            {
+                await release.Task.WaitAsync(token);
+                return result;
+            }
+        };
+        await using var fixture = await Fixture.CreateAsync(state: state, workerVersion: new Version(8, serverMinor),
+            options: new()
+            {
+                TelemetryName = WorkerName,
+                MinimumIdleTime = TimeSpan.FromMinutes(1),
+                RecoveryPollInterval = TimeSpan.FromMinutes(1),
+            });
+        await fixture.AddAsync(0);
+        await fixture.StartAsync();
+        var delivery = await state.Deliveries.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+
+        try
+        {
+            var claimed = await fixture.View.Streams.ClaimPendingAsync("events", "workers", "other", TimeSpan.Zero);
+            await Assert.That(claimed.Entries.Single().Id).IsEqualTo(delivery.Id);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        await UntilAsync(() => Task.FromResult(stopped.Count == 1 && metrics.Duration.Count == 1));
+        await fixture.StopAsync();
+
+        await Assert.That(stopped.Single().GetTagItem("respire.worker.outcome")).IsEqualTo("stale");
+        await Assert.That(metrics.Duration.Single().Tags["respire.worker.outcome"]).IsEqualTo("stale");
+        var pending = (await fixture.View.Streams.PendingAsync("events", "workers")).Single();
+        await Assert.That(pending.Consumer).IsEqualTo("other");
+        await Assert.That(pending.DeliveryCount).IsEqualTo(2);
+    }
+
+    [Test, NotInParallel]
     [Arguments(false)]
     [Arguments(true)]
     public async Task TelemetryDeadLetterCountExcludesStaleAttemptsAndDeletedBodies(bool deleted)

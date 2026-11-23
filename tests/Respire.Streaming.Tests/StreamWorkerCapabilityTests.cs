@@ -280,11 +280,14 @@ public class StreamWorkerCapabilityScriptTests
         await Assert.That((await client.Streams.PendingAsync("events", "g", RespireStreamId.Min, RespireStreamId.Max, 1))[0].Consumer)
             .IsEqualTo("new");
         await Assert.That(await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, ["events"],
-            ["g", "new", "1-0", 2, 60000])).IsEqualTo(0);
+            ["g", "new", "1-0", 1, 0])).IsEqualTo(0);
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, ["events"],
+            ["g", "new", "1-0", 2, 60000])).IsEqualTo(1);
         await Assert.That((await client.Streams.PendingAsync("events", "g", RespireStreamId.Min, RespireStreamId.Max, 1))[0].Consumer)
             .IsEqualTo("new");
         clock?.Advance(TimeSpan.FromMinutes(1));
-        await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, ["events"], ["g", "new", "1-0", 2, 0]);
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, ["events"],
+            ["g", "new", "1-0", 2, 0])).IsEqualTo(1);
         var pending = (await client.Streams.PendingAsync("events", "g", RespireStreamId.Min, RespireStreamId.Max, 1)).Single();
         await Assert.That(pending.Consumer).IsEqualTo(minor >= 8 ? "" : "new");
         await Assert.That(pending.DeliveryCount).IsEqualTo(2);
