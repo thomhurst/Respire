@@ -66,7 +66,7 @@ public sealed class RespireTypedSearchQuery<TFields> where TFields : class
         return WithOptions(_options with { Limit = (count, _options.Limit?.Count ?? 10) });
     }
 
-    /// <summary>Sets the maximum page size, preserving any offset.</summary>
+    /// <summary>Sets the maximum page size, preserving the requested offset for nonempty pages.</summary>
     public RespireTypedSearchQuery<TFields> Take(int count)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
@@ -124,7 +124,7 @@ public sealed class RespireTypedSearchQuery<TFields> where TFields : class
 
         if (_options.Limit is { } limit)
         {
-            stages.Add(RespireSearchAggregateStage.Limit(limit.Offset, limit.Count));
+            stages.Add(RespireSearchAggregateStage.Limit(limit.Count == 0 ? 0 : limit.Offset, limit.Count));
         }
 
         return new() { Stages = stages.AsReadOnly(), Dialect = _options.Dialect };

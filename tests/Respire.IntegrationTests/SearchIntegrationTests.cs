@@ -326,6 +326,83 @@ public class SearchIntegrationTests(ModernRedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task VectorAndHybridSearchUseTheSerializedParameterName(int protocol, bool ignoreCase)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var search = client.Search;
+        string index = NewIndex();
+
+        try
+        {
+            await CreateDocumentsAsync(client, search, index);
+            var filter = RespireSearchExpression.FromRaw("@year:[$VECTOR $VECTOR]");
+            var comparer = ignoreCase ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            var parameters = new Dictionary<string, RespireValue>(comparer) { ["VECTOR"] = 2025 };
+            var vector = new RespireVectorSearchRequest("embedding", Vector, 3) { Filter = filter };
+            var options = new RespireSearchQueryOptions { Parameters = parameters };
+            var hybrid = new RespireHybridSearchQuery(filter, "embedding", Vector, 3)
+            {
+                VectorFilter = filter,
+                Parameters = parameters,
+            };
+
+            (await search.VectorSearchAsync(index, vector, options)).Documents.Should().HaveCount(3);
+            (await search.HybridSearchAsync(index, hybrid)).Documents.Should().HaveCount(3);
+
+            parameters = new(comparer) { ["vector"] = 2025 };
+            await search.Awaiting(s => s.VectorSearchAsync(index, vector, options with { Parameters = parameters }).AsTask())
+                .Should().ThrowAsync<ArgumentException>().WithParameterName("Parameters");
+            await search.Awaiting(s => s.HybridSearchAsync(index, hybrid with { Parameters = parameters }).AsTask())
+                .Should().ThrowAsync<ArgumentException>().WithParameterName("Parameters");
+        }
+        finally
+        {
+            await DropIndexIfPresentAsync(search, index);
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task ZeroSizeSearchPagesMatchTheZeroOffsetControl(int protocol)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var search = client.Search;
+        string index = NewIndex();
+
+        try
+        {
+            await CreateDocumentsAsync(client, search, index);
+            var typed = new RespireTypedSearchQuery<object>(index, new object());
+            var empty = typed.Skip(2).Take(0);
+            var control = typed.Take(0);
+            var searchPage = await empty.SearchAsync(search);
+            var aggregatePage = await empty.AggregateAsync(search);
+            var hybrid = new RespireHybridSearchQuery(All, "embedding", Vector, 3, Limit: 0);
+            var hybridPage = await search.HybridSearchAsync(index, hybrid with { Skip = 2 });
+
+            searchPage.Documents.Should().BeEmpty();
+            searchPage.Total.Should().Be((await control.SearchAsync(search)).Total);
+            aggregatePage.Rows.Should().BeEmpty();
+            aggregatePage.Total.Should().Be((await control.AggregateAsync(search)).Total);
+            hybridPage.Documents.Should().BeEmpty();
+            hybridPage.Total.Should().Be((await search.HybridSearchAsync(index, hybrid)).Total);
+
+            (await empty.Take(3).SearchAsync(search)).Documents.Should().ContainSingle();
+            (await empty.Take(3).AggregateAsync(search)).Rows.Should().ContainSingle();
+            (await search.HybridSearchAsync(index, hybrid with { Skip = 2, Limit = 3 })).Documents.Should().ContainSingle();
+        }
+        finally
+        {
+            await DropIndexIfPresentAsync(search, index);
+        }
+    }
+
+    [Test]
     [Arguments(2, "distance")]
     [Arguments(2, "distance-score")]
     [Arguments(2, "distance score")]
