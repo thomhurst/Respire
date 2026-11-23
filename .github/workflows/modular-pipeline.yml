@@ -43,6 +43,7 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
+          shopt -s inherit_errexit
           version=$(bash .github/scripts/release-version.sh tag "$RELEASE_TAG")
           echo "Release version: $version"
           echo "RESPIRE_RELEASE_VERSION=$version" >> "$GITHUB_ENV"
@@ -103,6 +104,7 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
+          shopt -s inherit_errexit
           # RELEASE_TAG passed the version grammar above, so it is safe in a sed replacement.
           version=$(bash .github/scripts/release-version.sh tag "$RELEASE_TAG")
           draft_marker='<!-- release-draft -->'

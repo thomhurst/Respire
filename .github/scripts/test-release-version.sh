@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Bash 4.4+ (CI runners); older shells such as macOS bash 3.2 run without it.
+shopt -s inherit_errexit 2> /dev/null || true
 script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/release-version.sh"
 failures=0
 

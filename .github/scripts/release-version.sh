@@ -14,6 +14,8 @@
 # Keep the grammar and the step in sync with GitVersionDetails in
 # Respire.Pipeline/Modules/NugetVersionGeneratorModule.cs.
 set -euo pipefail
+# Bash 4.4+ (CI runners); older shells such as macOS bash 3.2 run without it.
+shopt -s inherit_errexit 2> /dev/null || true
 # String comparisons below must use ASCII order, not the locale's collation.
 export LC_ALL=C
 
