@@ -24,6 +24,7 @@ internal static partial class ScopeWalker
         private readonly INamedTypeSymbol? _systemException = semanticModel.Compilation.GetTypeByMetadataName("System.Exception");
         private readonly FlowConditions _conditions = new(graph, startBlock, cancellationToken);
         private readonly Dictionary<int, List<int>> _barrierPositions = new();
+        private HashSet<int>? _asyncLoopCompletions;
         private readonly Dictionary<(int Block, int Position), List<(int TriggerBlock, ulong Flag)>> _transferGuards = new();
         private readonly Dictionary<SyntaxNode, ulong> _transferTriggers = new();
         private readonly HashSet<(int Block, int Position)> _unconditionalBarriers = [];
@@ -101,6 +102,20 @@ internal static partial class ScopeWalker
         {
             foreach (var barrier in barriers)
             {
+                if (barrier is ForEachStatementSyntax loop)
+                {
+                    var condition = graph.Blocks.FirstOrDefault(block =>
+                        block.BranchValue is IAwaitOperation { IsImplicit: true } advance
+                        && IsSame(advance.Syntax, loop));
+
+                    if (condition is not null)
+                    {
+                        (_asyncLoopCompletions ??= []).Add(condition.Ordinal);
+                    }
+
+                    continue;
+                }
+
                 var (block, position) = FindBarrierLocation(barrier);
 
                 if (block is null)
@@ -1256,7 +1271,8 @@ internal static partial class ScopeWalker
                 var expected = branch.IsConditionalSuccessor
                     == (branch.Source.ConditionKind == ControlFlowConditionKind.WhenTrue);
 
-                if (!_conditions.Constrain(branch.Source.BranchValue, expected, ref known, ref values))
+                if ((started && !expected && _asyncLoopCompletions?.Contains(branch.Source.Ordinal) == true)
+                    || !_conditions.Constrain(branch.Source.BranchValue, expected, ref known, ref values))
                 {
                     return;
                 }

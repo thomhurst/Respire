@@ -2003,6 +2003,136 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    [Arguments("await flush;", false)]
+    [Arguments("await flush.ConfigureAwait(false);", false)]
+    [Arguments("await flush.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);", true)]
+    [Arguments("await flush; if (stop) { break; }", true)]
+    [Arguments("if (stop) { continue; } await flush;", true)]
+    [Arguments("_ = flush;", true)]
+    public async Task WhenEachRequiresEveryTaskToBeAwaitedAsync(string body, bool warning)
+    {
+        var read = warning ? "{|RESP002:pending.Result|}" : "pending.Result";
+        await Verify.VerifyWithNet10Async($$"""
+            using System.Threading.Tasks;
+            using Respire;
+            public class Caller
+            {
+                public async Task<string> Run(RespireClient client, bool stop)
+                {
+                    await using var batch = client.CreateBatch();
+                    var pending = batch.GetStringAsync("key");
+                    await foreach (var flush in Task.WhenEach(Task.CompletedTask, batch.ExecuteAsync().AsTask()))
+                    {
+                        {{body}}
+                    }
+
+                    return {{read}};
+                }
+            }
+            """);
+    }
+
+    [Test]
+    public async Task WhenEachPendingReadInsideLoopIsFlaggedAsync() => await Verify.VerifyWithNet10Async(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                await foreach (var flush in Task.WhenEach(Task.CompletedTask, batch.SendAsync().AsTask()))
+                {
+                    await flush;
+                    Console.WriteLine({|RESP002:pending.Result|});
+                }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task StoredFlushTaskDrainedByConfiguredWhenEachAsync() => await Verify.VerifyWithNet10Async(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task<string> Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var execution = batch.ExecuteAsync().AsTask();
+                await foreach (var flush in Task.WhenEach(execution).ConfigureAwait(false))
+                {
+                    await flush;
+                }
+
+                return pending.Result;
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ReenumeratedWhenEachDoesNotProveCompletionAsync() => await Verify.VerifyWithNet10Async(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task<string> Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var tasks = Task.WhenEach(Task.CompletedTask, batch.SendAsync().AsTask());
+                await foreach (var flush in tasks)
+                {
+                    await flush;
+                    break;
+                }
+
+                await foreach (var flush in tasks)
+                {
+                    await flush;
+                }
+
+                return {|RESP002:pending.Result|};
+            }
+        }
+        """);
+
+    [Test]
+    public async Task CatchCanReadWhenWhenEachIsInterruptedAsync() => await Verify.VerifyWithNet10Async(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+        public class Caller
+        {
+            public async Task<string> Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                try
+                {
+                    await foreach (var flush in Task.WhenEach(Task.FromException(new InvalidOperationException()), batch.SendAsync().AsTask()))
+                    {
+                        await flush;
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    return {|RESP002:pending.Result|};
+                }
+
+                return pending.Result;
+            }
+        }
+        """);
+
+    [Test]
     public async Task WhenAllFlushBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System;
