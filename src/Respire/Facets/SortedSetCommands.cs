@@ -229,17 +229,13 @@ public partial interface IRespireSortedSetCommands
 
     /// <summary>
     /// Adds or updates one serialized <typeparamref name="T"/> member. Returns true when the
-    /// member was new. Redis: ZADD.
-    /// <para>
-    /// Text, binary payloads and <see cref="RespireValue"/> pick non-generic overloads;
-    /// any other type picks this one. Boolean members retain the Redis-native <c>1</c>/<c>0</c>
-    /// encoding used by the other member APIs; other types use normal typed serialization.
-    /// <paramref name="score"/> has no default, so a lone member/score tuple still binds
-    /// to the <c>params</c> overload.
-    /// </para>
+    /// member was new. Redis: ZADD. Boolean members use the Redis-native <c>1</c>/<c>0</c> encoding.
     /// </summary>
+    /// <remarks>Specify the type argument explicitly to select serialization for types with an implicit
+    /// <see cref="RespireValue"/> conversion.</remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     ValueTask<bool> AddAsync<T>(RespireKey key, T member, double score, CancellationToken cancellationToken = default);
 
     /// <summary>Adds or updates many binary-safe members; returns how many were new. Redis: ZADD.</summary>
@@ -519,6 +515,7 @@ internal sealed partial class SortedSetCommands(RespireClient client) : IRespire
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     public ValueTask<bool> AddAsync<T>(RespireKey key, T member, double score, CancellationToken cancellationToken = default)
         => client.FlagAsync(
             "ZADD",

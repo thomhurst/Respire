@@ -51,6 +51,31 @@ public class FakeSetServerTests
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task InferredMembershipMatchesAddedScalarMembers(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
+        var id = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
+        var instant = new DateTimeOffset(2026, 9, 30, 12, 34, 56, TimeSpan.FromHours(2));
+        var duration = TimeSpan.FromSeconds(42);
+
+        await client.Sets.AddAsync("members", id, instant, duration);
+
+        await Assert.That(await client.Sets.ContainsAsync("members", id)).IsTrue();
+        await Assert.That(await client.Sets.ContainsAsync("members", instant)).IsTrue();
+        await Assert.That(await client.Sets.ContainsAsync("members", duration)).IsTrue();
+        await Assert.That(await client.Sets.ContainsAsync<Guid>("members", id)).IsFalse();
+
+        await client.Sets.AddAsync("members", $"\"{id:D}\"");
+
+        await Assert.That(await client.Sets.ContainsAsync<Guid>("members", id)).IsTrue();
+    }
+
+    [Test]
     public async Task ConcurrentDuplicatesAndMovesAreAtomic()
     {
         await using var server = new RespireFakeServer();

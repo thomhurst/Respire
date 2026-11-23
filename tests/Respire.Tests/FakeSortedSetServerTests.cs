@@ -61,6 +61,45 @@ public class FakeSortedSetServerTests
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task InferredScalarAddsMatchLookupsAndQueuedUpdates(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
+        var id = Guid.Parse("00112233-4455-6677-8899-aabbccddeeff");
+        var instant = new DateTimeOffset(2026, 9, 30, 12, 34, 56, TimeSpan.FromHours(2));
+        var duration = TimeSpan.FromSeconds(42);
+
+        await client.SortedSets.AddAsync("scores", id, 1);
+        await client.SortedSets.AddAsync("scores", instant, 2);
+        await client.SortedSets.AddAsync("scores", duration, 3);
+
+        await Assert.That(await client.SortedSets.ScoreAsync("scores", id)).IsEqualTo(1d);
+        await Assert.That(await client.SortedSets.ScoreAsync("scores", instant)).IsEqualTo(2d);
+        await Assert.That(await client.SortedSets.ScoreAsync("scores", duration)).IsEqualTo(3d);
+        await Assert.That(await client.SortedSets.RankAsync("scores", id)).IsEqualTo(0L);
+
+        using var batch = client.CreateBatch();
+        var idAdded = batch.SortedSets.Add("scores", id, 4);
+        var instantAdded = batch.SortedSets.Add("scores", instant, 5);
+        var durationAdded = batch.SortedSets.Add("scores", duration, 6);
+        (await batch.ExecuteAsync()).ThrowIfAnyFailed();
+
+        await Assert.That(idAdded.Result).IsFalse();
+        await Assert.That(instantAdded.Result).IsFalse();
+        await Assert.That(durationAdded.Result).IsFalse();
+        await Assert.That(await client.SortedSets.CountAsync("scores")).IsEqualTo(3L);
+        await Assert.That(await client.SortedSets.ScoreAsync("scores", id)).IsEqualTo(4d);
+
+        await client.SortedSets.AddAsync<Guid>("serialized", id, 1);
+
+        await Assert.That(await client.SortedSets.ScoreAsync("serialized", $"\"{id:D}\"")).IsEqualTo(1d);
+    }
+
+    [Test]
     public async Task ConcurrentIncrementsAndPopsHaveSingleOwners()
     {
         await using var server = new RespireFakeServer();
