@@ -442,17 +442,19 @@ public class FencedLockWireTests
     }
 
     [Test]
-    public async Task AcquireWaitClampsExpiryBeyondSemaphoreTimeoutLimit()
+    [Arguments(2_592_000_000L)] // 30 days exceeds SemaphoreSlim's millisecond timeout limit.
+    [Arguments(long.MaxValue)] // A valid server TTL can also exceed TimeSpan's range.
+    public async Task AcquireWaitClampsExpiryBeyondSemaphoreTimeoutLimit(long milliseconds)
     {
         var attempts = 0;
+        var ttlReply = System.Text.Encoding.ASCII.GetBytes(FormattableString.Invariant($":{milliseconds}\r\n"));
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
             ReplyOverride = (_, command) => command switch
             {
                 "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
                 "GET lease" => "$-1\r\n"u8.ToArray(),
-                // 30 days: beyond SemaphoreSlim's Int32.MaxValue millisecond timeout limit.
-                "PTTL lease" => ":2592000000\r\n"u8.ToArray(),
+                "PTTL lease" => ttlReply,
                 var value when value.StartsWith("EVALSHA ", StringComparison.Ordinal)
                     => Interlocked.Increment(ref attempts) == 1 ? "_\r\n"u8.ToArray() : "$1\r\n1\r\n"u8.ToArray(),
                 var value when value.StartsWith("DELEX lease IFEQ ", StringComparison.Ordinal)

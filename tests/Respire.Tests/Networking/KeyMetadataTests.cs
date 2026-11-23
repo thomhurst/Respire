@@ -23,13 +23,21 @@ public class KeyMetadataTests
             ":5\r\n"u8.ToArray(), nil, ":1\r\n"u8.ToArray(), nil);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var keys = client.WithKeyPrefix("tenant:").Keys;
-        await Assert.That((await keys.ExpiryTimeAsync("key")).UnixTimeMilliseconds).IsEqualTo(1700000000123);
-        await Assert.That((await keys.ExpiryTimeAsync("key", RespireExpiryTimePrecision.Seconds)).UnixTimeMilliseconds).IsEqualTo(1700000000000);
+        var milliseconds = await keys.ExpiryTimeAsync("key");
+        await Assert.That(milliseconds.UnixTimeMilliseconds).IsEqualTo(1700000000123);
+        await Assert.That(milliseconds.UnixTimeSeconds).IsEqualTo(1700000000);
+        var seconds = await keys.ExpiryTimeAsync("key", RespireExpiryTimePrecision.Seconds);
+        await Assert.That(seconds.UnixTimeMilliseconds).IsEqualTo(1700000000000);
+        await Assert.That(seconds.UnixTimeSeconds).IsEqualTo(1700000000);
+        await Assert.That(seconds.TryGetExpiresAt(out var expiresAt)).IsTrue();
+        await Assert.That(expiresAt).IsEqualTo(DateTimeOffset.FromUnixTimeSeconds(1700000000));
         var missing = await keys.ExpiryTimeAsync("missing");
         var persistent = await keys.ExpiryTimeAsync("persistent");
         await Assert.That(missing.Exists).IsFalse();
+        await Assert.That(missing.UnixTimeSeconds).IsNull();
         await Assert.That(persistent.Exists).IsTrue();
         await Assert.That(persistent.HasExpiry).IsFalse();
+        await Assert.That(persistent.UnixTimeSeconds).IsNull();
         await Assert.That(await keys.EncodingAsync("key")).IsEqualTo("embstr");
         await Assert.That(await keys.EncodingAsync("missing")).IsNull();
         await Assert.That(await keys.IdleTimeAsync("key")).IsEqualTo(TimeSpan.FromSeconds(42));
@@ -72,6 +80,53 @@ public class KeyMetadataTests
         {
             await Assert.That(arguments[^1].SequenceEqual(new byte[] { (byte)'p', (byte)':', 0xff, 0, (byte)'x' })).IsTrue();
         }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExpiryReadsAcceptMaximumServerValues(bool deferred)
+    {
+        await using var server = new FakeRespServer(
+            ":9223372036854775807\r\n"u8.ToArray(),
+            ":9223372036854776\r\n"u8.ToArray(),
+            ":9223372036854775807\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        RespireTtlResult ttl;
+        RespireExpiryTimeResult seconds;
+        RespireExpiryTimeResult milliseconds;
+
+        if (deferred)
+        {
+            using var batch = client.CreateBatch();
+            var pendingTtl = batch.Keys.Expiry("key");
+            var pendingSeconds = batch.Keys.ExpiryTime("key", RespireExpiryTimePrecision.Seconds);
+            var pendingMilliseconds = batch.Keys.ExpiryTime("key");
+            await batch.ExecuteAsync();
+            ttl = pendingTtl.Result;
+            seconds = pendingSeconds.Result;
+            milliseconds = pendingMilliseconds.Result;
+        }
+        else
+        {
+            ttl = await client.Keys.ExpiryAsync("key");
+            seconds = await client.Keys.ExpiryTimeAsync("key", RespireExpiryTimePrecision.Seconds);
+            milliseconds = await client.Keys.ExpiryTimeAsync("key");
+        }
+
+        await Assert.That(ttl.Exists).IsTrue();
+        await Assert.That(ttl.HasExpiry).IsTrue();
+        await Assert.That(ttl.TimeToLiveMilliseconds).IsEqualTo(long.MaxValue);
+        await Assert.That(ttl.TimeToLive).IsNull();
+        await Assert.That(seconds.Exists).IsTrue();
+        await Assert.That(seconds.HasExpiry).IsTrue();
+        await Assert.That(seconds.UnixTimeSeconds).IsEqualTo(9_223_372_036_854_776);
+        await Assert.That(seconds.UnixTimeMilliseconds).IsNull();
+        await Assert.That(seconds.TryGetExpiresAt(out _)).IsFalse();
+        _ = Assert.Throws<ArgumentOutOfRangeException>(() => seconds.GetExpiresAt());
+        await Assert.That(milliseconds.UnixTimeMilliseconds).IsEqualTo(long.MaxValue);
+        await Assert.That(milliseconds.UnixTimeSeconds).IsEqualTo(9_223_372_036_854_775);
+        await Assert.That(milliseconds.TryGetExpiresAt(out _)).IsFalse();
     }
 
     [Test]

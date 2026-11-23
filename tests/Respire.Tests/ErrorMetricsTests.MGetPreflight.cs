@@ -47,7 +47,8 @@ public partial class ErrorMetricsTests
         {
             if (generic)
             {
-                await Assert.That((await client.Strings.GetManyAsync<int>(keys, deadline.Token)).SequenceEqual([1, 2])).IsTrue();
+                int[] values = await client.Strings.GetManyAsync<int>(keys, deadline.Token);
+                await Assert.That(Enumerable.SequenceEqual(values, [1, 2])).IsTrue();
             }
             else
             {

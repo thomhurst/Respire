@@ -110,9 +110,10 @@ Expiry inputs and results have different meanings:
 | Relative lock lease | `TimeSpan leaseDuration` | `Locks.AcquireAsync`, `Locks.TryTakeAsync` |
 
 Both result types distinguish a missing key or field from a persistent one using `Exists` and
-`HasExpiry`. `RespireTtlResult.TimeToLive` is a duration; `RespireExpiryTimeResult.UnixTimeMilliseconds` is the
-server's deadline. They remain separate because adding a TTL to the client's clock cannot recover
-the server's exact deadline. Expiry result types are never command inputs.
+`HasExpiry`. `RespireTtlResult.TimeToLiveMilliseconds` preserves the remaining lifetime reported by
+the server. `TimeToLive` gives the same duration as a `TimeSpan` when it fits. If the duration is
+too large, `TimeToLive` is null and `HasExpiry` is true. Use `RespireExpiryTimeResult` for the
+server's absolute deadline. Adding a TTL to the client's clock cannot recover that exact deadline.
 
 Individual commands accept only meaningful expiry policies. Cache-aside writes require a positive
 relative expiry or a positive Unix-millisecond absolute instant. Lock leases are always relative
@@ -357,7 +358,9 @@ long? references = await redis.Keys.ReferenceCountAsync("session:42");
 `Keys.ExpiryTimeAsync(key)` sends Redis 7 `PEXPIRETIME`; pass `RespireExpiryTimePrecision.Seconds` for `EXPIRETIME`. Both return `RespireExpiryTimeResult`, also used for hash-field expiration:
 
 - `Exists` tells a missing key from a persistent one.
-- `HasExpiry` and nullable `UnixTimeMilliseconds` give the absolute expiration, not the remaining TTL. The seconds variant keeps the server's whole seconds, expressed in milliseconds.
+- `HasExpiry` indicates that the key has a deadline.
+- `UnixTimeMilliseconds` gives the deadline in milliseconds. If a whole-second reply exceeds the range of a signed 64-bit millisecond count, this property is null and `HasExpiry` is true. Use `UnixTimeSeconds` to read the server's whole-second reply, including those large deadlines.
+- Use the default millisecond precision for the exact deadline. With seconds precision, the server determines rounding.
 - Use `TryGetExpiresAt(out var instant)` when a timestamp might exceed the `DateTimeOffset` range.
 
 `EncodingAsync`, `IdleTimeAsync`, `FrequencyAsync`, and `ReferenceCountAsync` send `OBJECT ENCODING`, `IDLETIME`, `FREQ`, and `REFCOUNT`:
