@@ -55,20 +55,24 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
             return await InnerClient.GetResponseAsync(conversation, options, cancellationToken).ConfigureAwait(false);
         }
 
-        string scope;
-        byte[] vector;
+        string? scope;
+        byte[]? vector = null;
 
         try
         {
             scope = GetScope(conversation, options, userScope);
-            var cached = await LookupAsync(conversation[^1].Text, scope, cancellationToken).ConfigureAwait(false);
 
-            if (cached.Response is not null)
+            if (scope is not null)
             {
-                return cached.Response;
-            }
+                var cached = await LookupAsync(conversation[^1].Text, scope, cancellationToken).ConfigureAwait(false);
 
-            vector = cached.Vector;
+                if (cached.Response is not null)
+                {
+                    return cached.Response;
+                }
+
+                vector = cached.Vector;
+            }
         }
         catch (Exception error) when (_options.FailOpen && error is not OperationCanceledException)
         {
@@ -79,7 +83,7 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
 
         var response = await InnerClient.GetResponseAsync(conversation, options, cancellationToken).ConfigureAwait(false);
 
-        if (CanStore(response))
+        if (scope is not null && vector is not null && CanStore(response))
         {
             try
             {
@@ -166,7 +170,8 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
 
     private bool ShouldBypass(List<ChatMessage> messages, ChatOptions? options)
     {
-        if (options?.AdditionalProperties?.TryGetValue(RespireSemanticCacheOptions.DisableCacheKey, out var disabled) == true && disabled is true
+        if (options?.AdditionalProperties?.TryGetValue(RespireSemanticCacheOptions.DisableCacheKey, out var disabled) == true
+                && disabled is true or JsonElement { ValueKind: JsonValueKind.True }
             || _options.ShouldBypass?.Invoke(messages, options) == true)
         {
             return true;
@@ -200,29 +205,34 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
                 && message.GetType() == typeof(ChatMessage)
                 && message.Contents.All(content => content.GetType() == typeof(TextContent)));
 
-    private string GetScope(List<ChatMessage> messages, ChatOptions? options, string userScope)
+    private string? GetScope(List<ChatMessage> messages, ChatOptions? options, string userScope)
     {
         var scopedOptions = options?.Clone() ?? new ChatOptions();
+        AdditionalPropertiesDictionary? providerOptions = null;
 
-        if (scopedOptions.AdditionalProperties is { } properties)
+        if (scopedOptions.AdditionalProperties is { Count: > 0 } properties)
         {
-            scopedOptions.AdditionalProperties = new(properties);
-            scopedOptions.AdditionalProperties.Remove(RespireSemanticCacheOptions.DisableCacheKey);
-
-            if (scopedOptions.AdditionalProperties.Count == 0)
-            {
-                scopedOptions.AdditionalProperties = null;
-            }
+            providerOptions = new(properties);
+            providerOptions.Remove(RespireSemanticCacheOptions.DisableCacheKey);
         }
+
+        scopedOptions.AdditionalProperties = null;
         // JSON arrays keep each boundary unambiguous. Include the exact conversation history,
         // provider identity and options, but replace only the final user text with semantic matching.
-        var metadata = InnerClient.GetService(typeof(ChatClientMetadata)) as ChatClientMetadata;
-        var embeddingMetadata = _embeddingGenerator.GetService(typeof(EmbeddingGeneratorMetadata)) as EmbeddingGeneratorMetadata;
         using var stream = new MemoryStream();
 
         using (var writer = new Utf8JsonWriter(stream, new() { Encoder = StrictUnicodeJsonEncoder.Instance }))
         {
             writer.WriteStartArray();
+
+            // Add a leading object only for requests with provider options. A legacy scope starts with a string.
+            if (providerOptions is { Count: > 0 } && !TryWriteProviderOptions(writer, providerOptions))
+            {
+                return null;
+            }
+
+            var metadata = InnerClient.GetService(typeof(ChatClientMetadata)) as ChatClientMetadata;
+            var embeddingMetadata = _embeddingGenerator.GetService(typeof(EmbeddingGeneratorMetadata)) as EmbeddingGeneratorMetadata;
             writer.WriteStringValue(userScope);
             writer.WriteStringValue(metadata?.ProviderName);
             writer.WriteStringValue(metadata?.ProviderUri?.ToString());
@@ -244,6 +254,64 @@ internal sealed class RespireSemanticCachingChatClient : DelegatingChatClient
         }
 
         return Hash(stream.ToArray());
+    }
+
+    private static bool TryWriteProviderOptions(Utf8JsonWriter writer, AdditionalPropertiesDictionary properties)
+    {
+        // stackalloc-audit[300efd3df8058cd6]: init: decimal.GetBits writes all four elements;
+        // read: the decimal case iterates the span only after GetBits returns;
+        // failure: other cases never read the span, and a GetBits exception exits before the loop.
+        Span<int> decimalBits = stackalloc int[4];
+        writer.WriteStartObject();
+
+        foreach (var (key, value) in properties)
+        {
+            writer.WritePropertyName(key);
+
+            if (value is null)
+            {
+                writer.WriteNullValue();
+                continue;
+            }
+
+            writer.WriteStartArray();
+            writer.WriteStringValue(value.GetType().Name);
+
+            switch (value)
+            {
+                case string or char or bool or sbyte or byte or short or ushort or int or uint or long or ulong:
+                    writer.WriteStringValue(Convert.ToString(value, CultureInfo.InvariantCulture));
+                    break;
+                case float single:
+                    writer.WriteNumberValue(BitConverter.SingleToInt32Bits(single));
+                    break;
+                case double floatingPoint:
+                    writer.WriteNumberValue(BitConverter.DoubleToInt64Bits(floatingPoint));
+                    break;
+                case decimal number:
+                    decimal.GetBits(number, decimalBits);
+
+                    foreach (int part in decimalBits)
+                    {
+                        writer.WriteNumberValue(part);
+                    }
+
+                    break;
+                case JsonElement json:
+                    // Validate decoded strings with the strict encoder and retain the original JSON spelling.
+                    json.WriteTo(writer);
+                    writer.WriteStringValue(json.GetRawText());
+                    break;
+                default:
+                    // JSON can hide a custom object's state or the types of values it contains.
+                    return false;
+            }
+
+            writer.WriteEndArray();
+        }
+
+        writer.WriteEndObject();
+        return true;
     }
 
     private byte[] EncodeVector(ReadOnlyMemory<float> vector)
