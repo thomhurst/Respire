@@ -85,14 +85,16 @@ public class CommandOrderingTests
     }
 
     [Test]
-    public async Task AskRedirectedHashWritePrecedesExpiryOnImportingNodeWithoutRetries()
+    [Arguments("ASK")]
+    [Arguments("MOVED")]
+    public async Task RedirectedHashWritePrecedesExpiryWithoutRetries(string redirectKind)
     {
         await using var source = new FakeRespServer(4, FakeRespServer.OkReply);
         await using var target = new FakeRespServer(4, FakeRespServer.OkReply);
         var hash = new HashExpiryScript(target);
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*3\r\n$9\r\n127.0.0.1\r\n:{source.Port}\r\n$7\r\nprimary\r\n");
-        var redirect = Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("key")} 127.0.0.1:{target.Port}\r\n");
+        var redirect = Encoding.ASCII.GetBytes($"-{redirectKind} {ClusterHash.GetSlot("key")} 127.0.0.1:{target.Port}\r\n");
         source.ReplyOverride = (_, command) => command switch
         {
             "CLUSTER SLOTS" => topology,
@@ -115,8 +117,17 @@ public class CommandOrderingTests
             var expire = database.KeyExpireAsync("key", s_expiry);
             await hash.AssertOrderedExpiryAsync(database, set, expire);
 
-            Assert.Equal(new[] { "ASKING", Set, "ASKING", Expire, "ASKING", "PTTL key" }, target.ReceivedCommands);
-            Assert.Equal(new[] { Set, Expire, "PTTL key" }, source.ReceivedCommands.Where(IsHashCommand));
+            if (redirectKind == "ASK")
+            {
+                Assert.Equal(new[] { "ASKING", Set, "ASKING", Expire, "ASKING", "PTTL key" }, target.ReceivedCommands);
+                Assert.Equal(new[] { Set, Expire, "PTTL key" }, source.ReceivedCommands.Where(IsHashCommand));
+            }
+            else
+            {
+                Assert.Equal(new[] { Set, Expire, "PTTL key" }, target.ReceivedCommands.Where(IsHashCommand));
+                Assert.Equal(Set, source.ReceivedCommands.First(IsHashCommand));
+                Assert.DoesNotContain("ASKING", target.ReceivedCommands);
+            }
         }
         finally
         {
@@ -125,19 +136,31 @@ public class CommandOrderingTests
     }
 
     [Test]
-    public async Task QueuedCommandsShareTheirTimeoutBudgetWithExecution()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task QueuedCommandsShareTheirTimeoutBudgetWithExecution(bool useCluster)
     {
         var timeout = TimeSpan.FromSeconds(1);
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
         {
             SuppressReply = command => command.StartsWith("HSET ", StringComparison.Ordinal),
         };
+
+        if (useCluster)
+        {
+            var topology = Encoding.ASCII.GetBytes(
+                $"*1\r\n*3\r\n:0\r\n:16383\r\n*3\r\n$9\r\n127.0.0.1\r\n:{server.Port}\r\n$7\r\nprimary\r\n");
+            server.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
+        }
+
         await using var adapter = RespireConnectionMultiplexer.Create(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
             Protocol = RespireProtocol.Resp2,
             CommandTimeout = timeout,
             RetryPolicy = new(),
+            UseCluster = useCluster,
+            ClusterTopologyRefreshInterval = null,
         });
         var database = adapter.GetDatabase();
         Assert.True(await database.KeyExistsAsync("warm"));
@@ -146,7 +169,7 @@ public class CommandOrderingTests
         {
             var commands = Enumerable.Range(0, 8)
                 .Select(index => Assert.ThrowsAsync<RespireTimeoutException>(
-                    () => database.HashSetAsync($"key{index}", "field", "value")))
+                    () => database.HashSetAsync($"{{same-slot}}:key{index}", "field", "value")))
                 .ToArray();
             var errors = await Task.WhenAll(commands).WaitAsync(timeout * 4);
 

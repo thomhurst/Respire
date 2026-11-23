@@ -24,6 +24,7 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
 
     internal RespireClient Client => _client;
     private readonly SemaphoreSlim _dispatch = new(1, 1);
+    private ClusterDispatch? _clusterDispatch;
 
     internal CompatDatabase(RespireConnectionMultiplexer owner, RespireClient client, int number)
     {
@@ -82,13 +83,30 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
             try
             {
                 // Keep the same budget through queueing, connection establishment, and dispatch.
-                await _dispatch.WaitAsync(cancellationToken).ConfigureAwait(false);
+                ClusterDispatch.Reservation? reservation = null;
+                RespireValue[]? nativeArguments = null;
+
+                if (client.Core.Cluster is null)
+                {
+                    await _dispatch.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Owner.Run starts this callback under its lock, so reservations follow call order.
+                    nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
+                    reservation = (_clusterDispatch ??= new()).Enqueue(client, command, nativeArguments);
+                }
 
                 try
                 {
+                    if (reservation is { } queued)
+                    {
+                        await queued.Predecessors.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    }
+
                     stage = RespireCommandStage.Connecting;
                     await client.Core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-                    var nativeArguments = arguments.Select(static value => value.ToRespireValue()).ToArray();
+                    nativeArguments ??= arguments.Select(static value => value.ToRespireValue()).ToArray();
 
                     // A waiter can acquire the gate after its deadline but before its timer fires.
                     cancellationToken.ThrowIfCancellationRequested();
@@ -130,7 +148,14 @@ internal sealed partial class CompatDatabase : CompatDatabaseAsync, IDatabase
                 }
                 finally
                 {
-                    _dispatch.Release();
+                    if (reservation is { } queued)
+                    {
+                        _clusterDispatch!.Release(queued);
+                    }
+                    else
+                    {
+                        _dispatch.Release();
+                    }
                 }
 
                 if (discardReply)
