@@ -169,7 +169,7 @@ public class VectorSetCommandTests
         try
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
-            float[] vector = [1.25f, 1e-5f, 1e20f, float.Epsilon, float.MaxValue, -float.MaxValue, 1.2345678f];
+            float[] vector = [1.25f, 1e-5f, 1e19f, float.Epsilon, -1e19f, 1.2345678f];
             await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
             await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
             await client.VectorSets.AddAsync("k", vector, "m", encoding: RespireVectorEncoding.Values);
@@ -177,7 +177,7 @@ public class VectorSetCommandTests
                 .Select(Encoding.ASCII.GetString).ToArray();
             await Assert.That(values[0]).IsEqualTo("1.25");
             await Assert.That(values[1]).IsEqualTo("1E-05");
-            await Assert.That(values[2]).IsEqualTo("1E+20");
+            await Assert.That(values[2]).IsEqualTo("1E+19");
 
             for (var index = 0; index < vector.Length; index++)
             {
@@ -186,6 +186,49 @@ public class VectorSetCommandTests
             }
         }
         finally { CultureInfo.CurrentCulture = originalCulture; }
+    }
+
+    [Test]
+    [Arguments(RespireVectorEncoding.Fp32)]
+    [Arguments(RespireVectorEncoding.Values)]
+    public async Task UnsupportedVectorMagnitudesSendNothingAndDoNotPoisonQueues(RespireVectorEncoding encoding)
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), FakeRespServer.OkReply,
+            "+QUEUED\r\n"u8.ToArray(), "*1\r\n:1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var batch = client.CreateBatch();
+        await using var transaction = client.CreateTransaction();
+        // Redis adds the last four squares as a group. Summing them individually would round them away.
+        float[][] invalidVectors =
+        [
+            [1e20f, 0f, 0f],
+            [1.8446743e19f, 0f, 0f, 0f, 2.8e15f, 2.8e15f, 2.8e15f, 2.8e15f],
+            [1e-30f, 0f, 0f],
+            [1e-20f]
+        ];
+
+        foreach (var vector in invalidVectors)
+        {
+            var error = await Assert.That(async () => await client.VectorSets.AddAsync("k", vector, "m", encoding: encoding))
+                .ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(error!.ParamName).IsEqualTo("vector");
+            await Assert.That(async () => await client.VectorSets.SearchAsync("k", vector, encoding: encoding))
+                .ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(() => batch.VectorSets.Add("k", vector, "m", encoding: encoding)).ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(() => batch.VectorSets.Search("k", vector, encoding: encoding)).ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(() => transaction.VectorSets.Add("k", vector, "m", encoding: encoding)).ThrowsExactly<ArgumentOutOfRangeException>();
+            await Assert.That(() => transaction.VectorSets.Search("k", vector, encoding: encoding)).ThrowsExactly<ArgumentOutOfRangeException>();
+        }
+
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+        var batchCount = batch.VectorSets.Count("k");
+        await batch.ExecuteAsync();
+        await Assert.That(batchCount.Result).IsEqualTo(1);
+        var transactionCount = transaction.VectorSets.Count("k");
+        await transaction.CommitAsync();
+        await Assert.That(transactionCount.Result).IsEqualTo(1);
+        await Assert.That(server.ReceivedArguments.Select(args => Encoding.ASCII.GetString(args[0])).ToArray())
+            .IsEquivalentTo(new[] { "VCARD", "MULTI", "VCARD", "EXEC" });
     }
 
     [Test]

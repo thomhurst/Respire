@@ -6,6 +6,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>Vector-set commands queued in a batch or transaction. Inputs are snapshotted at enqueue time.</summary>
+/// <remarks>Nonzero input vectors must have a finite, normal single-precision squared magnitude.</remarks>
 public interface IRespireBatchVectorSetCommands
 {
     /// <summary>VADD: adds or replaces a vector; true means a new member was added.</summary>
