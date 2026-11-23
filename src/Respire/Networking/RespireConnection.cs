@@ -836,8 +836,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             return configured;
         }
 
-        // Do not mutate a caller-owned options instance: one instance can configure several
-        // concurrent connections, including connections to different cluster nodes.
+        // One options instance can configure several concurrent connections to different nodes.
+        return CopyTlsOptions(configured, host);
+    }
+
+    internal static SslClientAuthenticationOptions CopyTlsOptions(SslClientAuthenticationOptions configured, string? targetHost)
+    {
         var copy = new SslClientAuthenticationOptions
         {
             AllowRenegotiation = configured.AllowRenegotiation,
@@ -852,7 +856,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             EncryptionPolicy = configured.EncryptionPolicy,
             LocalCertificateSelectionCallback = configured.LocalCertificateSelectionCallback,
             RemoteCertificateValidationCallback = configured.RemoteCertificateValidationCallback,
-            TargetHost = host,
+            TargetHost = targetHost,
         };
 
         if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())

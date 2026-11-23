@@ -397,6 +397,7 @@ public class RegistrationTests
             ["Aspire:Respire:cache:Options:NodeAddressMap"] = "advertised:6380=mapped:6381",
             ["Aspire:Respire:cache:Options:ClientSideCache:KeyPrefixes:0"] = "original:",
             ["Aspire:Respire:cache:Options:TlsOptions:TargetHost"] = "original",
+            ["Aspire:Respire:cache:Options:SentinelTlsOptions:TargetHost"] = "sentinel",
         });
         var failure = new InvalidOperationException("Transient options callback failure.");
         int attempts = 0;
@@ -410,6 +411,7 @@ public class RegistrationTests
                 ((IDictionary<RespireEndpoint, RespireEndpoint>)options.NodeAddressMap!).Clear();
                 ((IList<RespireKey>)options.ClientSideCache!.KeyPrefixes)[0] = "modified:";
                 options.TlsOptions!.TargetHost = "modified";
+                options.SentinelTlsOptions!.TargetHost = "modified";
                 throw failure;
             }
 
@@ -445,6 +447,7 @@ public class RegistrationTests
         await Assert.That(options.NodeAddressMap![new RespireEndpoint("ADVERTISED", 6380)]).IsEqualTo(new RespireEndpoint("mapped", 6381));
         await Assert.That(options.ClientSideCache!.KeyPrefixes.Single()).IsEqualTo((RespireKey)"original:");
         await Assert.That(options.TlsOptions!.TargetHost).IsEqualTo("original");
+        await Assert.That(options.SentinelTlsOptions!.TargetHost).IsEqualTo("sentinel");
         await Assert.That(ResolveClient()).IsSameReferenceAs(client);
         await Assert.That(attempts).IsEqualTo(2);
     }

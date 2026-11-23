@@ -76,7 +76,7 @@ public static class AspireRespireExtensions
             }
             else if (configureOptions is not null)
             {
-                configured = RespireConfiguration.CopyForCallback(configured);
+                configured = configured.CopyForConfigurationCallback();
             }
 
             var resolved = configureOptions is null ? configured : configureOptions(provider, configured)
