@@ -76,9 +76,12 @@ public class BatchCommandRetryTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task LostRepliesReplayOnlySafeCompleteUnits(bool unsafeMember)
+    [Arguments(false, RespireCommandRetryCategory.ReadOnly, false, 2)]
+    [Arguments(true, RespireCommandRetryCategory.ReadOnly, false, 1)]
+    [Arguments(true, RespireCommandRetryCategory.WriteAccumulating, false, 2)]
+    [Arguments(true, RespireCommandRetryCategory.WriteAccumulating, true, 1)]
+    public async Task LostRepliesReplayOnlySafeCompleteUnits(
+        bool includesWrite, RespireCommandRetryCategory maximum, bool capWrites, int expectedAttempts)
     {
         var reads = 0;
         await using var server = Server(_ => null);
@@ -103,28 +106,36 @@ public class BatchCommandRetryTests
             return "$5\r\nfinal\r\n"u8.ToArray();
         };
 #pragma warning disable RESP010 // Test-owned client isolates connection loss and safe whole-batch replay without inherited response sources.
-        await using var client = await RespireClient.ConnectAsync(Options(server));
+        await using var client = await RespireClient.ConnectAsync(Options(server) with
+        {
+            RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum },
+        });
 #pragma warning restore RESP010
-        using var batch = client.CreateBatch();
+        using var batch = (capWrites ? client.WithoutAmbiguousWriteRetries() : client).CreateBatch();
         var first = batch.GetString("first");
 
-        if (unsafeMember)
+        if (includesWrite)
         {
             _ = batch.Increment("counter");
         }
 
         var second = batch.GetString("second");
         var result = await batch.TryExecuteAsync();
-        await Assert.That(reads).IsEqualTo(unsafeMember ? 1 : 2);
-        await Assert.That(result.FailureCount == 0).IsEqualTo(!unsafeMember);
+        await Assert.That(reads).IsEqualTo(expectedAttempts);
+        await Assert.That(result.FailureCount == 0).IsEqualTo(expectedAttempts == 2);
 
-        if (!unsafeMember)
+        if (expectedAttempts == 2)
         {
             await Assert.That(first.Result).IsEqualTo("old");
             await Assert.That(second.Result).IsEqualTo("final");
         }
 
-        await Assert.That(server.ReceivedCommands.Count(command => command == "GET first")).IsEqualTo(unsafeMember ? 1 : 2);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET first")).IsEqualTo(expectedAttempts);
+
+        if (includesWrite)
+        {
+            await Assert.That(server.ReceivedCommands.Count(command => command == "INCR counter")).IsEqualTo(expectedAttempts);
+        }
     }
 
     [Test]

@@ -402,7 +402,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
                 }
             }
 
-            if (core.CommandRetries is not null && !ConnectionPolicy.IsImportSession
+            if (_client.CommandRetries is not null && !ConnectionPolicy.IsImportSession
                 && _ops.TrueForAll(static op => !op.IsCursorRead && op.RetryCategory != RespireCommandRetryCategory.Never))
             {
                 if (core.Sentinel is not null)
@@ -503,7 +503,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             return await _client.RunPrimaryBacklogAsync<RespireConnection?>("PIPELINE", cancellationToken, deadline,
                 async (connection, originalDeadline) =>
                 {
-                    if (_client.Core.CommandRetries is not null
+                    if (_client.CommandRetries is not null
                         && _ops.TrueForAll(static op => op.RetryCategory != RespireCommandRetryCategory.Never))
                     {
                         return await RunRetryableBatchAsync(cancellationToken, initialConnection: connection,
@@ -765,7 +765,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
 
             foreach (var member in operations)
             {
-                if (!_client.Core.CommandRetries!.TryGetDelay(error, outcome, member.RetryCategory,
+                if (!_client.CommandRetries!.TryGetDelay(error, outcome, member.RetryCategory,
                     attempt, remaining, token, out var memberDelay))
                 {
                     permitted = false;
@@ -936,7 +936,7 @@ public sealed partial class RespireBatch : IAsyncDisposable, IDisposable, IRespi
             return;
         }
 
-        if (_client.Core.CommandRetries is not null
+        if (_client.CommandRetries is not null
             && operations.TrueForAll(static op => !op.IsCursorRead && op.RetryCategory != RespireCommandRetryCategory.Never))
         {
             _ = await RunRetryableBatchAsync(cancellationToken, operations, slot, readFrom, initialConnection, deadline).ConfigureAwait(false);

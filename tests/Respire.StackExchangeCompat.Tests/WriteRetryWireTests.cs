@@ -61,6 +61,76 @@ public class WriteRetryWireTests
     }
 
     [Test]
+    public async Task LostBatchRepliesDoNotReplayIncrements()
+    {
+        var effects = 0;
+        await using var server = new FakeRespServer(4, FakeRespServer.OkReply)
+        {
+            MinimumCommandsBeforeReply = 2,
+        };
+        server.ReplyOverride = (connectionId, command) =>
+        {
+            if (command != "INCR adapter")
+            {
+                return null;
+            }
+
+            var effect = Interlocked.Increment(ref effects);
+
+            if (effect == 2)
+            {
+                server.CloseConnection(connectionId);
+            }
+
+            return effect == 1 ? ":1\r\n"u8.ToArray() : ":2\r\n"u8.ToArray();
+        };
+        await using var connection = RespireConnectionMultiplexer.Create(Options(server));
+        var batch = connection.GetDatabase().CreateBatch();
+        var first = batch.StringIncrementAsync("adapter");
+        var second = batch.StringIncrementAsync("adapter");
+
+        batch.Execute();
+
+        await Assert.ThrowsAnyAsync<RespireConnectionException>(() => second);
+        await Assert.ThrowsAnyAsync<RespireConnectionException>(() => first);
+        Assert.Equal(2, effects);
+    }
+
+    [Test]
+    public async Task LostExecReplyDoesNotReplayTransactionIncrement()
+    {
+        var effects = 0;
+        await using var server = new FakeRespServer(4, FakeRespServer.OkReply);
+        server.ReplyOverride = (connectionId, command) =>
+        {
+            if (command == "INCR adapter")
+            {
+                return "+QUEUED\r\n"u8.ToArray();
+            }
+
+            if (command != "EXEC")
+            {
+                return null;
+            }
+
+            if (Interlocked.Increment(ref effects) == 1)
+            {
+                server.CloseConnection(connectionId);
+            }
+
+            return "*1\r\n:2\r\n"u8.ToArray();
+        };
+        await using var connection = RespireConnectionMultiplexer.Create(Options(server));
+        var transaction = connection.GetDatabase().CreateTransaction();
+        var increment = transaction.StringIncrementAsync("adapter");
+
+        await Assert.ThrowsAnyAsync<RespireConnectionException>(() => transaction.ExecuteAsync());
+        await Assert.ThrowsAnyAsync<RespireConnectionException>(() => increment);
+        Assert.Equal(1, effects);
+        Assert.Single(server.ReceivedCommands, command => command == "INCR adapter");
+    }
+
+    [Test]
     public async Task TryAgainDoesNotReplayHashWriteAfterQueuedExpiry()
     {
         var expiryReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

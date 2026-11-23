@@ -54,10 +54,12 @@ public class TransactionCommandRetryTests
     }
 
     [Test]
-    [Arguments(RespireCommandRetryCategory.ReadOnly, 1)]
-    [Arguments(RespireCommandRetryCategory.WriteLastWins, 1)]
-    [Arguments(RespireCommandRetryCategory.WriteAccumulating, 2)]
-    public async Task LostExecReplyRepeatsAccumulatingUnitOnlyWithExplicitRisk(RespireCommandRetryCategory maximum, int expectedExecs)
+    [Arguments(RespireCommandRetryCategory.ReadOnly, false, 1)]
+    [Arguments(RespireCommandRetryCategory.WriteLastWins, false, 1)]
+    [Arguments(RespireCommandRetryCategory.WriteAccumulating, false, 2)]
+    [Arguments(RespireCommandRetryCategory.WriteAccumulating, true, 1)]
+    public async Task LostExecReplyRepeatsAccumulatingUnitOnlyWithExplicitRisk(
+        RespireCommandRetryCategory maximum, bool capWrites, int expectedExecs)
     {
         var execs = 0;
         await using var server = Server(exec: _ => Interlocked.Increment(ref execs) == 1 ? null : "*2\r\n$5\r\nvalue\r\n:2\r\n"u8.ToArray());
@@ -65,7 +67,7 @@ public class TransactionCommandRetryTests
         await using var client = await RespireClient.ConnectAsync(Options(server) with
         { RetryPolicy = new() { InitialBackoff = TimeSpan.Zero, MaxCommandRetryCategory = maximum } });
 #pragma warning restore RESP010
-        await using var transaction = client.CreateTransaction();
+        await using var transaction = (capWrites ? client.WithoutAmbiguousWriteRetries() : client).CreateTransaction();
         var value = transaction.GetString("key");
         var counter = transaction.Increment("counter");
 

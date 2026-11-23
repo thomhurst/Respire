@@ -106,9 +106,9 @@ public static class RespireTransactionRetryExtensions
         Func<RespireWatchedTransaction, CancellationToken, ValueTask<T>> action,
         RespireTransactionRetryOptions options, CancellationToken cancellationToken)
     {
-        var core = (client as RespireClient)?.Core;
-        var policy = core?.CommandRetries;
-        var commandTimeout = core?.Options.CommandTimeout;
+        var nativeClient = client as RespireClient;
+        var policy = nativeClient?.CommandRetries;
+        var commandTimeout = nativeClient?.Core.Options.CommandTimeout;
         var deadline = LogicalCommandRetry.CreateDeadline(commandTimeout);
         using var timeout = deadline.IsSet
             ? options.TimeoutFactory(cancellationToken, TimeSpan.FromMilliseconds(Math.Max(1, deadline.RemainingMilliseconds)))
@@ -137,7 +137,7 @@ public static class RespireTransactionRetryExtensions
                     await using (transaction.ConfigureAwait(false))
                     {
                         // Only built-in clients expose a logical timeout. Custom clients retain their own deadlines.
-                        if (core is not null)
+                        if (nativeClient is not null)
                         {
                             transaction.HelperRetryContext = context;
                         }
