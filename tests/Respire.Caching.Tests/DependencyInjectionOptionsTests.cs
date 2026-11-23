@@ -387,16 +387,56 @@ public class DependencyInjectionOptionsTests
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task DefaultConfiguration_OptionsAndClientShareFirstCapture(bool resolveOptionsFirst)
+    {
+        var services = new ServiceCollection();
+        var section = Section(new() { ["Endpoints:0"] = "localhost:6379" });
+        int configureCalls = 0;
+        services.AddRespire(section, (_, options) =>
+        {
+            configureCalls++;
+            return options;
+        });
+
+        await using var provider = services.BuildServiceProvider();
+        var optionsAccessor = provider.GetRequiredService<IOptions<RespireOptions>>();
+        await Assert.That(configureCalls).IsEqualTo(0);
+
+        if (resolveOptionsFirst)
+        {
+            _ = optionsAccessor.Value;
+        }
+        else
+        {
+            _ = provider.GetRequiredService<RespireClient>();
+        }
+
+        section["Endpoints:0"] = "localhost:6380";
+
+        var client = provider.GetRequiredService<RespireClient>();
+        await Assert.That(optionsAccessor.Value.Endpoints[0].Port).IsEqualTo(6379);
+        await Assert.That(client.Core.Options.Endpoints[0].Port).IsEqualTo(6379);
+        await Assert.That(configureCalls).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task Host_ValidatesDefaultAndNamedOptions_WithoutConnecting_AndUsesCallbackServices()
     {
         var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton<IRespireCredentialProvider, Credentials>();
         builder.Services.AddSingleton<RespireConnectionHook, ConnectionHook>();
+        int configureCalls = 0;
         builder.Services.AddRespire(Section(new() { ["Endpoints:0"] = "127.0.0.1:1", ["KeyPrefix"] = "default:" }),
-            (provider, options) => options with
+            (provider, options) =>
             {
-                CredentialProvider = provider.GetRequiredService<IRespireCredentialProvider>(),
-                ConnectionHook = provider.GetRequiredService<RespireConnectionHook>(),
+                configureCalls++;
+                return options with
+                {
+                    CredentialProvider = provider.GetRequiredService<IRespireCredentialProvider>(),
+                    ConnectionHook = provider.GetRequiredService<RespireConnectionHook>(),
+                };
             });
         builder.Services.AddKeyedRespire("jobs", Section(new() { ["Endpoints:0"] = "127.0.0.1:2", ["KeyPrefix"] = "jobs:" }));
         using var host = builder.Build();
@@ -413,6 +453,7 @@ public class DependencyInjectionOptionsTests
         await Assert.That(client).IsNotSameReferenceAs(jobs);
         await Assert.That(jobs.Core.Options.Endpoints[0].Port).IsEqualTo(2);
         await Assert.That(client.Core.Options.KeyPrefix.ToString()).IsEqualTo("default:");
+        await Assert.That(configureCalls).IsEqualTo(1);
         await host.StopAsync();
     }
 

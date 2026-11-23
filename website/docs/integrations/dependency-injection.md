@@ -177,9 +177,9 @@ to add validation rules. A custom `IOptionsFactory<RespireOptions>` registered b
 `AddRespire` takes precedence over Respire's configuration factory; do not combine the two
 unless your factory supplies the configuration-bound options itself.
 
-Options are read when first resolved; existing singleton
-clients do not reconnect or change settings when configuration reloads. Restart the host to
-apply client configuration changes.
+For the default registration, `IOptions<RespireOptions>.Value` and the singleton client use
+the same captured settings. The first read of `Value`, client resolution, or startup validation
+captures the configuration. Restart the host to use changed settings.
 
 For ASP.NET Core cache abstractions, continue to [caching integrations](./caching).
 For readiness endpoints, see [health checks](./health-checks).
