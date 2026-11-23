@@ -702,8 +702,8 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
         RespireKey source, RespireKey destination, RespireListSide from, RespireListSide to,
         TimeSpan? waitFor, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
-        RespireValue fromSide = from == RespireListSide.Left ? "LEFT" : "RIGHT";
-        RespireValue toSide = to == RespireListSide.Left ? "LEFT" : "RIGHT";
+        RespireValue fromSide = SideToken(from, nameof(from));
+        RespireValue toSide = SideToken(to, nameof(to));
 
         if (waitFor is not { } wait)
         {
@@ -714,6 +714,16 @@ internal sealed partial class ListCommands(RespireClient client) : IRespireListC
 
         MultiKeyPop.ValidateWait(wait);
         return MoveBlockingAsync(source, destination, fromSide, toSide, wait, cancellationToken, observation);
+    }
+
+    internal static string SideToken(RespireListSide side, string parameterName = "side")
+    {
+        return side switch
+        {
+            RespireListSide.Left => "LEFT",
+            RespireListSide.Right => "RIGHT",
+            _ => throw new ArgumentOutOfRangeException(parameterName, side, null),
+        };
     }
 
 #if NET

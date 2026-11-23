@@ -164,13 +164,6 @@ internal sealed partial class ListCommands
         return (operation, new CmdN(blocking ? Verbs.BLMPop : Verbs.LMPop, arguments));
     }
 
-    private static string SideToken(RespireListSide side) => side switch
-    {
-        RespireListSide.Left => "LEFT",
-        RespireListSide.Right => "RIGHT",
-        _ => throw new ArgumentOutOfRangeException(nameof(side), side, null),
-    };
-
     internal static RespireListPopManyResult? ParsePopMany(in RespValue reply, ReadOnlySpan<byte> prefix)
     {
         if (reply.IsNull)
