@@ -424,8 +424,8 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
 
     /// <inheritdoc />
     /// <remarks>Retrieves records in concurrent batches of up to 32 after searching; this is not a transactional snapshot.
-    /// ScoreThreshold filters the selected Skip/top page without replacing hits. Records deleted before retrieval are
-    /// omitted, so either condition can return fewer than top records.</remarks>
+    /// ScoreThreshold filters the selected Skip/top page. Hits with undefined cosine distances and records deleted before
+    /// retrieval are also omitted. The page can contain fewer than top records.</remarks>
     public override async IAsyncEnumerable<VectorSearchResult<TRecord>> SearchAsync<TInput>(TInput searchValue, int top, VectorSearchOptions<TRecord>? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -469,7 +469,11 @@ public sealed partial class RespireVectorStoreCollection<TRecord> : VectorStoreC
 
         foreach (var document in result.Documents)
         {
-            var score = RespireVectorDataOperations.ReadSearchScore(document, _prefix, Name);
+            if (RespireVectorDataOperations.ReadSearchScore(document, _prefix, Name, vector.DistanceMetric) is not { } score)
+            {
+                continue;
+            }
+
             // Redis IP is 1 - dot(a,b); VectorData's negative dot product is -dot(a,b).
             // Normalize before applying the public ScoreThreshold, preserving nearest-first order.
             if (vector.DistanceMetric == RespireSearchDistanceMetric.InnerProduct)

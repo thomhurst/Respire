@@ -128,6 +128,7 @@ Search accepts `float[]`, `Memory<float>` or `ReadOnlyMemory<float>`. Lower scor
 
 - `Skip` and `top` select a page from the nearest `Skip + top` candidates.
 - `ScoreThreshold` is a maximum distance applied after the page is selected. Filtered-out hits are not replaced, so you can get fewer than `top` records.
+- Cosine search skips hits with an undefined distance, such as a hit for a stored zero vector. The page can contain fewer than `top` records.
 - Set `VectorProperty` when more than one vector is declared.
 - Records deleted between search and retrieval are omitted, without refilling the page. Results are not a transactional snapshot, and indexing can lag writes.
 
