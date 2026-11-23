@@ -474,6 +474,9 @@ internal sealed class RespBulkPayloadPipe : IDisposable
 
         public override int ReadByte()
         {
+            // stackalloc-audit[c7938ed77f481979]: init: a successful one-byte read writes buffer[0];
+            // read: buffer[0] is read only when Read returns a byte;
+            // failure: EOF returns -1 and exceptions propagate before buffer[0] is read.
             Span<byte> buffer = stackalloc byte[1];
             return Read(buffer) == 0 ? -1 : buffer[0];
         }
