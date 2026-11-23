@@ -450,17 +450,18 @@ public class ClusterScanTests
         const string ExplicitSurrogateCommand = "SCAN 0 MATCH tenant:\U0001F600:* COUNT 9 TYPE string";
         string selected = $"\uDE00:key:{{{TagInSlot(0)}}}";
         string other = $"\uDE01:other:{{{TagInSlot(8192)}}}";
+        string plain = $"plain-key:{{{TagInSlot(8192)}}}";
         cluster.First.Scan = command => command switch
         {
             UnfilteredCommand => Page("0", Prefix + selected, "tenant:\U00020000:key"),
             ExplicitSurrogateCommand => Page("0", Prefix + selected),
             _ => Page("0"),
         };
-        cluster.Second.Scan = command => command == UnfilteredCommand ? Page("0", Prefix + other) : Page("0");
+        cluster.Second.Scan = command => command == UnfilteredCommand ? Page("0", Prefix + other, Prefix + plain) : Page("0");
         await using RespireClient client = await cluster.ConnectAsync();
         await using IRespireClient view = client.WithKeyPrefix(Prefix);
 
-        foreach (string? match in new[] { null, "*", "*:key:*", "\uDE00:*" })
+        foreach (string? match in new[] { null, "*", "*:key:*", "plain*", "\uDE00:*" })
         {
             var keys = new List<string>();
 
@@ -469,14 +470,48 @@ public class ClusterScanTests
                 keys.Add(key);
             }
 
-            await Assert.That(keys).IsEquivalentTo(match is null or "*" ? [selected, other] : new[] { selected });
+            string[] expected = match switch
+            {
+                null or "*" => [selected, other, plain],
+                "plain*" => [plain],
+                _ => [selected],
+            };
+            await Assert.That(keys).IsEquivalentTo(expected);
         }
 
         foreach (Node node in new[] { cluster.First, cluster.Second })
         {
             await Assert.That(node.Server.ReceivedCommands.Where(command => command.StartsWith("SCAN ")))
-                .IsEquivalentTo([UnfilteredCommand, UnfilteredCommand, UnfilteredCommand, ExplicitSurrogateCommand]);
+                .IsEquivalentTo([UnfilteredCommand, UnfilteredCommand, UnfilteredCommand, UnfilteredCommand, ExplicitSurrogateCommand]);
         }
+    }
+
+    [Test]
+    [Arguments(null)]
+    [Arguments("plain*")]
+    [Arguments("\uDE00:*")]
+    public async Task ValkeyScanMatchesSeparatelyEncodedAndJoinedKeys(string? match)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Capability = Supported;
+        const string Prefix = "tenant:*:\uD83D";
+        string tag = $"{{{TagInSlot(0)}}}";
+        string selected = "\uDE00:" + tag;
+        string other = "\uDE01:" + tag;
+        string replacement = "\uFFFD:" + tag;
+        string plain = "plain-key:" + tag;
+        cluster.First.ClusterScan = _ => Page("0", Prefix + selected, Prefix + other, Prefix + replacement, Prefix + plain);
+        await using var client = await cluster.ConnectAsync();
+        await using var view = client.WithKeyPrefix(Prefix);
+        var page = await view.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start, match);
+
+        string[] expected = match switch
+        {
+            null => [selected, other, replacement, plain],
+            "plain*" => [plain],
+            _ => [selected],
+        };
+        await Assert.That(page.Keys).IsEquivalentTo(expected);
     }
 
     [Test]

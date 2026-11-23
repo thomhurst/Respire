@@ -51,9 +51,28 @@ internal sealed class KeyPrefix
     /// <summary>Owns a logical key, including a scalar split across the string prefix boundary.</summary>
     internal bool TryStripFromKey(ReadOnlySpan<byte> physical, out RespireKey key)
     {
+        if (!TryGetSuffix(physical, out var suffix, out var lowSurrogate))
+        {
+            key = default;
+            return false;
+        }
+
+        // Keep the low code unit separate from arbitrary binary tails. The marker owns
+        // only text and bytes, never a client, reply buffer, or connection.
+        key = lowSurrogate is { } low
+            ? new RespireKey(new KeyPrefix(low.ToString(), Text!), null, suffix.ToArray())
+            : new RespireKey(suffix.ToArray());
+        return true;
+    }
+
+    /// <summary>Finds the wire suffix and recovers the low surrogate when it joined the prefix.</summary>
+    internal bool TryGetSuffix(ReadOnlySpan<byte> physical, out ReadOnlySpan<byte> suffix, out char? lowSurrogate)
+    {
+        lowSurrogate = null;
+
         if (physical.StartsWith(Bytes))
         {
-            key = new RespireKey(physical[Bytes.Length..].ToArray());
+            suffix = physical[Bytes.Length..];
             return true;
         }
 
@@ -66,20 +85,17 @@ internal sealed class KeyPrefix
                 && scalar.Value >= 0x10000
                 && (char)(0xD800 + ((scalar.Value - 0x10000) >> 10)) == Text![^1])
             {
-                var low = (char)(0xDC00 + ((scalar.Value - 0x10000) & 0x3FF));
-                // Keep the low code unit separate from arbitrary binary tails. The marker owns
-                // only text and bytes, never a client, reply buffer, or connection.
-                key = new RespireKey(new KeyPrefix(low.ToString(), Text), null,
-                    physical[(boundary + consumed)..].ToArray());
+                lowSurrogate = (char)(0xDC00 + ((scalar.Value - 0x10000) & 0x3FF));
+                suffix = physical[(boundary + consumed)..];
                 return true;
             }
         }
 
-        key = default;
+        suffix = default;
         return false;
     }
 
-    /// <summary>Rejoins an owned scan suffix only when used with its original namespace.</summary>
+    /// <summary>Rejoins an owned suffix only when used with its original namespace.</summary>
     internal bool TryComposeScanKey(KeyPrefix prefix, ReadOnlyMemory<byte> bytes, bool snapshot, out RespireKey key)
     {
         if (ScanOwnerPrefix is not null && StringComparer.Ordinal.Equals(ScanOwnerPrefix, prefix.Text))

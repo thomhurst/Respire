@@ -16,6 +16,37 @@ public class MultiKeySortedSetPopTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task PopManyReturnsKeyAcrossSurrogateBoundary(bool batched)
+    {
+        const string Prefix = "tenant:\uD83D";
+        const string Suffix = "\uDE00:ranked";
+        byte[] physical = Encoding.UTF8.GetBytes(Prefix + Suffix);
+        byte[] response = [.. "*2\r\n"u8, .. BinaryPrefixTests.Bulk(physical), .. "*1\r\n*2\r\n$1\r\na\r\n$1\r\n1\r\n"u8];
+        await using var server = new FakeRespServer(response);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var view = client.WithKeyPrefix(Prefix);
+        RespireSortedSetPopManyResult? result;
+
+        if (batched)
+        {
+            using var batch = view.CreateBatch();
+            var pending = batch.SortedSets.PopMany([Suffix]);
+            await batch.ExecuteAsync();
+            result = pending.Result;
+        }
+        else
+        {
+            result = await view.SortedSets.PopManyAsync([Suffix]);
+        }
+
+        var popped = result!.Value;
+        await Assert.That(view.ResolveKey(popped.Key).ToBytes()).IsEquivalentTo(physical, CollectionOrdering.Matching);
+        await Assert.That(popped.Entries).IsEquivalentTo([new RespireSortedSetEntry("a", 1)]);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task DeferredPop_SnapshotsKeyArgumentsAndOwnsResults(bool transactional)
     {
         byte[][] replies = transactional
@@ -50,11 +81,11 @@ public class MultiKeySortedSetPopTests
     {
         byte[] key = [(byte)'p', (byte)':', 0xff, 0];
         using var reply = RespValue.Array(RespValue.BulkString(key), RespValue.Array(RespValue.Array(RespValue.BulkString("a"), RespValue.BulkString("1"))));
-        var result = SortedSetCommands.ParsePopMany(in reply, "p:"u8)!.Value;
+        var result = SortedSetCommands.ParsePopMany(in reply, new KeyPrefix("p:"u8.ToArray()))!.Value;
         key[2] = 1;
         await Assert.That(result.Key).IsEqualTo((RespireKey)new byte[] { 0xff, 0 });
         await Assert.That(result.Entries).IsEquivalentTo([new RespireSortedSetEntry("a", 1)]);
-        await Assert.That(() => SortedSetCommands.ParsePopMany(in reply, "other:"u8))
+        await Assert.That(() => SortedSetCommands.ParsePopMany(in reply, new KeyPrefix("other:"u8.ToArray())))
             .Throws<RespireProtocolException>();
         using var malformed = RespValue.Array(RespValue.BulkString("key"));
         await Assert.That(() => SortedSetCommands.ParsePopMany(in malformed, default))

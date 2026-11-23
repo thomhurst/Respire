@@ -3,6 +3,7 @@ using Respire.Commands;
 using Respire.Internal;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
+using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
@@ -285,10 +286,13 @@ public class BinaryPrefixTests
         const string Prefix = "tenant:*:\uD83D";
         const string Selected = "\uDE00:key";
         const string Other = "\uDE01:other";
+        const string Plain = "plain-key";
         byte[] physical = Encoding.UTF8.GetBytes(Prefix + Selected);
         byte[] otherPhysical = Encoding.UTF8.GetBytes(Prefix + Other);
+        byte[] plainPhysical = Encoding.UTF8.GetBytes(Prefix + Plain);
         byte[] unrelated = Encoding.UTF8.GetBytes("tenant:*:\U00020000:key");
-        byte[] response = [.. "*2\r\n$1\r\n0\r\n*3\r\n"u8, .. Bulk(physical), .. Bulk(otherPhysical), .. Bulk(unrelated)];
+        byte[] response = [.. "*2\r\n$1\r\n0\r\n*4\r\n"u8,
+            .. Bulk(physical), .. Bulk(otherPhysical), .. Bulk(plainPhysical), .. Bulk(unrelated)];
         const string UnfilteredCommand = "SCAN 0 COUNT 7 TYPE string";
         const string ExplicitSurrogateCommand = "SCAN 0 MATCH tenant:\\*:\U0001F600:* COUNT 7 TYPE string";
         byte[] explicitResponse = [.. "*2\r\n$1\r\n0\r\n*1\r\n"u8, .. Bulk(physical)];
@@ -304,7 +308,7 @@ public class BinaryPrefixTests
         await using RespireClient root = await FakeRespServer.ConnectClientAsync(server.Port);
         await using IRespireClient view = root.WithKeyPrefix((RespireKey)Prefix);
 
-        foreach (string? match in new[] { null, "*", "*:k[ae]y", "\uDE00:*" })
+        foreach (string? match in new[] { null, "*", "*:k[ae]y", "plain*", "\uDE00:*" })
         {
             var keys = new List<string>();
 
@@ -313,11 +317,23 @@ public class BinaryPrefixTests
                 keys.Add(key);
             }
 
-            await Assert.That(keys).IsEquivalentTo(match is null or "*" ? [Selected, Other] : new[] { Selected });
-            await Assert.That(view.ResolveKey(keys.Single(key => key == Selected)).ToBytes().SequenceEqual(physical)).IsTrue();
+            string[] expected = match switch
+            {
+                null or "*" => [Selected, Other, Plain],
+                "plain*" => [Plain],
+                _ => [Selected],
+            };
+            await Assert.That(keys).IsEquivalentTo(expected);
+
+            foreach (string key in keys)
+            {
+                await Assert.That(view.ResolveKey(key).ToBytes()).IsEquivalentTo(
+                    Encoding.UTF8.GetBytes(Prefix + key), CollectionOrdering.Matching);
+            }
         }
 
-        await Assert.That(server.ReceivedCommands).IsEquivalentTo([UnfilteredCommand, UnfilteredCommand, UnfilteredCommand, ExplicitSurrogateCommand]);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(
+            [UnfilteredCommand, UnfilteredCommand, UnfilteredCommand, UnfilteredCommand, ExplicitSurrogateCommand]);
     }
 
     [Test]

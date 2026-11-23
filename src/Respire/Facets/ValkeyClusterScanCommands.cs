@@ -131,7 +131,8 @@ internal static class ValkeyClusterScanParser
     {
         var cursor = ReadCursor(in reply);
         var values = reply.AsArray()[1].AsArray();
-        var pattern = prefix is { HasSurrogateBoundary: true } && match is not null
+        byte[]? wirePattern = KeyCommands.ScanJoinedWirePattern(prefix, match);
+        var pattern = wirePattern is null && prefix is { HasSurrogateBoundary: true } && match is not null
             ? Encoding.UTF8.GetBytes(match) : null;
         var keys = new List<RespireKey>(values.Length);
 
@@ -143,6 +144,12 @@ internal static class ValkeyClusterScanParser
             }
 
             var bytes = key.AsSpan();
+
+            if (wirePattern is not null && !ByteGlob.IsMatch(bytes, wirePattern))
+            {
+                continue;
+            }
+
             RespireKey owned;
 
             if (prefix is null)

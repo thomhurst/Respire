@@ -27,7 +27,7 @@ internal sealed partial class BatchSortedSetCommands
     {
         var (operation, command) = SortedSetCommands.PopManyCommand(sink.Client, keys, count, descending, waitFor: null);
         return sink.Add<CmdN, RespireSortedSetPopManyResult?>(operation, command, keys,
-            static (c, reply) => SortedSetCommands.ParsePopMany(in reply, c.KeyPrefixBytes));
+            static (c, reply) => SortedSetCommands.ParsePopMany(in reply, c.EncodedKeyPrefix));
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]

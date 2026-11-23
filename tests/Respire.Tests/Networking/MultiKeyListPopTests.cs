@@ -14,6 +14,22 @@ public class MultiKeyListPopTests
     private static readonly byte[] ManyReply = "*2\r\n$3\r\nkey\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray();
 
     [Test]
+    public async Task PopManyReturnsKeyAcrossSurrogateBoundary()
+    {
+        const string Prefix = "tenant:\uD83D";
+        const string Suffix = "\uDE00:list";
+        byte[] physical = Encoding.UTF8.GetBytes(Prefix + Suffix);
+        byte[] response = [.. "*2\r\n"u8, .. BinaryPrefixTests.Bulk(physical), .. "*1\r\n$1\r\na\r\n"u8];
+        await using var server = new FakeRespServer(response);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var view = client.WithKeyPrefix(Prefix);
+        var result = (await view.Lists.PopManyAsync([Suffix]))!.Value;
+
+        await Assert.That(view.ResolveKey(result.Key).ToBytes()).IsEquivalentTo(physical, CollectionOrdering.Matching);
+        await Assert.That(result.Values).IsEquivalentTo(["a"]);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DeferredPop_SnapshotsKeyArgumentsAndOwnsResults(bool transactional)
@@ -50,11 +66,11 @@ public class MultiKeyListPopTests
     {
         byte[] key = [(byte)'p', (byte)':', 0xff, 0];
         using var reply = RespValue.Array(RespValue.BulkString(key), RespValue.Array(RespValue.BulkString("a")));
-        var result = ListCommands.ParsePopMany(in reply, "p:"u8)!.Value;
+        var result = ListCommands.ParsePopMany(in reply, new KeyPrefix("p:"u8.ToArray()))!.Value;
         key[2] = 1;
         await Assert.That(result.Key).IsEqualTo((RespireKey)new byte[] { 0xff, 0 });
         await Assert.That(result.Values).IsEquivalentTo(["a"]);
-        await Assert.That(() => ListCommands.ParsePopMany(in reply, "other:"u8))
+        await Assert.That(() => ListCommands.ParsePopMany(in reply, new KeyPrefix("other:"u8.ToArray())))
             .Throws<RespireProtocolException>();
         using var malformed = RespValue.Array(RespValue.BulkString("key"));
         await Assert.That(() => ListCommands.ParsePopMany(in malformed, default))

@@ -40,21 +40,21 @@ internal static class MultiKeyPop
         }
     }
 
-    internal static RespireKey ParsePoppedKey(in RespValue value, ReadOnlySpan<byte> prefix)
+    internal static RespireKey ParseReturnedKey(in RespValue value, KeyPrefix? prefix)
     {
         var bytes = value.AsSpan();
 
-        if (!prefix.IsEmpty)
+        if (prefix is null)
         {
-            if (!bytes.StartsWith(prefix))
-            {
-                throw new RespireProtocolException("Returned key does not start with the client key prefix.");
-            }
-
-            bytes = bytes[prefix.Length..];
+            return new RespireKey(bytes.ToArray());
         }
 
-        return new RespireKey(bytes.ToArray());
+        if (prefix.TryStripFromKey(bytes, out var key))
+        {
+            return key;
+        }
+
+        throw new RespireProtocolException("Returned key does not start with the client key prefix.");
     }
 
     // Redis zero means infinite blocking; finite waits use at least one millisecond.

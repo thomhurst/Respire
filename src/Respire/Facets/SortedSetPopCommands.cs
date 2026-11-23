@@ -101,7 +101,7 @@ internal sealed partial class SortedSetCommands
             return owner.Attach(waitFor.HasValue
                 ? PopManyBlockingAsync(operation, command, cancellationToken, owner.Observation)
                 : client.ConvertResponseAsync(operation, command, cancellationToken, client,
-                    static (RespireClient c, in RespValue reply) => ParsePopMany(in reply, c.KeyPrefixBytes), observation: owner.Observation));
+                    static (RespireClient c, in RespValue reply) => ParsePopMany(in reply, c.EncodedKeyPrefix), observation: owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
     }
@@ -126,7 +126,7 @@ internal sealed partial class SortedSetCommands
         string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
-            static (RespireClient owner, in RespValue reply) => ParsePopMany(in reply, owner.KeyPrefixBytes), observation)
+            static (RespireClient owner, in RespValue reply) => ParsePopMany(in reply, owner.EncodedKeyPrefix), observation)
             .ConfigureAwait(false);
     }
 
@@ -136,11 +136,11 @@ internal sealed partial class SortedSetCommands
         string operation, CmdN command, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         return await client.ConvertBlockingResponseAsync(operation, command, cancellationToken, client,
-            static (RespireClient owner, in RespValue reply) => ParsePopOne(in reply, owner.KeyPrefixBytes), observation)
+            static (RespireClient owner, in RespValue reply) => ParsePopOne(in reply, owner.EncodedKeyPrefix), observation)
             .ConfigureAwait(false);
     }
 
-    internal static RespireSortedSetPopManyResult? ParsePopMany(in RespValue reply, ReadOnlySpan<byte> prefix)
+    internal static RespireSortedSetPopManyResult? ParsePopMany(in RespValue reply, KeyPrefix? prefix)
     {
         if (reply.IsNull)
         {
@@ -149,10 +149,10 @@ internal sealed partial class SortedSetCommands
 
         var elements = PopReplyElements(in reply, 2);
         ValidatePopEntries(in elements[1]);
-        return new RespireSortedSetPopManyResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix), ParseEntries(in elements[1]));
+        return new RespireSortedSetPopManyResult(MultiKeyPop.ParseReturnedKey(in elements[0], prefix), ParseEntries(in elements[1]));
     }
 
-    internal static RespireSortedSetPopResult? ParsePopOne(in RespValue reply, ReadOnlySpan<byte> prefix)
+    internal static RespireSortedSetPopResult? ParsePopOne(in RespValue reply, KeyPrefix? prefix)
     {
         if (reply.IsNull)
         {
@@ -160,7 +160,7 @@ internal sealed partial class SortedSetCommands
         }
 
         var elements = PopReplyElements(in reply, 3);
-        return new RespireSortedSetPopResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix),
+        return new RespireSortedSetPopResult(MultiKeyPop.ParseReturnedKey(in elements[0], prefix),
             new RespireSortedSetEntry(elements[1].AsString(), ResponseReader.Double(in elements[2])));
     }
 
@@ -244,7 +244,7 @@ internal sealed partial class SortedSetCommands
 
         var elements = PopReplyElements(in reply, 2);
         ValidatePopEntries(in elements[1]);
-        return new RespireSortedSetPopManyResult<T>(MultiKeyPop.ParsePoppedKey(in elements[0], client.KeyPrefixBytes), ParseEntries<T>(client, in elements[1]));
+        return new RespireSortedSetPopManyResult<T>(MultiKeyPop.ParseReturnedKey(in elements[0], client.EncodedKeyPrefix), ParseEntries<T>(client, in elements[1]));
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -257,7 +257,7 @@ internal sealed partial class SortedSetCommands
         }
 
         var elements = PopReplyElements(in reply, 3);
-        return new RespireSortedSetPopResult<T>(MultiKeyPop.ParsePoppedKey(in elements[0], client.KeyPrefixBytes),
+        return new RespireSortedSetPopResult<T>(MultiKeyPop.ParseReturnedKey(in elements[0], client.EncodedKeyPrefix),
             new RespireSortedSetEntry<T>(client.DeserializeBorrowed<T>(in elements[1])!, ResponseReader.Double(in elements[2])));
     }
 

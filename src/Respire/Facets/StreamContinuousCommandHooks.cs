@@ -19,7 +19,8 @@ internal sealed partial class StreamCommands
 
         try
         {
-            var page = new ContinuousHookPage(initial.ToArray(), batchSize, cancellationToken, owner.Observation);
+            var streams = initial.ToArray();
+            var page = new ContinuousHookPage(streams, BuildStreamIndexes(streams), batchSize, cancellationToken, owner.Observation);
 
             while (true)
             {
@@ -53,11 +54,10 @@ internal sealed partial class StreamCommands
     }
 
     private sealed class ContinuousHookPage((RespireKey Key, RespireStreamId After)[] streams,
-        int batchSize, CancellationToken token, RespireTelemetry.ErrorObservation observation)
+        Dictionary<RespireKey, int> indexes, int batchSize, CancellationToken token, RespireTelemetry.ErrorObservation observation)
     {
         internal readonly (RespireKey Key, RespireStreamId After)[] Streams = streams;
-        internal readonly Dictionary<RespireKey, int> Indexes = streams.Select((stream, index) => (stream.Key, index))
-            .ToDictionary(x => x.Key, x => x.index);
+        internal readonly Dictionary<RespireKey, int> Indexes = indexes;
         internal readonly int BatchSize = batchSize;
         internal readonly CancellationToken Token = token;
         internal readonly RespireTelemetry.ErrorObservation Observation = observation;
@@ -118,7 +118,7 @@ internal sealed partial class StreamCommands
         // first entry. No next page is fetched until all these entries are delivered.
         foreach (var result in results)
         {
-            if (!page.Indexes.TryGetValue(result.Key, out var index))
+            if (!page.Indexes.TryGetValue(GetStreamIdentity(client, result.Key), out var index))
             {
                 throw new RespireProtocolException("XREAD returned an unrequested stream.");
             }
