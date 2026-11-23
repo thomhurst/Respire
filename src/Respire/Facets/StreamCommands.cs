@@ -1292,6 +1292,16 @@ internal sealed partial class StreamCommands(RespireClient client) : IRespireStr
 
                 foreach (var entry in entries)
                 {
+                    try
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+                    catch (Exception error)
+                    {
+                        failure = error;
+                        throw;
+                    }
+
                     yield return entry;
                 }
 

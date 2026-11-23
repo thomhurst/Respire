@@ -764,10 +764,12 @@ internal sealed partial class RespireStreamWorker<THandler, TMessage>(
             }
             else
             {
-                await client.Scripts.ExecuteIntegerAsync(HasGroupLease(delivery) ? JobGroupControls.Nack : StreamWorkerScripts.Nack, LeaseFenceKeys(delivery, [stream]),
+                long nacked = await client.Scripts.ExecuteIntegerAsync(
+                    HasGroupLease(delivery) ? JobGroupControls.Nack : StreamWorkerScripts.Nack,
+                    LeaseFenceKeys(delivery, [stream]),
                     [group, consumer, delivery.Entry.Id.Value, delivery.Attempt,
                         (long)Math.Ceiling(options.MinimumIdleTime.TotalMilliseconds)], processingToken).ConfigureAwait(false);
-                observation.Outcome = "nack";
+                observation.Outcome = nacked == 1 ? "nack" : "stale";
             }
         }
         finally

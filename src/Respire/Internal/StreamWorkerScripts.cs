@@ -119,17 +119,17 @@ internal static class StreamWorkerScripts
         return redis.call('XACK', KEYS[1], ARGV[1], ARGV[3])
         """;
 
+    // Return 0 for a stale delivery and 1 for a current delivery, even when
+    // ordinary pending recovery handles the nack instead of XNACK.
     internal const string NackSource = CapabilitySource + """
-        if not supports(8) then return 0 end
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
         if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
         -- XNACK bypasses every CLAIM idle threshold. Leave young failures pending
         -- for ordinary recovery without holding a reader until they become eligible.
-        if pending[1][3] < tonumber(ARGV[5]) then return 0 end
+        if pending[1][3] < tonumber(ARGV[5]) or not supports(8) then return 1 end
         local reply = redis.pcall('XNACK', KEYS[1], ARGV[1], 'FAIL', 'IDS', 1, ARGV[3])
-        if unavailable(reply) then return 0 end
-        if type(reply) == 'table' and reply.err then return reply end
-        return 0
+        if type(reply) == 'table' and reply.err and not unavailable(reply) then return reply end
+        return 1
         """;
 
     internal static readonly RespireScript CapabilityClaim = RespireScript.Create(CapabilityClaimSource);

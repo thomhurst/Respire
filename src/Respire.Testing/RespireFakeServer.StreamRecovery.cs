@@ -197,20 +197,15 @@ public sealed partial class RespireFakeServer
 
             if (script == StreamWorkerScripts.Nack)
             {
-                if (_streamWorkerVersion < new Version(8, 8))
+                if (!pending.IsReleased && Math.Max(0, Now - pending.DeliveredAt) >= Integer(args[8])
+                    && _streamWorkerVersion >= new Version(8, 8))
                 {
-                    return FakeReply.Integer(0);
+                    pending.Consumer = [];
+                    pending.DeliveredAt = 0;
+                    pending.IsReleased = true;
                 }
 
-                if (pending.IsReleased || Math.Max(0, Now - pending.DeliveredAt) < Integer(args[8]))
-                {
-                    return FakeReply.Integer(0);
-                }
-
-                pending.Consumer = [];
-                pending.DeliveredAt = 0;
-                pending.IsReleased = true;
-                return FakeReply.Integer(0);
+                return FakeReply.Integer(1);
             }
 
             group.Pending.Remove(id);

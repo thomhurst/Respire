@@ -10,6 +10,41 @@ namespace Respire.Tests;
 public class FakeStreamReadTests
 {
     [Test]
+    [Arguments(2, false)]
+    [Arguments(3, true)]
+    public async Task BatchSizeGroupReaderStopsYieldingBufferedEntriesOnCancellation(int protocol, bool replay)
+    {
+        await using var server = new RespireFakeServer();
+#pragma warning disable RESP010 // This client belongs to the scenario's isolated fake server and is disposed with the test.
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespireProtocol)protocol });
+#pragma warning restore RESP010
+        var first = await client.Streams.AddAsync("events", ("f", "first"));
+        var second = await client.Streams.AddAsync("events", ("f", "second"));
+        await client.Streams.CreateGroupAsync("events", "g", RespireStreamId.Beginning);
+
+        if (replay)
+        {
+            await client.Streams.ReadGroupOnceAsync("events", "g", "worker", new() { Count = 2 });
+        }
+
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var entries = replay
+            ? client.Streams.ReadGroupAsync("events", "g", "worker", RespireStreamId.Beginning, batchSize: 2,
+                cancellationToken: cancel.Token)
+            : client.Streams.ReadGroupAsync("events", "g", "worker", batchSize: 2, cancellationToken: cancel.Token);
+        await using var reader = entries.GetAsyncEnumerator();
+        await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        await Assert.That(reader.Current.Id).IsEqualTo(first);
+        await reader.Current.AckAsync();
+
+        cancel.Cancel();
+        await Assert.That(async () => await reader.MoveNextAsync()).Throws<OperationCanceledException>();
+        var pending = (await client.Streams.PendingAsync("events", "g")).Single();
+        await Assert.That(pending.Id).IsEqualTo(second);
+        await Assert.That(pending.Consumer).IsEqualTo("worker");
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task ExplicitMaximumCountIsNotTreatedAsUnspecified(int protocol)
