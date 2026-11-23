@@ -129,7 +129,6 @@ internal static class PathHashCodec
 
         args.Add("COUNT");
         args.Add(count);
-        args.Add("WITHVALUES");
         return args.ToArray();
     }
 
@@ -250,7 +249,20 @@ internal static class PathHashCodec
             throw Malformed();
         }
 
-        return new(parts[0].AsSpan().ToArray(), Entries(in parts[1]));
+        if (parts[1].Type != RespireDataType.Array || parts[1].IsNull)
+        {
+            throw Malformed();
+        }
+
+        var paths = parts[1].AsArray();
+        var entries = new RespirePathHashEntry[paths.Length];
+
+        for (var i = 0; i < entries.Length; i++)
+        {
+            entries[i] = new(Bytes(in paths[i]), []);
+        }
+
+        return new(parts[0].AsSpan().ToArray(), entries);
     }
 
     private static RespirePathHashEntry Entry(in RespValue value)

@@ -13,6 +13,60 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task TraversalOnReleasedValkeyReturnsOwnedPaths(int protocol)
+    {
+        var lease = await servers.LeaseAsync(ReleasedImage);
+        await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
+        var view = client.WithKeyPrefix("tenant:");
+        var paths = view.PathHashes;
+        byte[] prefix = [0xff, 0];
+        byte[] firstPath = [0xff, 0, 1];
+        byte[] lastPath = [0xff, 0, 2];
+        var missing = await paths.ScanPageAsync("tree");
+        missing.IsComplete.Should().BeTrue();
+        missing.Entries.Should().BeEmpty();
+
+        await paths.SetAsync("tree", lastPath, "field", "last");
+        await paths.SetAsync("tree", firstPath, "field", "first");
+        await paths.SetAsync("tree", "outside", "field", "outside");
+
+        var first = await paths.ScanPageAsync("tree", prefix: prefix, count: 1);
+        first.IsComplete.Should().BeFalse();
+        var last = await paths.ScanPageAsync("tree", first.Cursor, prefix, count: 1);
+        last.IsComplete.Should().BeTrue();
+        first.Entries.Single().Path.Should().Equal(firstPath);
+        last.Entries.Single().Path.Should().Equal(lastPath);
+        first.Entries.Single().Fields.Should().BeEmpty();
+        (await paths.GetStringAsync("tree", firstPath, "field")).Should().Be("first");
+
+        var entries = new List<RespirePathHashEntry>();
+
+        await foreach (var entry in paths.ScanAsync("tree", prefix: prefix, count: 1))
+        {
+            entries.Add(entry);
+        }
+
+        entries.Select(entry => entry.Path).Should().BeEquivalentTo(new[] { firstPath, lastPath },
+            options => options.WithStrictOrdering());
+        entries.Should().OnlyContain(entry => entry.Fields.Length == 0);
+
+        using var batch = view.CreateBatch();
+        var batchPage = batch.PathHashes.ScanPage("tree", prefix: prefix, count: 1);
+        await batch.ExecuteAsync();
+        batchPage.Result.Entries.Single().Path.Should().Equal(firstPath);
+        batchPage.Result.Entries.Single().Fields.Should().BeEmpty();
+
+        await using var transaction = view.CreateTransaction();
+        var transactionPage = transaction.PathHashes.ScanPage("tree", batchPage.Result.Cursor, prefix, count: 1);
+        await transaction.CommitAsync();
+        transactionPage.Result.IsComplete.Should().BeTrue();
+        transactionPage.Result.Entries.Single().Path.Should().Equal(lastPath);
+        transactionPage.Result.Entries.Single().Fields.Should().BeEmpty();
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task ExactOperationsAndAncestorLookup(int protocol)
     {
         var lease = await servers.LeaseAsync(ReleasedImage);
@@ -126,29 +180,17 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
     [Arguments(3, false)]
     [Arguments(2, true)]
     [Arguments(3, true)]
-    public async Task ReleaseCandidateTraversal(int protocol, bool transaction)
+    public async Task TraversalReturnsCompleteQueuedPage(int protocol, bool transaction)
     {
-        var lease = await servers.LeaseAsync(Valkey92IntegrationTests.Image);
+        var lease = await servers.LeaseAsync(ReleasedImage);
         await using var client = await RespireClient.ConnectAsync(lease.ConnectionString(protocol));
         var paths = client.PathHashes;
-        var missing = await paths.ScanPageAsync("tree");
-        missing.IsComplete.Should().BeTrue();
-
         byte[] prefix = [0, 255];
-        byte[] path = [0, 255, (byte)'a'];
-        await paths.SetAsync("tree", path, "f", "first");
-        await paths.SetAsync("tree", new byte[] { 0, 255, (byte)'b' }, "f", "second");
+        byte[] firstPath = [0, 255, (byte)'a'];
+        byte[] lastPath = [0, 255, (byte)'b'];
+        await paths.SetAsync("tree", firstPath, "f", "first");
+        await paths.SetAsync("tree", lastPath, "f", "second");
         await paths.SetAsync("tree", "outside", "f", "other");
-
-        var descendants = new List<byte[]>();
-
-        await foreach (var entry in paths.ScanAsync("tree", prefix: prefix, count: 1))
-        {
-            descendants.Add(entry.Path);
-        }
-
-        descendants.Should().BeEquivalentTo(new byte[][] { path, [0, 255, (byte)'b'] },
-            options => options.WithStrictOrdering());
 
         using var batch = transaction ? null : client.CreateBatch();
         await using var tx = transaction ? client.CreateTransaction() : null;
@@ -164,7 +206,8 @@ public class PathHashIntegrationTests(VersionedServerFixture servers)
             await batch!.ExecuteAsync();
         }
 
-        page.Result.Entries.First().Path.Should().Equal(path);
+        page.Result.Entries.Select(entry => entry.Path).Should().BeEquivalentTo(new[] { firstPath, lastPath },
+            options => options.WithStrictOrdering());
         page.Result.IsComplete.Should().BeTrue();
     }
 

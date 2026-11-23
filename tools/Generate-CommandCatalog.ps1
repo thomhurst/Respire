@@ -46,13 +46,13 @@ $cacheUnknownOverrides = @('PFCOUNT')
 # with index -1; the standard cursor-continuation layout does not apply to it.
 $primaryOnlyReadOverrides = @('TOUCH')
 
-# Core metadata omits these module commands. COMMAND INFO confirms replica-read
-# eligibility for JSON.GET on Redis and Valkey Bundle and TS.GET on Redis.
-$auditedModuleReplicaReads = @{
+# The pinned core inputs omit these commands. See docs/COMMAND_COVERAGE.md for their sources.
+$auditedReplicaReads = @{
     'JSON.GET' = @('Redis', 'Valkey')
     'TS.GET' = @('Redis')
+    'PHPATHSCAN' = @('Valkey')
 }
-$cursorArgumentIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; PHSCAN = 1; ARSCAN = -1 }
+$cursorArgumentIndices = @{ SCAN = 0; HSCAN = 1; SSCAN = 1; ZSCAN = 1; PHSCAN = 2; PHPATHSCAN = 1; ARSCAN = -1 }
 
 # Retry risk is a separate audit. Cache ReadOnly means no tracked keyspace mutation,
 # which does not make scripts, consuming cursors, or connection state replayable.
@@ -198,6 +198,7 @@ Add-Commands $commands 'string' 'Valkey' 'DELEX'
 # https://github.com/valkey-io/valkey/tree/9.2.0/src/commands
 Add-Commands $commands 'pathhash' 'Valkey' 'PHPATHCOUNT,PHPATHEXISTS' 'READONLY'
 Add-Commands $commands 'pathhash' 'Valkey' 'PHPATHDEL' 'WRITE'
+Add-Commands $commands 'pathhash' 'Valkey' 'PHPATHSCAN'
 
 # Redis 8 integrated data structures and processing engines.
 Add-Commands $commands 'bloom' 'Redis' 'BF.ADD,BF.CARD,BF.EXISTS,BF.INFO,BF.INSERT,BF.LOADCHUNK,BF.MADD,BF.MEXISTS,BF.RESERVE,BF.SCANDUMP'
@@ -228,7 +229,7 @@ $merged = $commands |
         $providers = @($_.Group.Provider | Sort-Object -Unique)
         # Require provider metadata or a manual audit for each provider. Metadata
         # takes precedence over the audit if the provider starts publishing flags.
-        $auditedProviders = $auditedModuleReplicaReads[$_.Name]
+        $auditedProviders = $auditedReplicaReads[$_.Name]
         $isReadOnly = $true
         foreach ($provider in ($_.Group | Group-Object Provider)) {
             $metadata = @($provider.Group | Where-Object { $null -ne $_.IsReadOnly })
@@ -276,7 +277,7 @@ foreach ($group in ($merged | Group-Object Group | Sort-Object { Get-ClassName $
         $sources = ($command.Providers | ForEach-Object { "RespireCommandSource.$_" }) -join ' | '
         $readOnlyArgument = if ($command.IsReadOnly) { ', isReadOnly: true' } else { '' }
         [void] $builder.AppendLine("        /// <summary><c>$($command.Name)</c>.</summary>")
-        if ($command.Name.Contains(' ') -or $auditedModuleReplicaReads.ContainsKey($command.Name)) {
+        if ($command.Name.Contains(' ') -or $auditedReplicaReads.ContainsKey($command.Name)) {
             [void] $builder.AppendLine("        [RespireCommandCatalogName(`"$($command.Name)`")]")
         }
         [void] $builder.AppendLine("        public static readonly RespireCommand $identifier = new(`"$($command.Name)`", $sources, RespireCacheMutation.$($command.CacheMutation)$readOnlyArgument, retryCategory: RespireCommandRetryCategory.$($command.RetryCategory));")

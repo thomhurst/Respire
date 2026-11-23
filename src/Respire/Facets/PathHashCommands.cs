@@ -58,7 +58,7 @@ public partial interface IRespirePathHashCommands
     /// <summary>Gets ancestor byte prefixes from shortest to longest; count retains deepest matches after the byte-length limit. Valkey: PHPREFIXES.</summary>
     ValueTask<RespirePathHashEntry[]> PrefixesAsync(RespireKey key, RespireKey query, long? count = null, long? maxPathLength = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Traverses lexicographic paths with an opaque cursor; count is a server hint. An omitted or empty cursor starts traversal; the single ASCII byte "0" ends traversal. Manual paging does not guarantee replica affinity; use ScanAsync to pin an enumeration. Valkey: PHSCAN.</summary>
+    /// <summary>Traverses paths in byte lexicographic order, returning up to count paths with empty field arrays. An omitted or empty cursor starts traversal; the single ASCII byte "0" ends traversal. Manual paging does not guarantee replica affinity; use ScanAsync to pin an enumeration. Valkey: PHPATHSCAN.</summary>
     ValueTask<RespirePathHashPage> ScanPageAsync(RespireKey key, ReadOnlyMemory<byte> cursor = default, RespireKey? prefix = null, int count = 100, CancellationToken cancellationToken = default);
 
     /// <summary>Serializes one field and applies a field condition. Valkey: PHSET.</summary>
@@ -77,7 +77,7 @@ public partial interface IRespirePathHashCommands
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<RespireGetResult<T>> TryGetAsync<T>(RespireKey key, RespireKey path, RespireKey field, CancellationToken cancellationToken = default);
 
-    /// <summary>Streams lexicographic descendants of a byte prefix. Pages are separate reads, not a snapshot; concurrent changes may alter traversal.</summary>
+    /// <summary>Streams paths in byte lexicographic order with empty field arrays. Each page is a separate read, so concurrent writes may alter traversal.</summary>
     IAsyncEnumerable<RespirePathHashEntry> ScanAsync(RespireKey key, RespireKey? prefix = null, int count = 100, CancellationToken cancellationToken = default);
 }
 
@@ -367,8 +367,8 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
             }
 
             var args = PathHashCodec.Scan(cursor, prefix, count);
-            return owner.Attach(client.ConvertResponseAsync("PHSCAN",
-                new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, client.Key(in key), args), cancellationToken,
+            return owner.Attach(client.ConvertResponseAsync("PHPATHSCAN",
+                new Cmd1N(RespireCommands.PathHash.PHPATHSCAN.Verb, client.Key(in key), args), cancellationToken,
                 client, static (RespireClient client, in RespValue reply) => PathHashCodec.Page(in reply), observation: owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }
@@ -471,8 +471,8 @@ internal sealed partial class PathHashCommands(RespireClient client) : IRespireP
             }
 
             var args = PathHashCodec.Scan(cursor, prefix, count);
-            return owner.Attach(client.ConvertCursorPageAsync("PHSCAN",
-                new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, client.Key(in key), args), affinity, cancellationToken,
+            return owner.Attach(client.ConvertCursorPageAsync("PHPATHSCAN",
+                new Cmd1N(RespireCommands.PathHash.PHPATHSCAN.Verb, client.Key(in key), args), affinity, cancellationToken,
                 client, static (RespireClient _, in RespValue reply) => PathHashCodec.Page(in reply), owner.Observation));
         }
         catch (Exception error) { owner.Fail(error); throw; }

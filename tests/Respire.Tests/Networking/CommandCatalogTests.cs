@@ -175,13 +175,13 @@ public class CommandCatalogTests
     {
         var commands = RespireCommands.All.ToArray();
 
-        await Assert.That(commands.Length).IsEqualTo(666);
+        await Assert.That(commands.Length).IsEqualTo(667);
         await Assert.That(commands.Select(static command => command.Name).Distinct(StringComparer.Ordinal).Count())
             .IsEqualTo(commands.Length);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Redis)))
             .IsEqualTo(598);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Valkey)))
-            .IsEqualTo(493);
+            .IsEqualTo(494);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.KeyDb)))
             .IsEqualTo(9);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Dragonfly)))
@@ -245,13 +245,13 @@ public class CommandCatalogTests
     [Arguments(true)]
     public async Task OpaqueCursorMetadataSurvivesRawCommandsAndWrappers(bool binary)
     {
-        var descriptor = RespireCommands.PathHash.PHSCAN;
+        var descriptor = RespireCommands.PathHash.PHPATHSCAN;
 
         foreach (var token in new[] { "0", "00", "+0", "opaque" })
         {
             RespireValue cursor = binary ? System.Text.Encoding.ASCII.GetBytes(token) : (RespireValue)token;
             var command = new CatalogCommand(descriptor, ["key", cursor]);
-            var raw = DeferredRawCommands.CreateCommand(descriptor, ["phscan", "key", cursor], -1, 1);
+            var raw = DeferredRawCommands.CreateCommand(descriptor, ["phpathscan", "key", cursor], -1, 1);
             var wrapped = new MutationCommand<CatalogCommand>(command, default);
             await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in command))
                 .IsEqualTo(token != "0");
@@ -263,18 +263,30 @@ public class CommandCatalogTests
     }
 
     [Test]
+    [Arguments("/path", "00", false)]
+    [Arguments("0", "42", true)]
+    public async Task PathHashFieldScanUsesNumericCursorAfterPath(string path, string cursor, bool continuation)
+    {
+        var descriptor = RespireCommands.PathHash.PHSCAN;
+        var command = new Cmd1N(descriptor.Verb, "key", [path, cursor]);
+        var raw = DeferredRawCommands.CreateCommand(descriptor, ["phscan", "key", path, cursor], -1, 1);
+        await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in command)).IsEqualTo(continuation);
+        await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in raw)).IsEqualTo(continuation);
+    }
+
+    [Test]
     public async Task PathHashReadsPreserveCursorAffinityAndWritesRemainMutations()
     {
         await Assert.That(RespireCommands.PathHash.PHGET.IsReadOnly).IsTrue();
         await Assert.That(RespireCommands.PathHash.PHGET.ReadKind).IsEqualTo(ReadCommandKind.Read);
-        await Assert.That(RespireCommands.PathHash.PHSCAN.ReadKind).IsEqualTo(ReadCommandKind.CursorRead);
-        await Assert.That(RespireCommands.PathHash.PHSCAN.CursorArgumentIndex).IsEqualTo(1);
-        var start = new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, "key", ["0"]);
-        var continuation = new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, "key", ["opaque-cursor"]);
+        await Assert.That(RespireCommands.PathHash.PHPATHSCAN.ReadKind).IsEqualTo(ReadCommandKind.CursorRead);
+        await Assert.That(RespireCommands.PathHash.PHPATHSCAN.CursorArgumentIndex).IsEqualTo(1);
+        var start = new Cmd1N(RespireCommands.PathHash.PHPATHSCAN.Verb, "key", ["0"]);
+        var continuation = new Cmd1N(RespireCommands.PathHash.PHPATHSCAN.Verb, "key", ["opaque-cursor"]);
         await Assert.That(Internal.CursorCommandMetadata.IsCursorContinuation(in start)).IsFalse();
         await Assert.That(Internal.CursorCommandMetadata.IsCursorContinuation(in continuation)).IsTrue();
-        var binaryStart = new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, "key", ["0"u8.ToArray()]);
-        var binaryContinuation = new Cmd1N(RespireCommands.PathHash.PHSCAN.Verb, "key", ["00"u8.ToArray()]);
+        var binaryStart = new Cmd1N(RespireCommands.PathHash.PHPATHSCAN.Verb, "key", ["0"u8.ToArray()]);
+        var binaryContinuation = new Cmd1N(RespireCommands.PathHash.PHPATHSCAN.Verb, "key", ["00"u8.ToArray()]);
         await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in binaryStart)).IsFalse();
         await Assert.That(Internal.CursorCommandMetadata.IsServerCursorContinuation(in binaryContinuation)).IsTrue();
         await Assert.That(RespireCommands.PathHash.PHSET.CacheMutation).IsEqualTo(RespireCacheMutation.Mutation);
@@ -296,6 +308,7 @@ public class CommandCatalogTests
     [Arguments("PHPATHCOUNT")]
     [Arguments("PHPATHDEL")]
     [Arguments("PHPATHEXISTS")]
+    [Arguments("PHPATHSCAN")]
     [Arguments("PHPREFIXES")]
     [Arguments("PHSCAN")]
     [Arguments("PHSET")]

@@ -549,7 +549,7 @@ internal interface IRespCommand
 
     int CursorArgumentIndex => -1;
 
-    /// <summary>True for PHSCAN, whose cursor is an opaque byte token rather than a number.</summary>
+    /// <summary>True for PHPATHSCAN, whose cursor is an opaque byte token rather than a number.</summary>
     bool HasOpaqueCursor => false;
 
     /// <summary>Returns cache mutation metadata for the command.</summary>

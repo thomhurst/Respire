@@ -1044,6 +1044,10 @@ public static class RespireCommands
         /// <summary><c>PHPATHEXISTS</c>.</summary>
         public static readonly RespireCommand PHPATHEXISTS = new("PHPATHEXISTS", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
+        /// <summary><c>PHPATHSCAN</c>.</summary>
+        [RespireCommandCatalogName("PHPATHSCAN")]
+        public static readonly RespireCommand PHPATHSCAN = new("PHPATHSCAN", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
+
         /// <summary><c>PHPREFIXES</c>.</summary>
         public static readonly RespireCommand PHPREFIXES = new("PHPREFIXES", RespireCommandSource.Valkey, RespireCacheMutation.ReadOnly, isReadOnly: true, retryCategory: RespireCommandRetryCategory.ReadOnly);
 
@@ -2659,6 +2663,7 @@ public static class RespireCommands
         PathHash.PHPATHCOUNT,
         PathHash.PHPATHDEL,
         PathHash.PHPATHEXISTS,
+        PathHash.PHPATHSCAN,
         PathHash.PHPREFIXES,
         PathHash.PHSCAN,
         PathHash.PHSET,
@@ -3468,6 +3473,7 @@ internal static class CommandCacheMutationMetadata
         mutations["PHPATHCOUNT"] = RespireCacheMutation.ReadOnly;
         mutations["PHPATHDEL"] = RespireCacheMutation.Mutation;
         mutations["PHPATHEXISTS"] = RespireCacheMutation.ReadOnly;
+        mutations["PHPATHSCAN"] = RespireCacheMutation.ReadOnly;
         mutations["PHPREFIXES"] = RespireCacheMutation.ReadOnly;
         mutations["PHSCAN"] = RespireCacheMutation.ReadOnly;
         mutations["PHSET"] = RespireCacheMutation.Mutation;
@@ -3960,8 +3966,9 @@ internal static class CommandReadMetadata
             ["PHMGET"] = (ReadCommandKind.Read, -1),
             ["PHPATHCOUNT"] = (ReadCommandKind.Read, -1),
             ["PHPATHEXISTS"] = (ReadCommandKind.Read, -1),
+            ["PHPATHSCAN"] = (ReadCommandKind.CursorRead, 1),
             ["PHPREFIXES"] = (ReadCommandKind.Read, -1),
-            ["PHSCAN"] = (ReadCommandKind.CursorRead, 1),
+            ["PHSCAN"] = (ReadCommandKind.CursorRead, 2),
             ["PTTL"] = (ReadCommandKind.Read, -1),
             ["RANDOMKEY"] = (ReadCommandKind.Read, -1),
             ["SCAN"] = (ReadCommandKind.CursorRead, 0),
@@ -4442,6 +4449,7 @@ internal static class CommandRetryCategoryMetadata
             ["PHPATHCOUNT"] = RespireCommandRetryCategory.ReadOnly,
             ["PHPATHDEL"] = RespireCommandRetryCategory.WriteAccumulating,
             ["PHPATHEXISTS"] = RespireCommandRetryCategory.ReadOnly,
+            ["PHPATHSCAN"] = RespireCommandRetryCategory.ReadOnly,
             ["PHPREFIXES"] = RespireCommandRetryCategory.ReadOnly,
             ["PHSCAN"] = RespireCommandRetryCategory.ReadOnly,
             ["PHSET"] = RespireCommandRetryCategory.WriteAccumulating,

@@ -49,7 +49,7 @@ internal readonly struct Verb
         ReadKind = allowReadRouting ? metadata.Kind : ReadCommandKind.None;
         RetryCategory = retryCategory;
         CursorArgumentIndex = metadata.CursorArgumentIndex;
-        HasOpaqueCursor = command.Equals("PHSCAN", StringComparison.OrdinalIgnoreCase);
+        HasOpaqueCursor = command.Equals("PHPATHSCAN", StringComparison.OrdinalIgnoreCase);
         _cacheMetadata = new(command);
         Tokens = 0;
         var encodedLength = 0;
