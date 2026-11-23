@@ -3,6 +3,7 @@ using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using OS = TUnit.Core.Enums.OS;
 
 namespace Respire.Tests;
 
@@ -105,6 +106,43 @@ public class UnixSocketOptionsTests
     {
         await Assert.That(() => RespireEndpoint.UnixSocket("")).Throws<ArgumentException>();
         await Assert.That(() => RespireEndpoint.UnixSocket("/tmp/a\0b")).Throws<ArgumentException>();
+    }
+
+    public static IEnumerable<string> FilesystemRoots()
+    {
+        yield return "/";
+
+        if (OperatingSystem.IsWindows())
+        {
+            yield return "C:/";
+            yield return @"C:\";
+            yield return @"C:\\";
+            yield return @"\\server\share\";
+        }
+    }
+
+    [Test]
+    [MethodDataSource(nameof(FilesystemRoots))]
+    public async Task RejectsFilesystemRootsAsync(string path)
+    {
+        await Assert.That(() => RespireEndpoint.UnixSocket(path)).ThrowsExactly<ArgumentException>();
+        await Assert.That(() => RespireClient.Create(new RespireOptions { Endpoints = [new(path, 0)] }))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(async () => await RespireConnection.ConnectAsync(path, 0))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    [RunOn(OS.Windows)]
+    [Arguments("C:/tmp/redis.sock")]
+    [Arguments(@"C:\tmp\redis.sock")]
+    public async Task PreservesWindowsSocketPathSpellingAsync(string path)
+    {
+        var endpoint = RespireEndpoint.UnixSocket(path);
+
+        await Assert.That(endpoint.Host).IsEqualTo(path);
+        await Assert.That(endpoint.Port).IsEqualTo(0);
+        await Assert.That(RespireEndpoint.Parse(endpoint.ToString())).IsEqualTo(endpoint);
     }
 
     [Test]
