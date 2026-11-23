@@ -1876,7 +1876,6 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
             // The barrier may time out behind accepted commands. Let callers finish through
             // CommandTimeout or maintenance relaxation; use the explicit fallback when disabled.
             // Then abort the connection to release the unanswered barrier.
-            using var drainTimeout = CancellationTokenSource.CreateLinkedTokenSource(_abortCancellation.Token);
             var commandDrainTimeout = _options.CommandTimeout ?? _options.RetirementDrainFallbackTimeout;
 
             if (_options.MaintenanceNotifications != RespireMaintenanceNotificationMode.Disabled
@@ -1885,13 +1884,13 @@ internal sealed partial class RespireConnectionMultiplexer : IAsyncDisposable
                 commandDrainTimeout = _options.MaintenanceRelaxedTimeout;
             }
 
-            drainTimeout.CancelAfter(commandDrainTimeout);
+            using var drainTimeout = CommandTimeoutCancellation.CreateForTimeout(_abortCancellation.Token, commandDrainTimeout);
 
             try
             {
                 await connection.WaitForOtherCommandsToCompleteAsync(drainTimeout.Token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (drainTimeout.IsCancellationRequested)
+            catch (OperationCanceledException) when (drainTimeout.Token.IsCancellationRequested)
             {
                 // Preserve accepted commands through their deadline, including maintenance relaxation.
             }

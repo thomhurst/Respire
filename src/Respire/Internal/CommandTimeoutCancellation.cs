@@ -6,7 +6,7 @@ namespace Respire.Internal;
 internal static class CommandTimeoutCancellation
 {
     private const int MaxPoolSize = 4096;
-    private const long MaximumTimerMilliseconds = uint.MaxValue - 1L;
+    internal const long MaximumTimerMilliseconds = uint.MaxValue - 1L;
     private static readonly Reservoir.CancellationTokenSourcePool Pool = new(MaxPoolSize);
 
     /// <summary>Identifies cancellation from an owned link when its initiating token was cancelled.</summary>

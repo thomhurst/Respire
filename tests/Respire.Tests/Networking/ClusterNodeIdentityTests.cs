@@ -216,7 +216,9 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
-    public async Task RetirementBoundsDrainWhenCommandTimeoutIsDisabled()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetirementBarrierTimeoutHonorsCommandDrainBudget(bool longCommandTimeout)
     {
         await using var server = new FakeRespServer
         {
@@ -230,15 +232,15 @@ public class ClusterNodeIdentityTests
         };
         // The barrier deadline (ConnectTimeout) runs on a controlled clock and expires only once
         // the unanswered PING is on the wire, so socket setup keeps a normal deadline and only
-        // the 150 ms drain fallback is real time. Without that bound, retirement would wait
-        // forever for the stuck command; the generous wait below only detects such a hang.
+        // the command drain uses real time. Without the 150 ms fallback when disabled,
+        // retirement would wait forever for the stuck command.
         var clock = new MaintenanceDrainClock();
         var options = new RespireOptions
         {
             Protocol = RespireProtocol.Resp3,
             MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
             MaintenanceRelaxedTimeout = TimeSpan.FromMilliseconds(25),
-            CommandTimeout = null,
+            CommandTimeout = longCommandTimeout ? TimeSpan.FromDays(50) : null,
             ConnectTimeout = TimeSpan.FromSeconds(5),
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
@@ -272,6 +274,26 @@ public class ClusterNodeIdentityTests
         }
 
         barrierTimer.Fire();
+
+        if (longCommandTimeout)
+        {
+            // Keep ECHO unanswered until the expired barrier has left the wait.
+            using var barrierExpired = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+            while (connection.HasOutstandingMaintenanceBarrier)
+            {
+                await Task.Delay(10, barrierExpired.Token);
+            }
+
+            await Assert.That(retirement.IsCompleted).IsFalse();
+            await Assert.That(stuckReply.IsCompleted).IsFalse();
+            await server.SendRawAsync("+released\r\n"u8.ToArray());
+            using var reply = await stuckReply.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(reply.AsString()).IsEqualTo("released");
+            await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(connection.IsConnected).IsFalse();
+            return;
+        }
 
         await retirement.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(async () => await stuckReply.WaitAsync(TimeSpan.FromSeconds(5)))
