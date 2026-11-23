@@ -14,6 +14,12 @@ internal sealed class RespireCachingEmbeddingGenerator(
     IRespireClient client,
     RespireEmbeddingCacheOptions cacheOptions) : DelegatingEmbeddingGenerator<string, Embedding<float>>(inner)
 {
+    private const char ReplacementCharacter = '\uFFFD';
+    private const byte NoModelId = 0;
+    private const byte ModelIdPresent = 1;
+    private const byte ModelIdWithReplacementCharacter = 2;
+
+    private static readonly Encoding s_strictUtf8 = new UTF8Encoding(false, throwOnInvalidBytes: true);
     private static readonly Meter Meter = new("Respire.AI");
     private static readonly Counter<long> Hits = Meter.CreateCounter<long>("respire.ai.embedding_cache.hits", "{input}");
     private static readonly Counter<long> Misses = Meter.CreateCounter<long>("respire.ai.embedding_cache.misses", "{input}");
@@ -34,12 +40,6 @@ internal sealed class RespireCachingEmbeddingGenerator(
         {
             return new([]);
         }
-        // Unknown options may change the vector in ways that cannot be represented safely in a key.
-        if (options is not null && (options.GetType() != typeof(EmbeddingGenerationOptions)
-            || options.RawRepresentationFactory is not null || options.AdditionalProperties is { Count: > 0 }))
-        {
-            return await InnerGenerator.GenerateAsync(inputs, options, cancellationToken).ConfigureAwait(false);
-        }
 
         var metadata = InnerGenerator.GetService(typeof(EmbeddingGeneratorMetadata)) as EmbeddingGeneratorMetadata;
         // Default dimensions describe only the default model, not an explicitly selected alternative.
@@ -50,7 +50,9 @@ internal sealed class RespireCachingEmbeddingGenerator(
 
         if (scope is null)
         {
-            return await InnerGenerator.GenerateAsync(inputs, options, cancellationToken).ConfigureAwait(false);
+            var uncached = await InnerGenerator.GenerateAsync(inputs, options, cancellationToken).ConfigureAwait(false);
+            ValidateGeneratedEmbeddings(uncached, inputs.Length, effectiveDimensions);
+            return uncached;
         }
 
         var unique = inputs.Distinct(StringComparer.Ordinal).ToArray();
@@ -88,19 +90,7 @@ internal sealed class RespireCachingEmbeddingGenerator(
         if (misses.Length > 0)
         {
             generated = await InnerGenerator.GenerateAsync(misses, options, cancellationToken).ConfigureAwait(false);
-
-            if (generated.Count != misses.Length)
-            {
-                throw new InvalidOperationException("The embedding generator must return one embedding per input.");
-            }
-            // Validate the complete response before inserting any part of it.
-            foreach (var embedding in generated)
-            {
-                if (embedding.Vector.Length == 0 || effectiveDimensions is { } dimensions && embedding.Vector.Length != dimensions)
-                {
-                    throw new InvalidOperationException("The embedding generator returned invalid dimensions.");
-                }
-            }
+            ValidateGeneratedEmbeddings(generated, misses.Length, effectiveDimensions);
 
             for (var i = 0; i < misses.Length; i++)
             {
@@ -118,8 +108,9 @@ internal sealed class RespireCachingEmbeddingGenerator(
                 for (var i = 0; i < misses.Length; i++)
                 {
                     var embedding = generated[i];
-                    // Provider-specific properties have no portable binary representation.
-                    if (embedding.AdditionalProperties is { Count: > 0 })
+                    // Skip metadata that cannot round-trip through the cache format.
+                    if (embedding.AdditionalProperties is { Count: > 0 }
+                        || !EmbeddingCacheIdentity.IsWellFormed(embedding.ModelId))
                     {
                         continue;
                     }
@@ -149,8 +140,34 @@ internal sealed class RespireCachingEmbeddingGenerator(
         };
     }
 
+    private static void ValidateGeneratedEmbeddings(
+        GeneratedEmbeddings<Embedding<float>> generated, int inputCount, int? effectiveDimensions)
+    {
+        if (generated.Count != inputCount)
+        {
+            throw new InvalidOperationException("The embedding generator must return one embedding per input.");
+        }
+
+        foreach (var embedding in generated)
+        {
+            int length = embedding.Vector.Length;
+
+            if (length == 0 || effectiveDimensions is { } dimensions && length != dimensions)
+            {
+                throw new InvalidOperationException("The embedding generator returned invalid dimensions.");
+            }
+        }
+    }
+
     private string? GetScope(EmbeddingGenerationOptions? options, EmbeddingGeneratorMetadata? metadata, int? effectiveDimensions)
     {
+        // Unknown options may change the vector in ways that cannot be represented safely in a key.
+        if (options is not null && (options.GetType() != typeof(EmbeddingGenerationOptions)
+            || options.RawRepresentationFactory is not null || options.AdditionalProperties is { Count: > 0 }))
+        {
+            return null;
+        }
+
         var providerName = metadata?.ProviderName;
         var providerUri = metadata?.ProviderUri?.ToString();
         var modelId = options?.ModelId ?? metadata?.DefaultModelId;
@@ -206,11 +223,17 @@ internal sealed class RespireCachingEmbeddingGenerator(
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
-        writer.Write(embedding.ModelId is not null);
 
         if (embedding.ModelId is { } model)
         {
+            // Mark literal U+FFFD so readers can distinguish it from loss in legacy entries.
+            // Older readers interpret either nonzero tag as model present.
+            writer.Write(model.Contains(ReplacementCharacter) ? ModelIdWithReplacementCharacter : ModelIdPresent);
             writer.Write(model);
+        }
+        else
+        {
+            writer.Write(NoModelId);
         }
 
         writer.Write(embedding.CreatedAt.HasValue);
@@ -237,8 +260,21 @@ internal sealed class RespireCachingEmbeddingGenerator(
         try
         {
             using var stream = new MemoryStream(bytes, writable: false);
-            using var reader = new BinaryReader(stream, Encoding.UTF8);
-            var model = reader.ReadBoolean() ? reader.ReadString() : null;
+            using var reader = new BinaryReader(stream, s_strictUtf8);
+            byte modelTag = reader.ReadByte();
+
+            if (modelTag > ModelIdWithReplacementCharacter)
+            {
+                return null;
+            }
+
+            string? model = modelTag == NoModelId ? null : reader.ReadString();
+
+            if (modelTag == ModelIdPresent && model?.Contains(ReplacementCharacter) == true)
+            {
+                return null;
+            }
+
             DateTimeOffset? created = reader.ReadBoolean()
                 ? new DateTimeOffset(reader.ReadInt64(), TimeSpan.FromMinutes(reader.ReadInt16())) : null;
             var length = reader.ReadInt32();
