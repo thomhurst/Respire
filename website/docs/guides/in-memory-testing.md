@@ -117,7 +117,7 @@ a server error that names the command. Each error uses one response slot, so lat
 | Sets | `SADD`, `SREM`, `SMEMBERS`, `SSCAN` with `MATCH` and `COUNT`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms; `SINTERCARD`, `SDIFFCARD`, and `SUNIONCARD` with `LIMIT` (`SUNIONCARD APPROX` returns the exact count) |
 | Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZSCAN` with `MATCH` and `COUNT`, `ZCARD`, `ZSCORE`, `ZMSCORE`; `ZRANK` and `ZREVRANK` with optional `WITHSCORE`; `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
 | Pub/sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, with binary channel names and payloads |
-| Streams | `XADD` with numeric IDs or `*`, optional `NOMKSTREAM`, and manual `IDMP` with `*`; `XLEN`; `XCFGSET IDMP-DURATION/IDMP-MAXSIZE`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK`; `XPENDING` summary and ranges with `IDLE` and consumer filters; `XAUTOCLAIM` with `COUNT` and `JUSTID`; `XDEL`; `XINFO GROUPS`; `EVAL`/`EVALSHA` for the built-in [stream worker](stream-workers.md) scripts only |
+| Streams | `XADD` with numeric IDs or `*`, optional `NOMKSTREAM`, and manual `IDMP` with `*`; `XLEN`; `XCFGSET IDMP-DURATION/IDMP-MAXSIZE`; `XGROUP CREATE` with optional `MKSTREAM`; `XREAD` with the latest-entry cursor (`+`); `XREAD`/`XREADGROUP` with `COUNT`, `MAXCOUNT`, `MAXSIZE`, `BLOCK`; `XACK`; `XPENDING` summary and ranges with `IDLE` and consumer filters; `XAUTOCLAIM` with `COUNT` and `JUSTID`; `XDEL`; `XINFO GROUPS`; `EVAL`/`EVALSHA` for the built-in [stream worker](stream-workers.md) scripts only |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST`, `KEYS`, `SCAN` with `MATCH` and `COUNT` |
 | Server time | `TIME`, using the supplied `TimeProvider` with microsecond precision |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
@@ -136,7 +136,7 @@ a server error that names the command. Each error uses one response slot, so lat
 | Sets | `SPOP`, `SRANDMEMBER` |
 | Lists | `BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`, `BLMOVE`, `RPOPLPUSH`, `BRPOPLPUSH` |
 | Sorted sets | `ZRANDMEMBER`, `BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP`, `ZUNION`, `ZINTER`, `ZDIFF` and their `STORE` forms, `ZRANGESTORE` |
-| Streams | `XREAD` with the latest-entry cursor (`+`), trimming, `XCLAIM`, `XREADGROUP` `NOACK` and `CLAIM`, `IDMPAUTO`, range commands, stream metadata, other group-administration commands |
+| Streams | Trimming, `XCLAIM`, `XREADGROUP` `NOACK` and `CLAIM`, `IDMPAUTO`, range commands, stream metadata, other group-administration commands |
 | Pub/sub | `PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB`, `QUIT`, `RESET` |
 
 ### Strings, keys, and counters

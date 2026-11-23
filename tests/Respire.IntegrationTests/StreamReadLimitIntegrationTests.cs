@@ -55,6 +55,102 @@ public class StreamReadLimitIntegrationTests(ModernRedisTestContainer fixture)
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task FakeMatchesRedisForMixedLatestCursors(int protocol)
+    {
+        await using var fake = new RespireFakeServer();
+        await using var fakeClient = await RespireClient.ConnectAsync(fake.CreateOptions()
+            with
+        { Protocol = (RespireProtocol)protocol });
+        await using var redisClient = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
+            with
+        { Protocol = (RespireProtocol)protocol });
+        var prefix = $"latest-mixed:{Guid.NewGuid():N}:";
+
+        foreach (var owner in new[] { redisClient, fakeClient })
+        {
+            var client = owner.WithKeyPrefix(prefix);
+
+            foreach (string key in new[] { "latest", "numeric", "new" })
+            {
+                await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "1-0" }, ("f", "old"));
+                await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "2-0" }, ("f", "latest"));
+                await client.Streams.AddAsync(key, new RespireStreamAddOptions { Id = "3-0" }, ("f", "deleted"));
+            }
+
+            await client.Streams.RemoveAsync("latest", "3-0");
+            await client.Streams.CreateGroupAsync("empty", "g", "0", createStream: true);
+
+            (RespireKey Key, RespireStreamId After)[] streams =
+            [
+                ("empty", "+"), ("latest", "+"), ("missing", "+"), ("numeric", "0"), ("new", "$")
+            ];
+            var options = new RespireStreamReadOptions { Count = 2, WaitFor = TimeSpan.FromSeconds(1) };
+            var rows = await client.Streams.ReadAsync(options, streams);
+            rows.Select(row => row.Key).Should().Equal((RespireKey)"latest", (RespireKey)"numeric");
+            var latest = rows[0].Entries.Should().ContainSingle().Which;
+            latest.Id.Should().Be((RespireStreamId)"2-0");
+            latest.GetString("f").Should().Be("latest");
+            rows[1].Entries.Select(entry => entry.Id).Should().Equal((RespireStreamId)"1-0", (RespireStreamId)"2-0");
+
+            (await client.Streams.ReadAsync([("empty", "+"), ("missing", "+")])).Should().BeEmpty();
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task FakeMatchesRedisWhenBlockingLatestCursorWakes(int protocol)
+    {
+        var name = $"latest-block-{Guid.NewGuid():N}";
+        await using var fake = new RespireFakeServer();
+        await using var fakeClient = await RespireClient.ConnectAsync(fake.CreateOptions()
+            with
+        { Protocol = (RespireProtocol)protocol });
+        await using var redisClient = await RespireClient.ConnectAsync(RespireOptions.Parse(fixture.ConnectionString)
+            with
+        { Protocol = (RespireProtocol)protocol, ClientName = name });
+        await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        using var observed = fake.InjectFault("XREAD", RespireFakeFault.Delay(TimeSpan.Zero), occurrences: null);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        foreach (var client in new[] { redisClient, fakeClient })
+        {
+            await client.Streams.CreateGroupAsync(name, "g", "0", createStream: true);
+            var shortWait = new RespireStreamReadOptions { WaitFor = TimeSpan.FromMilliseconds(25) };
+            (await client.Streams.ReadAsync(shortWait, name, "+", deadline.Token)).Should().BeEmpty();
+
+            var options = new RespireStreamReadOptions { Count = 2, WaitFor = Timeout.InfiniteTimeSpan };
+            var read = client.Streams.ReadAsync(options, name, "+", deadline.Token).AsTask();
+
+            while (!read.IsCompleted)
+            {
+                var blocked = client == fakeClient ? observed.ExecutionCount >= 2
+                    : (await observer.Server.ClientsAsync(deadline.Token)).Any(info => info.Name == name && info.Flags.Contains('b'));
+
+                if (blocked)
+                {
+                    break;
+                }
+
+                await Task.Delay(5, deadline.Token);
+            }
+
+            read.IsCompleted.Should().BeFalse();
+            var writer = client == fakeClient ? fakeClient : observer;
+            await using var transaction = writer.CreateTransaction();
+            _ = transaction.Streams.Add(name, new RespireStreamAddOptions { Id = "1-0" }, ("f", "first"));
+            _ = transaction.Streams.Add(name, new RespireStreamAddOptions { Id = "2-0" }, ("f", "second"));
+            await transaction.CommitAsync(deadline.Token);
+
+            var latest = (await read).Should().ContainSingle().Which;
+            latest.Id.Should().Be((RespireStreamId)"2-0");
+            latest.GetString("f").Should().Be("second");
+        }
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task AcknowledgingAbsentGroupMatchesRedis(int protocol)
     {
         await using var fake = new Respire.Testing.RespireFakeServer();
