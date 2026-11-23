@@ -131,48 +131,47 @@ public class WriteRetryWireTests
     }
 
     [Test]
-    public async Task TryAgainDoesNotReplayHashWriteAfterQueuedExpiry()
+    public async Task TryAgainDoesNotReplayHashWriteWithExpiryQueued()
     {
-        var expiryReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        const string hashWrite = "HSET key field value";
+        const string hashExpiry = "PEXPIRE key 60001";
+        var writeReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWriteReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var hashWrites = 0;
         var reads = 0;
         await using var server = new FakeRespServer(FakeRespServer.OkReply)
         {
-            SuppressReply = command =>
-            {
-                if (command == "HSET key field value")
-                {
-                    return Interlocked.Increment(ref hashWrites) == 1;
-                }
-
-                if (command == "PEXPIRE key 60001")
-                {
-                    expiryReceived.TrySetResult();
-                    return true;
-                }
-
-                return false;
-            },
             ReplyOverride = (_, command) => command switch
             {
-                "HSET key field value" => ":1\r\n"u8.ToArray(),
+                hashWrite => Interlocked.Increment(ref hashWrites) == 1
+                    ? "-TRYAGAIN busy\r\n"u8.ToArray() : ":1\r\n"u8.ToArray(),
+                hashExpiry => ":0\r\n"u8.ToArray(),
                 "HGET key field" => Interlocked.Increment(ref reads) == 1
                     ? "-TRYAGAIN busy\r\n"u8.ToArray() : "$-1\r\n"u8.ToArray(),
                 _ => null,
             },
         };
+        server.GateCommand(hashWrite, releaseWriteReply.Task, () => writeReceived.TrySetResult());
         await using var connection = RespireConnectionMultiplexer.Create(Options(server));
         var database = connection.GetDatabase();
 
         var write = database.HashSetAsync("key", "field", "value");
         var expiry = database.KeyExpireAsync("key", TimeSpan.FromMilliseconds(60001));
-        await expiryReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await server.SendRawAsync("-TRYAGAIN busy\r\n:0\r\n"u8.ToArray());
 
-        Assert.False(await expiry);
+        try
+        {
+            await writeReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            releaseWriteReply.TrySetResult();
+        }
+
         var error = await Assert.ThrowsAsync<RespireServerException>(() => write);
         Assert.Equal("TRYAGAIN", error.Code);
         Assert.Equal(1, hashWrites);
+        Assert.False(await expiry);
+        Assert.Equal(new[] { hashWrite, hashExpiry }, server.ReceivedCommands.Where(command => command == hashWrite || command == hashExpiry));
 
         Assert.True((await database.HashGetAsync("key", "field")).IsNull);
         Assert.Equal(2, reads);
