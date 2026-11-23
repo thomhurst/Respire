@@ -124,6 +124,40 @@ public class CommandOrderingTests
         }
     }
 
+    [Test]
+    public async Task QueuedCommandsShareTheirTimeoutBudgetWithExecution()
+    {
+        var timeout = TimeSpan.FromSeconds(1);
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray())
+        {
+            SuppressReply = command => command.StartsWith("HSET ", StringComparison.Ordinal),
+        };
+        await using var adapter = RespireConnectionMultiplexer.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Protocol = RespireProtocol.Resp2,
+            CommandTimeout = timeout,
+            RetryPolicy = new(),
+        });
+        var database = adapter.GetDatabase();
+        Assert.True(await database.KeyExistsAsync("warm"));
+
+        try
+        {
+            var commands = Enumerable.Range(0, 8)
+                .Select(index => Assert.ThrowsAsync<RespireTimeoutException>(
+                    () => database.HashSetAsync($"key{index}", "field", "value")))
+                .ToArray();
+            var errors = await Task.WhenAll(commands).WaitAsync(timeout * 4);
+
+            Assert.All(errors, error => Assert.Equal(timeout, error.Timeout));
+        }
+        finally
+        {
+            await adapter.CloseAsync(allowCommandsToComplete: false);
+        }
+    }
+
     private static bool IsHashCommand(string command) => command is Set or Expire or "PTTL key";
 
     private sealed class HashExpiryScript
