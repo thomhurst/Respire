@@ -46,6 +46,41 @@ public class StreamWorkerVerbatimReplicationTests(Redis62VerbatimReplication fix
     }
 
     [Test]
+    public async Task ReplayUpdatesDeliveryCountAndNackLeavesDeliveryPending()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        const string stream = "replay";
+        await DeliverAsync(client, stream);
+
+        using var replay = await client.Scripts.ExecuteAsync(StreamWorkerScripts.Replay, [stream], ["g", "owner", 1, "0-0"]);
+        await Assert.That(replay[1][0][0].AsString()).IsEqualTo("1-0");
+        await Assert.That(replay[1][0][2].AsString()).IsEqualTo("2");
+
+        long nacked = await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.Nack, [stream], ["g", "owner", "1-0", 2, 0]);
+        await Assert.That(nacked).IsEqualTo(1L);
+        var pending = await client.Streams.PendingAsync(stream, "g", count: 1);
+        await Assert.That(pending[0].Consumer).IsEqualTo("owner");
+        await Assert.That(pending[0].DeliveryCount).IsEqualTo(2L);
+    }
+
+    [Test]
+    public async Task DeadLetterAcknowledgesDeletedSourceWithoutAppending()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        const string stream = "deleted-source";
+        const string deadLetter = stream + ":dead-letter";
+        await DeliverAsync(client, stream);
+        await Assert.That(await client.Streams.RemoveAsync(stream, "1-0")).IsEqualTo(1L);
+
+        long acknowledged = await client.Scripts.ExecuteIntegerAsync(StreamWorkerScripts.DeadLetter,
+            [stream, deadLetter], ["g", "owner", "1-0", 1, "explicit", ""]);
+
+        await Assert.That(acknowledged).IsEqualTo(-1L);
+        await Assert.That((await client.Streams.PendingSummaryAsync(stream, "g")).Count).IsEqualTo(0);
+        await Assert.That(await client.Streams.CountAsync(deadLetter)).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task RateLimitedRecoveryClaimsPendingDelivery()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

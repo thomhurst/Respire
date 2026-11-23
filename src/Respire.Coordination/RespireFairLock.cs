@@ -79,7 +79,7 @@ public sealed class RespireFairLock
         return 1
         """);
 
-    internal static readonly RespireScript Acquire = RespireScript.Create(RespireScript.EffectsReplicationPrelude + QueuePrelude + """
+    internal static readonly RespireScript Acquire = RespireScript.CreateWithEffectsReplication(QueuePrelude + """
         if KEYS[1] == KEYS[2] or KEYS[1] == KEYS[3] or KEYS[2] == KEYS[3] then
             return redis.error_reply('ERR fair lock keys must differ')
         end

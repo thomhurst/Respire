@@ -137,7 +137,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
     private static readonly TimeSpan MaxQueueDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1d);
     private const long MaxExactLuaInteger = 9_007_199_254_740_991;
     private static readonly long MaxTimeSpanMilliseconds = TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerMillisecond;
-    private static readonly RespireScript GcraScript = RespireScript.Create(RespireScript.EffectsReplicationPrelude + """
+    private static readonly RespireScript GcraScript = RespireScript.CreateWithEffectsReplication("""
         local time = redis.call('TIME')
         local now = time[1] * 1000 + math.floor(time[2] / 1000)
         local interval = tonumber(ARGV[1])
@@ -158,7 +158,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         return {1, 0, available - requested}
         """);
 
-    private static readonly RespireScript FixedWindowScript = RespireScript.Create(RespireScript.EffectsReplicationPrelude + """
+    private static readonly RespireScript FixedWindowScript = RespireScript.CreateWithEffectsReplication("""
         local width = tonumber(ARGV[1])
         local requested = tonumber(ARGV[2])
         local limit = tonumber(ARGV[3])
@@ -199,7 +199,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         return {0, math.max(1, ttl), limit - value, unsupported}
         """);
 
-    private static readonly RespireScript SlidingWindowScript = RespireScript.Create(RespireScript.EffectsReplicationPrelude + """
+    private static readonly RespireScript SlidingWindowScript = RespireScript.CreateWithEffectsReplication("""
         local time = redis.call('TIME')
         local now = time[1] * 1000 + math.floor(time[2] / 1000)
         local width = tonumber(ARGV[1])
@@ -249,7 +249,7 @@ internal sealed partial class RedisRateLimiter : RateLimiter
         return {0, math.max(1, retry), limit - count}
         """);
 
-    private static readonly RespireScript TokenBucketScript = RespireScript.Create(RespireScript.EffectsReplicationPrelude + """
+    private static readonly RespireScript TokenBucketScript = RespireScript.CreateWithEffectsReplication("""
         local time = redis.call('TIME')
         local now = time[1] * 1000 + math.floor(time[2] / 1000)
         local last = tonumber(redis.call('HGET', KEYS[1], 'time') or now)

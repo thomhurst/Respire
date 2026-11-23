@@ -1067,9 +1067,9 @@ public partial class StreamWorkerTests
         });
         var source = result switch
         {
-            RespireStreamWorkerResult.Ack => StreamWorkerScripts.AckSource,
+            RespireStreamWorkerResult.Ack => StreamWorkerScripts.Ack.Source,
             RespireStreamWorkerResult.Nack => StreamWorkerScripts.NackSource,
-            _ => StreamWorkerScripts.DeadLetterSource,
+            _ => StreamWorkerScripts.DeadLetter.Source,
         };
         var gate = new RespireFakeGate();
         using var fault = fixture.Server.InjectFault("EVAL", RespireFakeFault.Pause(gate),

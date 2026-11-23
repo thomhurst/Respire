@@ -30,8 +30,8 @@ public sealed partial class RespireFakeServer
     // Keep the unprefixed variants for older Respire.Coordination builds.
     private static readonly RespireScript[] FencedLockAcquireScripts =
     [
-        RespireScript.Create(RespireScript.EffectsReplicationPrelude + FencedLockAcquireSource.ReplaceLineEndings("\n")),
-        RespireScript.Create(RespireScript.EffectsReplicationPrelude + FencedLockAcquireSource.ReplaceLineEndings("\r\n")),
+        RespireScript.CreateWithEffectsReplication(FencedLockAcquireSource.ReplaceLineEndings("\n")),
+        RespireScript.CreateWithEffectsReplication(FencedLockAcquireSource.ReplaceLineEndings("\r\n")),
         RespireScript.Create(FencedLockAcquireSource.ReplaceLineEndings("\n")),
         RespireScript.Create(FencedLockAcquireSource.ReplaceLineEndings("\r\n")),
     ];
