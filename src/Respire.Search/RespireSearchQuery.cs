@@ -362,7 +362,7 @@ public sealed record RespireSearchQueryOptions
         get; init;
     }
 
-    /// <summary>Zero-based offset and result count.</summary>
+    /// <summary>Zero-based offset and result count. A count of zero uses offset zero.</summary>
     public (int Offset, int Count)? Limit
     {
         get; init;
@@ -513,7 +513,7 @@ public sealed record RespireSearchQueryOptions
             }
 
             args.Add("LIMIT");
-            args.Add(limit.Offset);
+            args.Add(limit.Count == 0 ? 0 : limit.Offset);
             args.Add(limit.Count);
         }
 
@@ -649,7 +649,7 @@ public sealed record RespireVectorSearchRequest(string Field, ReadOnlyMemory<byt
 /// <param name="Limit">Maximum number of fused results.</param>
 public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpression, string VectorField, ReadOnlyMemory<byte> Vector, int K, int Limit = 10)
 {
-    /// <summary>Number of fused results to skip.</summary>
+    /// <summary>Number of fused results to skip. A limit of zero uses offset zero.</summary>
     public int Skip
     {
         get; init;
@@ -772,7 +772,7 @@ public sealed record RespireHybridSearchQuery(RespireSearchExpression TextExpres
         }
 
         args.Add("LIMIT");
-        args.Add(Skip);
+        args.Add(Limit == 0 ? 0 : Skip);
         args.Add(Limit);
 
         if (LoadFields.Count > 0)
@@ -869,11 +869,14 @@ internal static class RespireSearchParameters
     {
         ArgumentNullException.ThrowIfNull(parameters, parameterName);
 
-        if (parameters.ContainsKey(RespireVectorSearchRequest.VectorParameterName))
+        foreach (var parameter in parameters)
         {
-            throw new ArgumentException(
-                $"The '{RespireVectorSearchRequest.VectorParameterName}' parameter name is reserved for the query vector.",
-                parameterName);
+            if (string.Equals(parameter.Key, RespireVectorSearchRequest.VectorParameterName, StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"The '{RespireVectorSearchRequest.VectorParameterName}' parameter name is reserved for the query vector.",
+                    parameterName);
+            }
         }
     }
 }
