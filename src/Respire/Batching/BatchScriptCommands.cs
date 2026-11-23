@@ -76,12 +76,20 @@ internal readonly struct BatchScriptCommand(
 
     public void ValidateAdmission()
     {
-        submission?.CancellationToken.ThrowIfCancellationRequested();
+        if (submission is { IsCancellationDetached: false })
+        {
+            submission.CancellationToken.ThrowIfCancellationRequested();
+        }
     }
 
     public CancellationToken GetResponseCancellationToken(CancellationToken admissionToken)
     {
         return submission is null ? admissionToken : CancellationToken.None;
+    }
+
+    public CancellationToken GetRedirectCancellationToken(CancellationToken callerToken)
+    {
+        return submission is { IsCancellationDetached: true } ? CancellationToken.None : callerToken;
     }
 
     public void OnAccepted()

@@ -1,6 +1,7 @@
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.RateLimiting;
+using Respire.Internal;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -162,6 +163,77 @@ public class RateLimiterUpdateWireTests
         using var accepted = await limiter.AcquireAsync(2, deadline.Token);
         await Assert.That(accepted.IsAcquired).IsTrue();
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments("MOVED", false)]
+    [Arguments("MOVED", true)]
+    [Arguments("ASK", false)]
+    [Arguments("ASK", true)]
+    [Arguments("REDIRECT", false)]
+    public async Task MigrationCanceledAfterSubmissionFollowsRedirect(string redirect, bool readySlot)
+    {
+        const string key = "key";
+        var cluster = redirect != "REDIRECT";
+        var redirectSlot = cluster ? $"{ClusterHash.GetSlot(key)} " : string.Empty;
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var target = new FakeRespServer(Accepted)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "CLUSTER SLOTS" => "*0\r\n"u8.ToArray(),
+                "ASKING" => "+OK\r\n"u8.ToArray(),
+                _ when command.StartsWith("EVAL ", StringComparison.Ordinal) => ":1\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var seed = new FakeRespServer(Accepted);
+        byte[] slots = readySlot
+            ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n")
+            : "*0\r\n"u8.ToArray();
+        seed.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => slots,
+            "CLIENT CAPA REDIRECT" => FakeRespServer.OkReply,
+            _ when command.StartsWith("EVAL ", StringComparison.Ordinal) =>
+                Encoding.ASCII.GetBytes($"-{redirect} {redirectSlot}127.0.0.1:{target.Port}\r\n"),
+            _ => null,
+        };
+        seed.GateCommand("EVAL ", release.Task, () => received.TrySetResult());
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = cluster,
+            EnableReplicaRedirects = !cluster,
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            Connections = 1,
+        }, deadline.Token);
+        var factory = client.Coordination.RateLimiters;
+        var window = TimeSpan.FromMinutes(1);
+        await using var limiter = factory.Gcra(key, 1, window);
+        using var caller = new CancellationTokenSource();
+        var update = factory.UpdateAsync(limiter, RespireRateLimit.Gcra(2, window),
+            cancellationToken: caller.Token).AsTask();
+
+        try
+        {
+            await received.Task.WaitAsync(deadline.Token);
+            await caller.CancelAsync();
+            await Assert.That(update.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        await update.WaitAsync(deadline.Token);
+        await Assert.That(target.ReceivedCommands.Count(command => command.StartsWith("EVAL ", StringComparison.Ordinal)))
+            .IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Contains("ASKING")).IsEqualTo(redirect == "ASK");
+        using var accepted = await limiter.AcquireAsync(2, deadline.Token);
+        await Assert.That(accepted.IsAcquired).IsTrue();
     }
 
     private static RespireClient CreateGatedClient(FakeRespServer server, TaskCompletionSource opening,

@@ -536,6 +536,9 @@ internal interface IRespCommand
     /// <summary>Separates a pre-submission budget from cancellation of an accepted response.</summary>
     CancellationToken GetResponseCancellationToken(CancellationToken admissionToken) => admissionToken;
 
+    /// <summary>Gets the caller cancellation token for recovery after a server redirect.</summary>
+    CancellationToken GetRedirectCancellationToken(CancellationToken callerToken) => callerToken;
+
     ReadCommandKind ReadKind
     {
         get;

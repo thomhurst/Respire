@@ -1,14 +1,16 @@
 namespace Respire.Internal;
 
-// A stateful script honors caller cancellation up to transport admission. After that,
-// its owner needs the reply to reconcile local state with the server.
-internal sealed class ScriptSubmission(CancellationToken cancellationToken)
+// The owner drains admitted replies. Migrations also finish redirect recovery after admission
+// so an acknowledged server-side change can be applied locally.
+internal sealed class ScriptSubmission(CancellationToken cancellationToken, bool completeAfterAcceptance = false)
 {
     private bool _wasAccepted;
 
     internal CancellationToken CancellationToken => cancellationToken;
 
     internal bool WasAccepted => Volatile.Read(ref _wasAccepted);
+
+    internal bool IsCancellationDetached => completeAfterAcceptance && WasAccepted;
 
     internal void MarkAccepted()
     {

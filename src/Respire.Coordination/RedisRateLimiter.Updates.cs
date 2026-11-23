@@ -144,7 +144,8 @@ internal sealed partial class RedisRateLimiter
 
                 // Cancellation is honored before submission. Once submitted, observe the migration
                 // reply so cancellation cannot knowingly leave local and Redis settings out of sync.
-                submission = cancellationToken.CanBeCanceled ? new ScriptSubmission(cancellationToken) : null;
+                submission = cancellationToken.CanBeCanceled
+                    ? new ScriptSubmission(cancellationToken, completeAfterAcceptance: true) : null;
                 migrationStarted = true;
                 using var result = await _coordination.ExecuteCompositeRateLimitAsync(
                     UpdateScript, _key, args, submission).ConfigureAwait(false);

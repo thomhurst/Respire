@@ -3850,7 +3850,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         RespireServerException error, RespireReadFrom readFrom, CancellationToken cancellationToken,
         Action<Exception>? onRetry = null, RespireTelemetry.ErrorObservation observation = default, CommandDeadline deadline = default)
         where TCommand : struct, IRespCommand
-        => SendClusterAsync(operation, _core.Cluster!, command, cancellationToken,
+        => SendClusterAsync(operation, _core.Cluster!, command, command.GetRedirectCancellationToken(cancellationToken),
             initialConnection: source, firstAttempt: 1, initialRejection: error, readFromOverride: readFrom,
             cursorReadFromOverride: EffectiveReadFrom, onRetry: onRetry, observation: observation, retryDeadline: deadline);
 
@@ -4115,6 +4115,15 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     // An accepted reply may outlive admission. Check before redirect discovery
                     // so a failed topology query cannot replace an expired retry budget.
                     command.ValidateAdmission();
+                    var redirectToken = command.GetRedirectCancellationToken(cancellationToken);
+
+                    if (redirectToken != cancellationToken)
+                    {
+                        cancellationToken = redirectToken;
+                        backlogAcquisition.Dispose();
+                        backlogAcquisition = new CommandAcquisitionScope(cancellationToken, retryDeadline, _core.Options.CommandTimeout);
+                    }
+
                     // Learn the new owner before touching the caller-owned stream. A broken seek
                     // must not leave later commands pinned to the stale slot owner.
                     cluster.RecordRejection(ref discovery, connection, error);
