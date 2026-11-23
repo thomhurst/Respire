@@ -36,9 +36,15 @@ public sealed partial class RespireFakeServer
         var minIdle = Integer(args[4]);
         string startText = Encoding.UTF8.GetString(args[5]);
         bool exclusiveStart = startText.StartsWith('(');
-        var start = StreamId(exclusiveStart ? startText[1..] : startText, defaultSequence: 0);
+        const string MaximumId = "18446744073709551615-18446744073709551615";
+        RespireStreamId start = startText switch
+        {
+            "-" => RespireStreamId.Beginning,
+            "+" => new RespireStreamId(MaximumId),
+            _ => StreamId(exclusiveStart ? startText[1..] : startText, defaultSequence: 0)
+        };
 
-        if (exclusiveStart && start.Value == "18446744073709551615-18446744073709551615")
+        if (exclusiveStart && start.Value == MaximumId)
         {
             return FakeReply.Error("ERR invalid start ID for the interval");
         }

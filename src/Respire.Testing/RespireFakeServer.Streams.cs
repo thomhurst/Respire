@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 
@@ -5,7 +6,38 @@ namespace Respire.Testing;
 
 public sealed partial class RespireFakeServer
 {
-    private TaskCompletionSource _streamChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly LinkedList<StreamReadWaiter> _streamReadWaiters = new();
+    private readonly Dictionary<byte[], bool> _readyStreamKeys = new(BinaryKeyComparer.Instance);
+    private readonly Queue<byte[]> _readyStreams = new();
+
+    private sealed class StreamReadWaiter(Connection connection, byte[][] arguments, StreamRequest request, long timeout)
+    {
+        private readonly long _started = Stopwatch.GetTimestamp();
+
+        internal Connection Connection
+        {
+            get;
+        } = connection;
+
+        internal byte[][] Arguments
+        {
+            get;
+        } = arguments;
+
+        internal StreamRequest Request
+        {
+            get;
+        } = request;
+
+        internal double RemainingMilliseconds => timeout == 0
+            ? double.PositiveInfinity : timeout - Stopwatch.GetElapsedTime(_started).TotalMilliseconds;
+
+        internal TaskCompletionSource<Outbound?> Completion
+        {
+            get;
+        } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
     private static readonly IComparer<byte[]> StreamConsumerOrder = Comparer<byte[]>.Create(
         static (left, right) => left.AsSpan().SequenceCompareTo(right));
 
@@ -316,9 +348,7 @@ public sealed partial class RespireFakeServer
             TouchWatchedKey(args[1]);
         }
 
-        var changed = _streamChanged;
-        _streamChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        changed.TrySetResult();
+        MarkStreamReadyLocked(args[1], groupOnly: false);
         return FakeReply.Text(id.ToString());
     }
 
@@ -443,14 +473,6 @@ public sealed partial class RespireFakeServer
             return FakeReply.Error("NOGROUP No such consumer group");
         }
 
-        if (_createConsumersOnEmptyReads && request.Group is not null)
-        {
-            foreach (var stream in streams)
-            {
-                stream!.Groups[request.Group].Consumers.Add(request.Consumer!);
-            }
-        }
-
         var pairs = new List<FakeReply>();
         long total = 0, bytes = 0;
 
@@ -479,7 +501,7 @@ public sealed partial class RespireFakeServer
                     .Select(entry => (Id: entry.Key, Fields: (byte[][]?)entry.Value))).GetEnumerator();
             var hasEntry = candidates.MoveNext();
 
-            if (group is not null && (history || hasEntry))
+            if (group is not null && (_createConsumersOnEmptyReads || history || hasEntry))
             {
                 group.Consumers.Add(request.Consumer!);
             }
@@ -716,14 +738,22 @@ public sealed partial class RespireFakeServer
 
     private async Task<Outbound?> ExecuteStreamReadAsync(Connection connection, byte[][] args, RespireFakeFaultScope? scope)
     {
-        StreamRequest request;
+        LinkedListNode<StreamReadWaiter> node;
+        long timeout;
 
         lock (_gate)
         {
+            if (_disposed || connection.Closed)
+            {
+                return null;
+            }
+
             if (connection.Transaction is not null)
             {
                 return ExecuteLocked(connection, args, scope, out _);
             }
+
+            StreamRequest request;
 
             try
             {
@@ -734,81 +764,168 @@ public sealed partial class RespireFakeServer
                 return ExecuteLocked(connection, args, scope, out _);
             }
 
-            if (request.Block is null)
+            if (request.Block is not { } block)
             {
                 return ExecuteLocked(connection, args, scope, out _);
             }
-            // Resolve $ once for the whole blocking call. Retrying after a wake must not skip new entries.
-            args = args.ToArray();
 
-            for (var i = 0; i < request.Ids.Length; i++)
-            {
-                if (request.Ids[i] != RespireStreamId.New)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    _commandTime = _clock.GetUtcNow().ToUnixTimeMilliseconds();
-                    var last = Find(request.Keys[i])?.Stream.Last ?? RespireStreamId.Beginning;
-                    args[args.Length - request.Ids.Length + i] = Encoding.UTF8.GetBytes(last.ToString());
-                }
-                catch (WrongTypeException) { return ExecuteLocked(connection, args, scope, out _); }
-                catch { connection.Failed = true; throw; }
-            }
-        }
-
-        var elapsed = System.Diagnostics.Stopwatch.StartNew();
-        var observed = false;
-
-        while (true)
-        {
-            Task changed;
-
-            lock (_gate)
-            {
-                if (_disposed || connection.Closed)
-                {
-                    return null;
-                }
-
-                try
-                {
-                    if (!observed)
-                    {
-                        scope?.ObserveExecution();
-                        observed = true;
-                    }
-
-                    _commandTime = _clock.GetUtcNow().ToUnixTimeMilliseconds();
-                    var reply = Execute(connection, args);
-                    var expired = request.Block > 0 && elapsed.Elapsed.TotalMilliseconds >= request.Block.Value;
-
-                    if (reply != FakeReply.NullArray || expired)
-                    {
-                        return QueueOutputLocked(connection, reply.Encode(connection.Resp3), push: false);
-                    }
-
-                    changed = _streamChanged.Task;
-                }
-                catch { connection.Failed = true; throw; }
-            }
+            timeout = block;
 
             try
             {
-                if (request.Block == 0)
+                scope?.ObserveExecution();
+                _commandTime = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+                // Capture $ at registration so re-execution can see newly appended entries.
+                for (int i = 0; i < request.Ids.Length; i++)
                 {
-                    await changed.WaitAsync(connection.Lifetime.Token).ConfigureAwait(false);
+                    if (request.Ids[i] == RespireStreamId.New)
+                    {
+                        var stream = Find(request.Keys[i])?.Data as FakeStream;
+                        var last = stream?.Last ?? RespireStreamId.Beginning;
+                        args[args.Length - request.Ids.Length + i] = Encoding.UTF8.GetBytes(last.ToString());
+                    }
                 }
-                else
+
+                var reply = Execute(connection, args);
+
+                if (!ReferenceEquals(reply, FakeReply.NullArray))
                 {
-                    var remaining = Math.Max(1, request.Block!.Value - elapsed.Elapsed.TotalMilliseconds);
-                    await changed.WaitAsync(TimeSpan.FromMilliseconds(Math.Min(remaining, int.MaxValue)), connection.Lifetime.Token)
-                        .ConfigureAwait(false);
+                    return QueueOutputLocked(connection, reply.Encode(connection.Resp3), push: false);
+                }
+
+                node = _streamReadWaiters.AddLast(new StreamReadWaiter(connection, args, request, timeout));
+            }
+            catch
+            {
+                connection.Failed = true;
+                throw;
+            }
+            finally
+            {
+                ServeReadyStreamReadsLocked();
+            }
+        }
+
+        StreamReadWaiter waiter = node.Value;
+        Task<Outbound?> completion = waiter.Completion.Task;
+
+        try
+        {
+            if (timeout == 0)
+            {
+                return await completion.WaitAsync(connection.Lifetime.Token).ConfigureAwait(false);
+            }
+
+            double remaining = waiter.RemainingMilliseconds;
+
+            while (remaining > 0 && !completion.IsCompleted)
+            {
+                try
+                {
+                    var delay = TimeSpan.FromMilliseconds(Math.Clamp(remaining, 1, int.MaxValue));
+                    return await completion.WaitAsync(delay, connection.Lifetime.Token).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    // A bounded timer may end before the requested deadline.
+                    remaining = waiter.RemainingMilliseconds;
                 }
             }
-            catch (TimeoutException) { }
+
+            lock (_gate)
+            {
+                if (node.List is not null)
+                {
+                    CompleteStreamReadLocked(node, FakeReply.NullArray);
+                }
+            }
+
+            return await completion.ConfigureAwait(false);
         }
+        finally
+        {
+            lock (_gate)
+            {
+                node.List?.Remove(node);
+            }
+        }
+    }
+
+    private void MarkStreamReadyLocked(byte[] key, bool groupOnly)
+    {
+        if (_streamReadWaiters.Count == 0)
+        {
+            return;
+        }
+
+        if (_readyStreamKeys.TryAdd(key, groupOnly))
+        {
+            _readyStreams.Enqueue(key);
+        }
+        else if (!groupOnly)
+        {
+            _readyStreamKeys[key] = false;
+        }
+    }
+
+    private void ServeReadyStreamReadsLocked()
+    {
+        // Run after the entire command, including EXEC, while the writer still owns _gate.
+        // Consumers claim group entries in registration order before another command can take them.
+        while (_readyStreams.TryDequeue(out byte[]? key))
+        {
+            _readyStreamKeys.Remove(key, out bool groupOnly);
+
+            for (var node = _streamReadWaiters.First; node is not null;)
+            {
+                var next = node.Next;
+                StreamRequest request = node.Value.Request;
+
+                if ((!groupOnly || request.Group is not null) && request.Keys.Contains(key, BinaryKeyComparer.Instance))
+                {
+                    ServeStreamReadLocked(node);
+                }
+
+                node = next;
+            }
+        }
+    }
+
+    private void ServeStreamReadLocked(LinkedListNode<StreamReadWaiter> node)
+    {
+        StreamReadWaiter waiter = node.Value;
+        Connection connection = waiter.Connection;
+
+        if (connection.Closed || connection.Lifetime.IsCancellationRequested)
+        {
+            CompleteStreamReadLocked(node, null);
+            return;
+        }
+
+        try
+        {
+            bool expired = waiter.RemainingMilliseconds <= 0;
+            FakeReply reply = expired ? FakeReply.NullArray : Execute(connection, waiter.Arguments);
+
+            if (expired || !ReferenceEquals(reply, FakeReply.NullArray))
+            {
+                CompleteStreamReadLocked(node, reply);
+            }
+        }
+        catch (Exception error)
+        {
+            connection.Failed = true;
+            node.List?.Remove(node);
+            waiter.Completion.TrySetException(error);
+        }
+    }
+
+    private void CompleteStreamReadLocked(LinkedListNode<StreamReadWaiter> node, FakeReply? reply)
+    {
+        StreamReadWaiter waiter = node.Value;
+        node.List!.Remove(node);
+        Connection connection = waiter.Connection;
+        var output = reply is null ? null : QueueOutputLocked(connection, reply.Encode(connection.Resp3), push: false);
+        waiter.Completion.TrySetResult(output);
     }
 }
