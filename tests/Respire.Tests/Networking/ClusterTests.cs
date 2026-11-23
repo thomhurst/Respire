@@ -2902,6 +2902,76 @@ public class ClusterTests
             $"*2\r\n$9\r\n127.0.0.1\r\n:{primaryPort}\r\n");
 
     [Test]
+    [Arguments(RespireReadFrom.Replica)]
+    [Arguments(RespireReadFrom.ReplicaPreferred)]
+    public async Task ReadFrom_ReadOnlyScriptWarmsBothReplicaCaches(RespireReadFrom policy)
+    {
+        await using var first = CreateScriptReplica();
+        await using var second = CreateScriptReplica();
+        var primaryReplies = new byte[][] { [] };
+        await using var primary = new FakeRespServer(primaryReplies);
+        primaryReplies[0] = Encoding.ASCII.GetBytes(
+            $"*1\r\n*5\r\n:0\r\n:16383\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{primary.Port}\r\n$7\r\nprimary\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n$5\r\nfirst\r\n" +
+            $"*3\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n$6\r\nsecond\r\n");
+#pragma warning disable RESP010 // Test-owned client uses a scripted two-replica topology.
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespireProtocol.Resp2,
+            UseCluster = true,
+            ClusterTopologyRefreshInterval = null,
+            Connections = 1,
+            Endpoints = [new("127.0.0.1", primary.Port)],
+        });
+#pragma warning restore RESP010
+        await using var reads = client.WithReadFrom(policy);
+        var script = RespireScript.Create("return redis.call('GET', KEYS[1])", readOnly: true);
+
+        for (int i = 0; i < 6; i++)
+        {
+            await Assert.That(await reads.Scripts.ExecuteStringAsync(script, ["key"])).IsEqualTo("value");
+        }
+
+        string sha = $"EVALSHA_RO {script.Sha1} 1 key";
+        string source = $"EVAL_RO {script.Source} 1 key";
+
+        foreach (var replica in new[] { first, second })
+        {
+            await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["READONLY", sha, source, sha, sha]);
+            await Assert.That(replica.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(1);
+        }
+
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+
+        static FakeRespServer CreateScriptReplica()
+        {
+            bool cached = false;
+            var value = "$5\r\nvalue\r\n"u8.ToArray();
+            var miss = "-NOSCRIPT missing\r\n"u8.ToArray();
+
+            return new FakeRespServer(FakeRespServer.OkReply)
+            {
+                ReplyOverride = (_, command) =>
+                {
+                    if (command.StartsWith("EVALSHA_RO ", StringComparison.Ordinal))
+                    {
+                        return cached ? value : miss;
+                    }
+
+                    if (command.StartsWith("EVAL_RO ", StringComparison.Ordinal))
+                    {
+                        cached = true;
+                        return value;
+                    }
+
+                    return null;
+                },
+            };
+        }
+    }
+
+    [Test]
     public async Task ReadFrom_RoutesReadOnlyScriptCommandsToReplica()
     {
         var primaryReplies = new byte[][]

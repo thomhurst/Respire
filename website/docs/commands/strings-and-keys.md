@@ -76,7 +76,7 @@ await redis.Strings.SetAsync("archive", file, file.Length);
 Connections:
 
 - Each upload uses a dedicated connection, so a slow source does not block other commands.
-- Concurrent uploads have no connection limit: Respire opens a new connection when none is idle. Bound concurrent uploads yourself to limit Redis connections. At most four idle connections are kept, shared with blocking commands.
+- Uploads share the [dedicated connection pool](../fundamentals/connections.md#dedicated-connection-pools) with blocking commands. By default, the pool has no maximum size and retains up to four idle connections. Set `DedicatedPool.MaximumSize` to cap connections and `DedicatedPool.MaximumIdle` to change idle retention. At capacity, uploads wait for a connection without reading their source.
 - After a `MOVING` handoff (standalone, Cluster, or Sentinel), new uploads use the new endpoint; uploads in progress finish on the old one.
 - During Sentinel failover, an upload in progress finishes on its original connection. An interrupted upload is not replayed on the new primary, because the old primary may have accepted it.
 

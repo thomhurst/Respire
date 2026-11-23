@@ -3874,7 +3874,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
         bool discardServerErrors = false,
         Action<Exception>? onRetry = null,
         RespireTelemetry.ErrorObservation observation = default,
-        CommandDeadline retryDeadline = default)
+        CommandDeadline retryDeadline = default,
+        ClusterScriptReplicaMiss? scriptReplicaMiss = null)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -3914,7 +3915,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     storedProcedureName, noRedirect, firstAttempt, initialRetirement, initialRejection,
                     allowReadFrom, readFromOverride, cursorAffinity, hedgeOriginalRoute, isHedge,
                     cursorReadFromOverride, suppressTelemetry, scriptTelemetry, discardServerErrors,
-                    onRetry, observation, retryDeadline).ConfigureAwait(false);
+                    onRetry, observation, retryDeadline, scriptReplicaMiss).ConfigureAwait(false);
             }
 
             if (initialRetirement is not null && !cursorContinuation && connection is not null
@@ -3929,7 +3930,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     storedProcedureName, noRedirect, firstAttempt, null, initialRejection,
                     allowReadFrom, readFromOverride, cursorAffinity, hedgeOriginalRoute, isHedge,
                     cursorReadFromOverride, suppressTelemetry, scriptTelemetry, discardServerErrors,
-                    onRetry, observation, retryDeadline).ConfigureAwait(false);
+                    onRetry, observation, retryDeadline, scriptReplicaMiss).ConfigureAwait(false);
             }
 
             if (connection is not null)
@@ -3958,7 +3959,7 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     storedProcedureName, noRedirect, firstAttempt, initialRetirement, initialRejection,
                     allowReadFrom, readFromOverride, cursorAffinity, hedgeOriginalRoute, isHedge,
                     cursorReadFromOverride, suppressTelemetry, scriptTelemetry, discardServerErrors,
-                    onRetry, observation, retryDeadline).ConfigureAwait(false);
+                    onRetry, observation, retryDeadline, scriptReplicaMiss).ConfigureAwait(false);
             }
 
             if (initialRetirement is not null)
@@ -4155,6 +4156,12 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                     connection = await cluster.GetOtherRoleReadConnectionAsync(
                         slot!.Value, fallback, backlogAcquisition.Token, discovery, observation).ConfigureAwait(false);
                     readFrom = fallback.RecoveryPolicy;
+                }
+                catch (RespireServerException error) when (scriptReplicaMiss is not null
+                    && error.Code == RespireErrorCodes.NoScript && ReadFallbackPolicy.IsReplicaConnection(connection))
+                {
+                    scriptReplicaMiss.Connection = connection;
+                    throw;
                 }
             }
         }
@@ -6372,6 +6379,14 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             => command.TryGetClientCacheKey(operation, out key);
     }
 
+    private sealed class ClusterScriptReplicaMiss
+    {
+        internal RespireConnection? Connection
+        {
+            get; set;
+        }
+    }
+
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     [RuntimeAsyncMethodGeneration(false)]
@@ -6390,6 +6405,8 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
             var arguments = tail[1..];
             var scriptTelemetry = started.Timestamp == 0
                 ? null : new ClusterScriptTelemetry(core, script, started);
+            var replicaMiss = script.IsReadOnly && _readFrom != RespireReadFrom.Primary
+                ? new ClusterScriptReplicaMiss() : null;
 
             try
             {
@@ -6402,16 +6419,18 @@ public sealed partial class RespireClient : IRespireClient, IRespireNameResolver
                         new MutationCommand<ReadOnlyCommand<Cmd2N>>(ReadOnlyCommand<Cmd2N>.ForAuditedScript(new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments),
                             script.IsCacheReadOnly), mutationFence),
                         cancellationToken, script.Sha1, allowReadFrom: true,
-                        suppressTelemetry: true, scriptTelemetry: scriptTelemetry, observation: observation).ConfigureAwait(false);
+                        suppressTelemetry: true, scriptTelemetry: scriptTelemetry, observation: observation,
+                        scriptReplicaMiss: replicaMiss).ConfigureAwait(false);
                 }
                 catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
                 {
                     observation.Handled(ex);
+                    // The script cache is node-local. A fresh read route could rotate away from the miss.
                     clusterReply = await SendClusterAsync(
                         script.EvalOperation, cluster,
                         new MutationCommand<ReadOnlyCommand<Cmd2N>>(ReadOnlyCommand<Cmd2N>.ForAuditedScript(new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments),
                             script.IsCacheReadOnly), mutationFence),
-                        cancellationToken, script.Sha1, allowReadFrom: true,
+                        cancellationToken, script.Sha1, initialConnection: replicaMiss?.Connection, allowReadFrom: true,
                         suppressTelemetry: true, scriptTelemetry: scriptTelemetry, observation: observation).ConfigureAwait(false);
                 }
 

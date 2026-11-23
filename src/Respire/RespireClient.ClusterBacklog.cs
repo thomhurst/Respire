@@ -55,7 +55,8 @@ public sealed partial class RespireClient
         bool allowReadFrom, RespireReadFrom? readFromOverride, ReadAffinity? cursorAffinity,
         HedgeOriginalRoute? hedgeOriginalRoute, bool isHedge, RespireReadFrom? cursorReadFromOverride,
         bool suppressTelemetry, ClusterScriptTelemetry? scriptTelemetry, bool discardServerErrors,
-        Action<Exception>? onRetry, RespireTelemetry.ErrorObservation observation, CommandDeadline retryDeadline)
+        Action<Exception>? onRetry, RespireTelemetry.ErrorObservation observation, CommandDeadline retryDeadline,
+        ClusterScriptReplicaMiss? scriptReplicaMiss)
         where TCommand : struct, IRespCommand
     {
         var snapshot = new ClusterBacklogCommand(new BacklogCommand<TCommand>(command, operation));
@@ -65,7 +66,7 @@ public sealed partial class RespireClient
                 allowReadFrom, readFromOverride, cursorAffinity, hedgeOriginalRoute, isHedge,
                 cursorReadFromOverride, suppressTelemetry, scriptTelemetry, observeErrors: false,
                 discardServerErrors: discardServerErrors, onRetry: onRetry, observation: observation,
-                retryDeadline: deadline));
+                retryDeadline: deadline, scriptReplicaMiss: scriptReplicaMiss));
     }
 
     private ValueTask<RespValue> SendBackloggedTrackedClusterAsync<TCommand>(string operation, ClusterRouter cluster,
