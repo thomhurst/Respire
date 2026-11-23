@@ -41,7 +41,12 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     [Arguments(true)]
     public async Task WorkerGeneratedDeadLetterCanBeRetriedAndConsumed(bool jobs)
     {
-        await using var client = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
+        // Drain a cancelled blocking read on Redis before the dashboard adds the retry.
+        RespireOptions connection = RespireOptions.Parse(redis.IsolatedConnectionString) with
+        {
+            DedicatedPool = new() { UnblockOnCancel = true },
+        };
+        await using var client = await RespireClient.ConnectAsync(connection);
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<IRespireClient>(client);
