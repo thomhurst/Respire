@@ -88,8 +88,10 @@ JSON rules:
 - All properties are written, including nulls.
 - Missing nullable properties read as null. Missing or null non-nullable properties throw
   `JsonException`. The C# `required` modifier affects construction only.
-- Unknown members are ignored; duplicate members use the last value. `FromJson` accepts a null
-  document.
+- Unknown members are ignored. `FromJson` accepts a null document.
+- The mapper validates each occurrence of a known property in document order. An invalid occurrence
+  throws `JsonException` even if a later value is valid. If every occurrence is valid, the last
+  value wins.
 - Numbers use JSON number syntax and invariant culture; numbers in strings are rejected.
   Non-finite doubles cannot be written. `Guid` and `DateTimeOffset` use System.Text.Json's formats.
 - Invalid, truncated, out-of-range, or trailing JSON fails decoding.
