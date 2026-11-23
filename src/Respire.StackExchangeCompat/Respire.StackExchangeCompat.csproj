@@ -6,6 +6,7 @@
     <PackageTags>$(PackageTags);stackexchange;interop</PackageTags>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Respire.StackExchangeCompat.Tests" />
     <PackageReference Include="StackExchange.Redis" />
     <ProjectReference Include="../Respire/Respire.csproj" />
     <ProjectReference Include="../Respire.Analyzers/Respire.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />

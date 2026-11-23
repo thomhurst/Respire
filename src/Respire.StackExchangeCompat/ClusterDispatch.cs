@@ -40,9 +40,8 @@ internal sealed class ClusterDispatch
 
     private static int[]? GetSlots(RespireClient client, RespireCommand command, RespireValue[] arguments)
     {
-        // A script can touch keys that are not in its argument list.
-        if (command.Name is "EVAL" or "EVALSHA"
-            || !RawCommandKeyLayouts.TryGetLayout(command.Name, arguments, out var layout)
+        // Scripts and commands with indirect mutations may touch keys outside their argument layouts.
+        if (!RawCommandKeyLayouts.TryGetLayout(command.Name, arguments, out var layout, requireCompleteKeySet: true)
             || (layout.Count == 0 && layout.Extra < 0))
         {
             return null;

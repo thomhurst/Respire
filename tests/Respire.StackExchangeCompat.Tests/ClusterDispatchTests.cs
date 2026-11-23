@@ -94,6 +94,62 @@ public class ClusterDispatchTests
         }
     }
 
+    [Test]
+    [Arguments("EVAL", "return 1", "1", FirstKey)]
+    [Arguments("EVALSHA", "hash", "1", FirstKey)]
+    [Arguments("EVAL_RO", "return 1", "1", FirstKey)]
+    [Arguments("EVALSHA_RO", "hash", "1", FirstKey)]
+    [Arguments("FCALL", "function", "1", FirstKey)]
+    [Arguments("FCALL_RO", "function", "1", FirstKey)]
+    [Arguments("TS.ADD", FirstKey, "*", "1")]
+    [Arguments("TS.MADD", FirstKey, "1", "1")]
+    public async Task CommandsWithUndeclaredKeysOrderAcrossSlots(
+        string command, string firstArgument, string secondArgument, string thirdArgument)
+    {
+        await using var client = RespireClient.Create("localhost:6379");
+        var dispatch = new ClusterDispatch();
+        var earlier = dispatch.Enqueue(client, "EXISTS", [SecondKey]);
+        var barrier = dispatch.Enqueue(client, command, [firstArgument, secondArgument, thirdArgument]);
+        var later = dispatch.Enqueue(client, "EXISTS", [IndependentKey]);
+
+        Assert.False(barrier.Predecessors.IsCompleted);
+        Assert.False(later.Predecessors.IsCompleted);
+
+        dispatch.Release(earlier);
+        await barrier.Predecessors.WaitAsync(s_timeout);
+        Assert.False(later.Predecessors.IsCompleted);
+
+        dispatch.Release(barrier);
+        await later.Predecessors.WaitAsync(s_timeout);
+        dispatch.Release(later);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CancelledReservationKeepsLaterCommandsBehindOlderWork(bool useBarrier)
+    {
+        await using var client = RespireClient.Create("localhost:6379");
+        using var cancellation = new CancellationTokenSource();
+        var dispatch = new ClusterDispatch();
+        var earlier = dispatch.Enqueue(client, "EXISTS", [FirstKey]);
+        var queued = useBarrier
+            ? dispatch.Enqueue(client, "EVAL", ["return 1", 1, FirstKey])
+            : dispatch.Enqueue(client, "EXISTS", [FirstKey, SecondKey]);
+
+        Task queuedWait = queued.Predecessors.WaitAsync(cancellation.Token);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queuedWait);
+        dispatch.Release(queued);
+
+        var later = dispatch.Enqueue(client, "EXISTS", [SecondKey]);
+        Assert.False(later.Predecessors.IsCompleted);
+
+        dispatch.Release(earlier);
+        await later.Predecessors.WaitAsync(s_timeout);
+        dispatch.Release(later);
+    }
+
     private static RespireConnectionMultiplexer CreateAdapter(FakeRespServer first, FakeRespServer second)
     {
         var topology = Encoding.ASCII.GetBytes(
