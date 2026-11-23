@@ -662,7 +662,7 @@ Auth/ACL errors, malformed replies, timeouts, and transport failures always fail
 2. New commands, and unaccepted ones (keeping their timeout), move to the new sockets. `CLIENT ID` and credential-renewal `AUTH` never move.
 3. Accepted commands drain on the old sockets.
 
-The grace period is a drain budget, not a guarantee. An unreachable target is retried until it ends, then normal reconnect applies. A handshake finishing after it still switches, and old sockets close at once, failing their accepted commands (logged as a warning).
+Respire uses the advertised grace period, capped at one day (86,400 seconds), as the shared budget for target retries and draining accepted commands on old sockets. The budget starts when Respire receives the `MOVING` notification. `MaintenanceWindowTimeout` limits timeout relaxation separately. If the target stays unreachable through the deadline, Respire keeps using the current sockets and reconnects normally when they close. A handshake that finishes after the deadline still switches to the new sockets. Respire closes the old sockets immediately, fails any accepted commands still pending there, and logs a warning.
 
 **Cluster slot migrations:** `SMIGRATED` updates slot ownership when the source still owns the slots. Dropped or missing notifications fall back to `MOVED` redirects and [topology refresh](#cluster-topology-refresh); skips count in `respire.cluster.slot_migrations.skipped`. Disposal waits for running topology callbacks, such as `ConnectionStateChanged` handlers, so keep them short.
 
