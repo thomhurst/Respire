@@ -241,7 +241,17 @@ internal sealed class DashboardState
                 try
                 {
                     length = await _client.Streams.CountAsync(stream.Stream, token).ConfigureAwait(false);
-                    groups = await _client.Streams.GroupInfoAsync(stream.Stream, token).ConfigureAwait(false);
+
+                    try
+                    {
+                        groups = await _client.Streams.GroupInfoAsync(stream.Stream, token).ConfigureAwait(false);
+                    }
+                    catch (RespireServerException ex) when (ex.Message == "ERR no such key")
+                    {
+                        // The stream may have disappeared after XLEN.
+                        length = 0;
+                    }
+
                     pending = groups.Any(g => g.Name == stream.Group)
                         ? await _client.Streams.PendingAsync(stream.Stream, stream.Group,
                             count: _limit, cancellationToken: token).ConfigureAwait(false) : [];

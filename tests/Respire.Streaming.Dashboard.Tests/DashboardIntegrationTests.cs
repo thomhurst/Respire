@@ -37,6 +37,70 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
     }
 
     [Test]
+    public async Task QueueWithoutSourceStreamShowsStagedJobsAndAwaitsWorker()
+    {
+        await using RespireClient root = await RespireClient.ConnectAsync(redis.IsolatedConnectionString);
+        IRespireClient client = root.WithKeyPrefix("tenant:");
+        var queue = new RespireJobQueue<string>(client, "dashboard-uninitialized", System.Text.Encoding.UTF8.GetBytes);
+        await queue.PauseAsync();
+        await queue.EnqueueScheduledAsync("job", "payload", new() { Group = "staged-tenant", Delay = TimeSpan.FromHours(1) });
+        await queue.CreateBatchAsync(batchId: "staged-batch");
+        await Assert.That(await client.Keys.ExistsAsync(queue.StreamKey)).IsFalse();
+
+        await using var app = await DashboardSecurityTests.CreateApplication(client, jobs: true, configure: options =>
+        {
+            options.Streams[0].Stream = queue.StreamKey;
+            options.Streams[0].Group = RespireJobQueue<string>.ConsumerGroup;
+            options.Streams[0].DeadLetterStream = queue.DeadLetterStreamKey;
+            options.Streams[0].BatchIds.Add("staged-batch");
+        });
+        using HttpClient http = app.GetTestClient();
+        http.DefaultRequestHeaders.Add("X-Test-Role", "operator");
+
+        string html = await http.GetStringAsync("/workers/");
+
+        await Assert.That(html).Contains("Retained entries</dt><dd>0</dd>");
+        await Assert.That(html).Contains("No consumer groups exist yet. Start a worker to create its group.");
+        await Assert.That(html).Contains("State</dt><dd>Paused</dd>");
+        await Assert.That(html).Contains("<td>staged-tenant</td>");
+        await Assert.That(html).Contains("<td>staged-batch</td>");
+        await Assert.That(html).Contains("<td>Open</td>");
+        await Assert.That(html).DoesNotContain("Source stream unavailable");
+        await Assert.That(await client.Keys.ExistsAsync(queue.StreamKey)).IsFalse();
+    }
+
+    [Test]
+    public async Task SourceInspectionReportsDeniedGroupReadEvenWhenLengthIsZero()
+    {
+        RespireOptions connection = RespireOptions.Parse(redis.IsolatedConnectionString);
+        await using RespireClient admin = await RespireClient.ConnectAsync(connection with { AllowAdmin = true });
+        string username = "dashboard-source-" + Guid.NewGuid().ToString("N");
+        await admin.Server.AclSetUserAsync(username, ["on", ">dashboard-test-password", "~*", "+@all", "-xinfo"]);
+
+        try
+        {
+            await using RespireClient client = await RespireClient.ConnectAsync(connection with
+            {
+                Username = username,
+                Password = "dashboard-test-password",
+            });
+            RespireDashboardOptions options = DashboardSecurityTests.Options();
+            await Assert.That(await client.Streams.CountAsync(options.Streams[0].Stream)).IsEqualTo(0);
+
+            DashboardSnapshot snapshot = await new DashboardState(client, options).ReadAsync(default);
+
+            await Assert.That(snapshot.Streams[0].SourceUnavailable).IsTrue();
+            string html = DashboardPage.Render(snapshot, "/workers", "token", "value");
+            await Assert.That(html).Contains("Source stream unavailable");
+            await Assert.That(html).DoesNotContain("No consumer groups exist yet");
+        }
+        finally
+        {
+            using var removed = await admin.ExecuteAsync("ACL DELUSER", [username]);
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task WorkerGeneratedDeadLetterCanBeRetriedAndConsumed(bool jobs)
@@ -543,7 +607,7 @@ public class DashboardIntegrationTests(RedisTestContainer redis)
         var id = await AddDead(client);
         var state = new DashboardState(client, DashboardSecurityTests.Options());
         var snapshot = await state.ReadAsync(default);
-        await Assert.That(snapshot.Streams[0].Error).IsNotNull();
+        await Assert.That(snapshot.Streams[0].Error).IsNull();
         await Assert.That(snapshot.Streams[0].DeadLetters.Length).IsEqualTo(1);
         var html = DashboardPage.Render(snapshot, "/workers", "token", "value");
         await Assert.That(html).Contains("/0/delete");
