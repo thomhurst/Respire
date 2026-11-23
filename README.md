@@ -1,7 +1,7 @@
 # Respire
 
 **Redis for .NET, without the ceremony.** Plain C# types in, plain C# types out, and the hard
-parts of Redis (caching, locks, queues, rate limits) are one call each.
+parts of Redis (caching, locks, queues, rate limits) are one call each. 
 
 Works with Redis, Valkey, KeyDB, and other RESP-compatible servers, on .NET 10 and .NET 11.
 
