@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Respire.Serialization.Protobuf;
 using Respire.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -10,6 +11,27 @@ namespace Respire.Streaming.Tests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class BinarySerializerIntegrationTests(RedisTestContainer redis)
 {
+    [Test]
+    public async Task ProtobufTypedReadDistinguishesAnEmptyValueFromAMissingKey()
+    {
+        var options = RespireOptions.Parse(redis.ConnectionString) with
+        {
+            Serializer = new RespireProtobufSerializer(),
+        };
+        await using var client = await RespireClient.ConnectAsync(options);
+        const string key = "nullable-default-counter";
+
+        var missing = await client.TryGetAsync<ProtobufCounter?>(key);
+        await Assert.That(missing.Found).IsFalse();
+        await Assert.That(missing.Value.HasValue).IsFalse();
+
+        await client.SetAsync<ProtobufCounter?>(key, default(ProtobufCounter));
+
+        var stored = await client.TryGetAsync<ProtobufCounter?>(key);
+        await Assert.That(stored.Found).IsTrue();
+        await Assert.That(stored.Value?.Number).IsEqualTo((int?)0);
+    }
+
     [Test]
     [Arguments("MessagePack")]
     [Arguments("MemoryPack")]

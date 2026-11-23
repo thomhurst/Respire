@@ -28,7 +28,15 @@ public sealed class RespireProtobufSerializer : IRespireSerializer
 
     /// <inheritdoc/>
     [RequiresUnreferencedCode(Trimming), RequiresDynamicCode(DynamicCode)]
-    public T? Deserialize<T>(ReadOnlySpan<byte> payload) => _model.Deserialize<T>(payload);
+    public T? Deserialize<T>(ReadOnlySpan<byte> payload)
+    {
+        if (payload.IsEmpty && Nullable.GetUnderlyingType(typeof(T)) is { } underlyingType)
+        {
+            return (T?)_model.Deserialize(underlyingType, payload);
+        }
+
+        return _model.Deserialize<T>(payload);
+    }
 
     /// <inheritdoc/>
     [RequiresUnreferencedCode(Trimming), RequiresDynamicCode(DynamicCode)]
@@ -57,6 +65,13 @@ public sealed class RespireProtobufSerializer : IRespireSerializer
     public object? Deserialize(Type type, ReadOnlySpan<byte> payload)
     {
         ArgumentNullException.ThrowIfNull(type);
+
+        // Root null writes are rejected, so an empty message represents a present value.
+        if (payload.IsEmpty)
+        {
+            type = Nullable.GetUnderlyingType(type) ?? type;
+        }
+
         return _model.Deserialize(type, payload);
     }
 }

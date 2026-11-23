@@ -183,6 +183,25 @@ public class BinarySerializerTests
     }
 
     [Test]
+    [Arguments(0)]
+    [Arguments(42)]
+    public async Task ProtobufPreservesPresentNullableStructs(int number)
+    {
+        var serializer = new RespireProtobufSerializer();
+        ProtobufCounter? value = new ProtobufCounter { Number = number };
+        var generic = new ArrayBufferWriter<byte>();
+        var runtime = new ArrayBufferWriter<byte>();
+        serializer.Serialize(generic, value);
+        serializer.Serialize(runtime, typeof(ProtobufCounter?), value);
+
+        await Assert.That(generic.WrittenCount == 0).IsEqualTo(number == 0);
+        await Assert.That(runtime.WrittenSpan.SequenceEqual(generic.WrittenSpan)).IsTrue();
+        await Assert.That(serializer.Deserialize<ProtobufCounter?>(generic.WrittenSpan)?.Number).IsEqualTo((int?)number);
+        var restored = (ProtobufCounter?)serializer.Deserialize(typeof(ProtobufCounter?), runtime.WrittenSpan);
+        await Assert.That(restored?.Number).IsEqualTo((int?)number);
+    }
+
+    [Test]
     [Arguments("MessagePack")]
     [Arguments("MemoryPack")]
     [Arguments("Protobuf")]
@@ -323,6 +342,16 @@ public partial class SerializerPayload
 
     [Key(1), ProtoMember(2)]
     public int Age
+    {
+        get; set;
+    }
+}
+
+[ProtoContract]
+public struct ProtobufCounter
+{
+    [ProtoMember(1)]
+    public int Number
     {
         get; set;
     }
