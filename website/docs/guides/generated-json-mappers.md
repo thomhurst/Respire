@@ -68,6 +68,19 @@ Results and errors:
 - Every I/O method takes a `CancellationToken`. Cancellation after submission does not guarantee
   Redis did not apply a write.
 
+### Decimal precision in RedisJSON
+
+Generated `ToJson` and `FromJson` round-trip .NET `decimal` values exactly in memory. RedisJSON can
+store fractional values and large integers as double-precision floating-point numbers. A generated
+document or property write can succeed even when RedisJSON rounds the value. For example,
+`0.1234567890123456789012345678m` can read back as `0.12345678901234568m`. RedisJSON can also round
+`decimal.MaxValue` to `7.922816251426434e28`, which is outside the .NET `decimal` range. Both
+`GetAsync` and generated property reads throw `JsonException` if the returned number is out of range.
+
+For exact storage, use [generated hash codecs](generated-hash-codecs.md), which store `decimal` as
+invariant text. If the value must stay in a JSON document, use a `string` property and format and
+parse the decimal with `CultureInfo.InvariantCulture`.
+
 ## Supported shapes and JSON rules
 
 Models:
