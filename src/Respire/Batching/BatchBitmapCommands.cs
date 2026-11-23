@@ -21,7 +21,7 @@ public interface IRespireBatchBitmapCommands
     /// <summary>Number of set bits within a range. Redis: BITCOUNT.</summary>
     RespirePending<long> SetBitCount(RespireKey key, long start, long end, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte);
 
-    /// <summary>The first offset holding <paramref name="value"/>, or null when none is found. Redis: BITPOS.</summary>
+    /// <inheritdoc cref="IRespireBitmapCommands.PositionAsync"/>
     RespirePending<long?> Position(
         RespireKey key, bool value, long? start = null, long? end = null, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte);
 
@@ -61,11 +61,17 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IRespireBatchBitm
 
     public RespirePending<long> SetBitCount(
         RespireKey key, long start, long end, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte)
-        => sink.Add<Cmd4, long>(
-            "BITCOUNT",
-            new Cmd4(
-                RespireCommands.Bitmap.BITCOUNT.Verb, sink.Client.Key(in key), start, end, BitmapCommands.Unit(unit)),
-            static (c, v) => ResponseReader.Integer(in v));
+    {
+        BitmapCommands.ValidateUnit(unit);
+        var verb = RespireCommands.Bitmap.BITCOUNT.Verb;
+        var keyArgument = sink.Client.Key(in key);
+
+        return unit == RespireBitIndexUnit.Byte
+            ? sink.Add<Cmd3, long>(
+                "BITCOUNT", new Cmd3(verb, keyArgument, start, end), static (c, v) => ResponseReader.Integer(in v))
+            : sink.Add<Cmd4, long>(
+                "BITCOUNT", new Cmd4(verb, keyArgument, start, end, "BIT"), static (c, v) => ResponseReader.Integer(in v));
+    }
 
     public RespirePending<long?> Position(
         RespireKey key, bool value, long? start = null, long? end = null, RespireBitIndexUnit unit = RespireBitIndexUnit.Byte)
@@ -79,10 +85,11 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IRespireBatchBitm
             ({ } from, null) => sink.Add<Cmd3, long?>(
                 "BITPOS", new Cmd3(RespireCommands.Bitmap.BITPOS.Verb, sink.Client.Key(in key), value, from),
                 static (c, v) => ResponseReader.IntegerMinusOneOrNull(in v)),
+            ({ } from, { } to) when unit == RespireBitIndexUnit.Byte => sink.Add<Cmd4, long?>(
+                "BITPOS", new Cmd4(RespireCommands.Bitmap.BITPOS.Verb, sink.Client.Key(in key), value, from, to),
+                static (c, v) => ResponseReader.IntegerMinusOneOrNull(in v)),
             ({ } from, { } to) => sink.Add<Cmd5, long?>(
-                "BITPOS",
-                new Cmd5(
-                    RespireCommands.Bitmap.BITPOS.Verb, sink.Client.Key(in key), value, from, to, BitmapCommands.Unit(unit)),
+                "BITPOS", new Cmd5(RespireCommands.Bitmap.BITPOS.Verb, sink.Client.Key(in key), value, from, to, "BIT"),
                 static (c, v) => ResponseReader.IntegerMinusOneOrNull(in v)),
         };
     }
