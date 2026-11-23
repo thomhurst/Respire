@@ -1,4 +1,5 @@
 using System.Diagnostics.Tracing;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -11,11 +12,14 @@ public partial class RespireHybridCacheCoherenceTests
 {
     [Test]
     [NotInParallel]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task TaggedFallbackCoalescesConcurrentFactories(bool disableLocalCache)
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task TaggedFallbackCoalescesConcurrentFactories(bool disableLocalCache, bool hasInvalidatedPayload)
     {
-        await using var reader = BuildProvider(true, clientPrefix: "fallback:" + NewKey() + ":", configure: options =>
+        string prefix = "fallback:" + NewKey() + ":";
+        await using var reader = BuildProvider(true, clientPrefix: prefix, configure: options =>
         {
             TagOptions("tags:" + NewKey())(options);
             options.MaxObservedKeys = 1;
@@ -37,6 +41,13 @@ public partial class RespireHybridCacheCoherenceTests
 
         string key = NewKey();
         string[] tags = [NewKey()];
+
+        if (hasInvalidatedPayload)
+        {
+            await using var writer = BuildProvider(false, clientPrefix: prefix);
+            await WriteInvalidatedPayloadAsync(writer, key, tags[0]);
+        }
+
         using var listener = new StampedeJoinListener();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -105,9 +116,11 @@ public partial class RespireHybridCacheCoherenceTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task RemoteKeyWriteStartsANewFallbackRead(bool disableLocalCache)
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task RemoteKeyWriteStartsANewFallbackRead(bool disableLocalCache, bool hasInvalidatedPayload)
     {
         string prefix = "fallback:" + NewKey() + ":";
         await using var writer = BuildProvider(false, clientPrefix: prefix);
@@ -134,6 +147,12 @@ public partial class RespireHybridCacheCoherenceTests
 
         string key = NewKey();
         string[] tags = [NewKey()];
+
+        if (hasInvalidatedPayload)
+        {
+            await WriteInvalidatedPayloadAsync(writer, key, tags[0]);
+        }
+
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<string> first = cache.GetOrCreateAsync(key, async _ =>
@@ -157,6 +176,14 @@ public partial class RespireHybridCacheCoherenceTests
             release.TrySetResult();
             await first.WaitAsync(TimeSpan.FromSeconds(10));
         }
+    }
+
+    private static async Task WriteInvalidatedPayloadAsync(ServiceProvider writer, string key, string tag)
+    {
+        HybridCache cache = writer.GetRequiredService<HybridCache>();
+        await cache.SetAsync(key, "invalidated", LongLived, [tag]);
+        await cache.RemoveByTagAsync(tag);
+        await Assert.That(await writer.GetRequiredService<IDistributedCache>().GetAsync(key)).IsNotNull();
     }
 
     private sealed class StampedeJoinListener : EventListener

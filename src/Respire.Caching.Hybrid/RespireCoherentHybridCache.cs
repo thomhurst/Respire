@@ -24,7 +24,6 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
     private readonly HybridCacheOptions _hybridOptions;
     private readonly IOptionsMonitor<HybridCacheOptions> _fixedOptions;
     private readonly HybridCache _unobserved;
-    private readonly IRespireClient _fallbackKeyProbe;
     private readonly int _maxObservedKeys;
     private readonly int _maxRememberedTags;
     private readonly TagReplayClock _clock;
@@ -54,7 +53,6 @@ internal sealed partial class RespireCoherentHybridCache : HybridCache, IDisposa
         _clock = new TagReplayClock(services.GetService<TimeProvider>() ?? TimeProvider.System);
         _unobserved = CreateContext(null, _distributed);
         TrackingClient = _distributed.CreateCoherenceTrackingClient(options.TrackingOptions);
-        _fallbackKeyProbe = TrackingClient.WithoutClientCache();
         _sweep = new Timer(static state => ((RespireCoherentHybridCache)state!).SweepObservationsOnTimer(),
             this, options.ObservationSweepInterval, options.ObservationSweepInterval);
         StartTagPropagation(options);

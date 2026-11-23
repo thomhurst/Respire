@@ -204,38 +204,49 @@ internal sealed partial class RespireCoherentHybridCache
         string[] seeded = GetSeedTags(tags);
         Array.Sort(seeded, 1, seeded.Length - 1, StringComparer.Ordinal);
         HybridCacheEntryFlags flags = EffectiveFlags(options);
-        Task<DateTimeOffset[]> markerRead = Task.WhenAll(seeded.Select(ReadTagMarkerAsync));
-        Task<bool> canShareRead = CanShareFallbackReadAsync(key, flags, cancellationToken);
-        await Task.WhenAll(markerRead, canShareRead).WaitAsync(cancellationToken).ConfigureAwait(false);
+        DateTimeOffset[] markers = await ReadTagMarkersAsync(seeded, cancellationToken).ConfigureAwait(false);
+        bool readsL2 = (flags & HybridCacheEntryFlags.DisableDistributedCacheRead) == 0;
+        HybridCacheEntryOptions fillOptions = readsL2
+            ? WithFlags(flags | HybridCacheEntryFlags.DisableDistributedCacheRead)
+            : options;
 
-        bool canShare = await canShareRead.ConfigureAwait(false);
-        DateTimeOffset[] markers = await markerRead.ConfigureAwait(false);
-        FallbackRead read = AcquireFallbackRead(key, flags, seeded, markers, canShare);
-
-        // A shareable read either already bypasses L2 or has confirmed an L2 miss.
-        // Reuse that result so this context cannot start an L2 hit after the probe.
-        if (canShare && (flags & HybridCacheEntryFlags.DisableDistributedCacheRead) == 0)
+        if (!readsL2)
         {
-            options = new HybridCacheEntryOptions
+            return await ReadFillAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        // Each caller checks L2 independently so it can see a remote replacement. Let
+        // HybridCache validate the payload and join the fill only from its miss callback.
+        HybridCache lookup = CreateContext(null, new TagReplayBackend(this));
+        await SeedTagMetadataAsync(lookup, seeded, markers).WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await lookup.GetOrCreateAsync(key, ReadFillAsync,
+            WithFlags(flags | HybridCacheEntryFlags.DisableDistributedCacheWrite), tags, cancellationToken)
+            .ConfigureAwait(false);
+
+        async ValueTask<T> ReadFillAsync(CancellationToken token)
+        {
+            FallbackRead read = AcquireFallbackRead(key, flags, seeded, markers);
+
+            try
             {
-                Flags = flags | HybridCacheEntryFlags.DisableDistributedCacheRead,
-                Expiration = options.Expiration,
-                LocalCacheExpiration = options.LocalCacheExpiration,
-            };
-        }
-
-        try
-        {
-            await read.TagReplay.WaitAsync(cancellationToken).ConfigureAwait(false);
-            return await read.Cache.GetOrCreateAsync(key, state, factory, options, tags, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            if (canShare)
+                await read.TagReplay.WaitAsync(token).ConfigureAwait(false);
+                return await read.Cache.GetOrCreateAsync(key, state, factory, fillOptions, tags, token)
+                    .ConfigureAwait(false);
+            }
+            finally
             {
                 ReleaseFallbackRead(key, read);
             }
+        }
+
+        HybridCacheEntryOptions WithFlags(HybridCacheEntryFlags updatedFlags)
+        {
+            return new HybridCacheEntryOptions
+            {
+                Flags = updatedFlags,
+                Expiration = options.Expiration,
+                LocalCacheExpiration = options.LocalCacheExpiration,
+            };
         }
     }
 
@@ -247,30 +258,8 @@ internal sealed partial class RespireCoherentHybridCache
             && (tags is null || !tags.Any(tag => tag == WildcardTag || string.IsNullOrWhiteSpace(tag)));
     }
 
-    private async Task<bool> CanShareFallbackReadAsync(string key, HybridCacheEntryFlags flags,
-        CancellationToken cancellationToken)
-    {
-        if ((flags & HybridCacheEntryFlags.DisableDistributedCacheRead) != 0)
-        {
-            return true;
-        }
-
-        // A later caller must see a remote replacement instead of joining an older miss.
-        // Read the primary directly so a cached existence result cannot mask the replacement.
-        try
-        {
-            RespireKey physicalKey = _distributed.ResolveCoherenceKey(key);
-            return !await _fallbackKeyProbe.ExistsAsync(physicalKey, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception error) when (error is RespireException or ObjectDisposedException)
-        {
-            // If the probe fails, let HybridCache try its usual L2 read independently.
-            return false;
-        }
-    }
-
     private FallbackRead AcquireFallbackRead(string key, HybridCacheEntryFlags flags, string[] tags,
-        DateTimeOffset[] markers, bool canShare)
+        DateTimeOffset[] markers)
     {
         lock (_gate)
         {
@@ -283,28 +272,11 @@ internal sealed partial class RespireCoherentHybridCache
 
             _fallbackReads.TryGetValue(key, out List<FallbackRead>? reads);
 
-            if (!canShare)
-            {
-                // A present key or a failed probe ends reuse of earlier L2 misses.
-                if (reads is not null)
-                {
-                    reads.RemoveAll(static read => (read.Flags & HybridCacheEntryFlags.DisableDistributedCacheRead) == 0);
-
-                    if (reads.Count == 0)
-                    {
-                        _fallbackReads.Remove(key);
-                    }
-                }
-
-                return CreateFallbackRead(flags, tags, markers);
-            }
-
-            // An updated marker starts a new fill even when the key is still missing.
             if (reads is not null)
             {
                 foreach (FallbackRead read in reads)
                 {
-                    if (read.Flags == flags && tags.AsSpan().SequenceEqual(read.Tags)
+                    if (!read.TagReplay.IsFaulted && read.Flags == flags && tags.AsSpan().SequenceEqual(read.Tags)
                         && markers.AsSpan().SequenceEqual(read.Markers))
                     {
                         read.ActiveCalls++;
@@ -372,16 +344,17 @@ internal sealed partial class RespireCoherentHybridCache
     private async Task SeedTagMetadataAsync(HybridCache cache, IEnumerable<string>? tags)
     {
         string[] seeded = GetSeedTags(tags);
-        DateTimeOffset[] markers = await Task.WhenAll(seeded.Select(ReadTagMarkerAsync)).ConfigureAwait(false);
-        Task replay;
+        DateTimeOffset[] markers = await ReadTagMarkersAsync(seeded, CancellationToken.None).ConfigureAwait(false);
+        await SeedTagMetadataAsync(cache, seeded, markers).ConfigureAwait(false);
+    }
 
+    private Task SeedTagMetadataAsync(HybridCache cache, string[] tags, DateTimeOffset[] markers)
+    {
         lock (_gate)
         {
-            MergeRememberedTagMarkers(seeded, markers);
-            replay = ReplayTagMarkers(cache, seeded, markers);
+            MergeRememberedTagMarkers(tags, markers);
+            return ReplayTagMarkers(cache, tags, markers);
         }
-
-        await replay.ConfigureAwait(false);
     }
 
     private void MergeRememberedTagMarkers(string[] tags, DateTimeOffset[] markers)
@@ -409,11 +382,16 @@ internal sealed partial class RespireCoherentHybridCache
         return Task.WhenAll(replays);
     }
 
-    private async Task<DateTimeOffset> ReadTagMarkerAsync(string tag)
+    private Task<DateTimeOffset[]> ReadTagMarkersAsync(string[] tags, CancellationToken cancellationToken)
+    {
+        return Task.WhenAll(tags.Select(tag => ReadTagMarkerAsync(tag, cancellationToken)));
+    }
+
+    private async Task<DateTimeOffset> ReadTagMarkerAsync(string tag, CancellationToken cancellationToken)
     {
         try
         {
-            var marker = await _distributed.GetAsync(TagMarkerPrefix + tag).ConfigureAwait(false);
+            var marker = await _distributed.GetAsync(TagMarkerPrefix + tag, cancellationToken).ConfigureAwait(false);
 
             if (marker is null)
             {
@@ -430,7 +408,7 @@ internal sealed partial class RespireCoherentHybridCache
                 }
             }
         }
-        catch (Exception)
+        catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             // Fall through to the fail-closed result below.
         }
