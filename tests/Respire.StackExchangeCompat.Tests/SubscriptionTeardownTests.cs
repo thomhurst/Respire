@@ -93,6 +93,45 @@ public class SubscriptionTeardownTests(RedisTestContainer fixture)
         }
     }
 
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task RejectedCloseDetachesCallbacksFromBorrowedClient(int protocol)
+    {
+        var hook = new RejectNthUnsubscribe(1);
+        await using var native = await RespireClient.ConnectAsync(Options(protocol, hook));
+        using var control = await ConnectionMultiplexer.ConnectAsync(fixture.IsolatedStackExchangeConnectionString);
+        var connection = RespireConnectionMultiplexer.Wrap(native);
+        var subscriber = connection.GetSubscriber();
+        var publisher = control.GetSubscriber();
+        var channel = RedisChannel.Literal($"close-{Guid.NewGuid():N}");
+        var beforeClose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var afterClose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await subscriber.SubscribeAsync(channel, (_, value) =>
+        {
+            if (value == "before close")
+            {
+                beforeClose.TrySetResult();
+            }
+            else
+            {
+                afterClose.TrySetResult();
+            }
+        });
+
+        Assert.Equal(1, await publisher.PublishAsync(channel, "before close"));
+        await beforeClose.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // CloseAsync caches the failure, so disposing the adapter would throw it again.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => connection.CloseAsync());
+        Assert.Same(hook.Rejection, error);
+        await native.PingAsync();
+
+        Assert.Equal(1, await publisher.PublishAsync(channel, "after close"));
+        await Assert.ThrowsAsync<TimeoutException>(() => afterClose.Task.WaitAsync(TimeSpan.FromSeconds(1)));
+    }
+
     private RespireOptions Options(int protocol, RespireCommandHook hook)
     {
         return RespireOptions.Parse(fixture.IsolatedConnectionString) with
