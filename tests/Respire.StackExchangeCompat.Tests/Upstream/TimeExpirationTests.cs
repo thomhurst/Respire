@@ -230,33 +230,33 @@ public class TimeExpirationTests(RedisTestContainer fixture)
     public void SlidingExpirationRenewedByAccessUntilAbsoluteExpiration()
     {
         using var cache = UpstreamCache.Create(fixture);
+        using var control = StackExchange.Redis.ConnectionMultiplexer.Connect(fixture.IsolatedStackExchangeConnectionString);
+        var database = control.GetDatabase();
         var key = GetNameAndReset(cache);
+        var redisKey = UpstreamCache.KeyPrefix + key;
         var value = new byte[1];
+        var absoluteExpiration = DateTimeOffset.UtcNow.AddMinutes(5);
+        var shortenedTtl = TimeSpan.FromMinutes(1);
 
         cache.Set(key, value, new DistributedCacheEntryOptions()
-            .SetSlidingExpiration(TimeSpan.FromSeconds(1))
-            .SetAbsoluteExpiration(TimeSpan.FromSeconds(3)));
+            .SetSlidingExpiration(TimeSpan.FromMinutes(10))
+            .SetAbsoluteExpiration(absoluteExpiration));
 
-        var setTime = DateTime.Now;
-        var result = cache.Get(key);
-        Assert.Equal(value, result);
+        // Shorten the server TTL without changing the cache entry's expiration metadata.
+        Assert.True(database.KeyExpire(redisKey, shortenedTtl));
 
-        for (int i = 0; i < 5; i++)
-        {
-            Thread.Sleep(TimeSpan.FromSeconds(0.5));
+        var beforeRead = DateTimeOffset.UtcNow;
+        Assert.Equal(value, cache.Get(key));
+        TimeSpan? renewedTtl = database.KeyTimeToLive(redisKey);
+        var afterProbe = DateTimeOffset.UtcNow;
 
-            result = cache.Get(key);
-            Assert.NotNull(result);
-            Assert.Equal(value, result);
-        }
+        Assert.NotNull(renewedTtl);
+        Assert.True(renewedTtl.Value > shortenedTtl, $"Expected a TTL greater than {shortenedTtl}, got {renewedTtl}.");
 
-        while ((DateTime.Now - setTime).TotalSeconds < 4)
-        {
-            Thread.Sleep(TimeSpan.FromSeconds(0.5));
-        }
-
-        result = cache.Get(key);
-        Assert.Null(result);
+        // Allow millisecond rounding when setting and reading the TTL.
+        var roundingTolerance = TimeSpan.FromMilliseconds(2);
+        Assert.InRange(renewedTtl.Value, absoluteExpiration - afterProbe - roundingTolerance,
+            absoluteExpiration - beforeRead + roundingTolerance);
     }
 
     static string GetNameAndReset(IDistributedCache cache, [CallerMemberName] string caller = "")

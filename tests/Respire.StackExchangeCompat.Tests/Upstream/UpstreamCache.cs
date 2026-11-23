@@ -5,13 +5,15 @@ namespace Respire.StackExchangeCompat;
 
 internal static class UpstreamCache
 {
+    internal const string KeyPrefix = "upstream:";
+
     internal static RedisCache Create(RedisTestContainer fixture)
     {
         var connection = RespireConnectionMultiplexer.Create(RespireOptions.Parse(fixture.IsolatedConnectionString));
         return new RedisCache(Options.Create(new RedisCacheOptions
         {
             ConnectionMultiplexerFactory = () => Task.FromResult<StackExchange.Redis.IConnectionMultiplexer>(connection),
-            InstanceName = "upstream:",
+            InstanceName = KeyPrefix,
         }));
     }
 
