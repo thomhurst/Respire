@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using Aspire.Hosting;
 using Aspire.Hosting.Testing;
@@ -25,12 +26,17 @@ public class AppHostTests
         using var valkey = await http.GetAsync("/valkey", deadline.Token);
         await Assert.That(redis.IsSuccessStatusCode).IsTrue();
         await Assert.That(valkey.IsSuccessStatusCode).IsTrue();
-        var key = Guid.NewGuid().ToString("N");
-        var cache = await http.GetFromJsonAsync<CacheResult>($"/distributed/{key}", deadline.Token);
+        string key = Guid.NewGuid().ToString("N");
+        CacheResult? cache = await http.GetFromJsonAsync<CacheResult>($"/distributed/{key}-distributed", deadline.Token);
         await Assert.That(cache!.Stored).IsEqualTo(cache.Value);
+
+        string distributedHybridPath = $"/hybrid/{key}/distributed";
+        using HttpResponseMessage missing = await http.GetAsync(distributedHybridPath, deadline.Token);
+        await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+
         var hybrid = await http.GetStringAsync($"/hybrid/{key}", deadline.Token);
         await Assert.That(await http.GetStringAsync($"/hybrid/{key}", deadline.Token)).IsEqualTo(hybrid);
-        await Assert.That(await http.GetStringAsync($"/hybrid/{key}/distributed", deadline.Token)).IsEqualTo(hybrid);
+        await Assert.That(await http.GetStringAsync(distributedHybridPath, deadline.Token)).IsEqualTo(hybrid);
         var output = await http.GetStringAsync("/output", deadline.Token);
         await Assert.That(await http.GetStringAsync("/output", deadline.Token)).IsEqualTo(output);
     }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Hybrid;
 using OpenTelemetry;
@@ -33,9 +34,33 @@ app.MapGet("/distributed/{key}", async (string key, IDistributedCache cache, Can
 });
 app.MapGet("/hybrid/{key}", async (string key, HybridCache cache, CancellationToken cancellationToken) =>
     await cache.GetOrCreateAsync(key, _ => ValueTask.FromResult(Guid.NewGuid().ToString()), cancellationToken: cancellationToken));
-// Bypass L1 and fail on a miss so the acceptance test proves the Redis-backed L2 read.
+// GetOrCreateAsync returns before its background Redis write completes.
 app.MapGet("/hybrid/{key}/distributed", async (string key, HybridCache cache, CancellationToken cancellationToken) =>
-    await cache.GetOrCreateAsync<string>(key, _ => throw new InvalidOperationException("The Redis cache entry is missing."),
-        new HybridCacheEntryOptions { Flags = HybridCacheEntryFlags.DisableLocalCache }, cancellationToken: cancellationToken));
+{
+    var readOptions = new HybridCacheEntryOptions
+    {
+        Flags = HybridCacheEntryFlags.DisableLocalCache | HybridCacheEntryFlags.DisableUnderlyingData,
+    };
+
+    long started = Stopwatch.GetTimestamp();
+
+    while (true)
+    {
+        string? value = await cache.GetOrCreateAsync<string?>(
+            key, _ => ValueTask.FromResult<string?>(null), readOptions, cancellationToken: cancellationToken);
+
+        if (value is not null)
+        {
+            return Results.Text(value);
+        }
+
+        if (Stopwatch.GetElapsedTime(started) >= TimeSpan.FromSeconds(5))
+        {
+            return Results.NotFound();
+        }
+
+        await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+    }
+});
 app.MapGet("/output", () => Guid.NewGuid().ToString()).CacheOutput();
 app.Run();
