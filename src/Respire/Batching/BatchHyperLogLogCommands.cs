@@ -9,7 +9,10 @@ namespace Respire;
 /// </summary>
 public interface IRespireBatchHyperLogLogCommands
 {
-    /// <summary>Adds values and returns whether estimated cardinality changed. Redis: PFADD.</summary>
+    /// <summary>Queues adding values to a HyperLogLog. Redis: PFADD.</summary>
+    /// <returns>A pending result that resolves to <see langword="true"/> if the sketch was created or updated,
+    /// otherwise <see langword="false"/>.</returns>
+    /// <remarks>The estimated cardinality can stay the same when the sketch changes.</remarks>
     RespirePending<bool> Add(RespireKey key, params ReadOnlySpan<RespireValue> values);
 
     /// <summary>Returns estimated cardinality across one or more HyperLogLogs. Redis: PFCOUNT.</summary>
