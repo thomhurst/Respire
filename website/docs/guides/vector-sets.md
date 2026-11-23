@@ -32,7 +32,8 @@ On Redis **8.6.0** and **8.10.2**, acknowledged `VADD` replacements lose their n
 
 - The default `Fp32` encoding writes little-endian components straight into the command buffer, with no intermediate array.
 - `encoding: RespireVectorEncoding.Values` sends invariant decimal components instead.
-- Empty vectors and nonfinite components are rejected locally. Redis checks dimensions, reduction, quantization and filter syntax.
+- Empty vectors and nonfinite components are rejected locally. For a nonzero vector, the sum of squared components must be in the normal finite range of a 32-bit float. Redis uses this sum to normalize vectors. Overflow can produce NaN in embeddings and scores, and underflow can make similarity scores inaccurate. All-zero vectors are accepted.
+- The magnitude check applies to both encodings and all typed calls that take a vector, including batches and transactions. It checks the supplied vector before any server-side dimensionality reduction. Redis checks dimensions, reduction, quantization and filter syntax.
 - `SearchByMemberAsync` uses `VSIM ELE` with a binary-safe existing member.
 - Keep vector, key, member and attribute memory unchanged until an immediate call completes. Batches and transactions snapshot inputs at enqueue time.
 - Only the key gets the client's key prefix and decides the Cluster slot. Members, filters and range bounds are literal.

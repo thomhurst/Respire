@@ -23,6 +23,47 @@ public class VectorSetIntegrationTests(VersionedServerFixture servers)
     }
 
     [Test]
+    [Arguments(2, RespireVectorEncoding.Fp32)]
+    [Arguments(2, RespireVectorEncoding.Values)]
+    [Arguments(3, RespireVectorEncoding.Fp32)]
+    [Arguments(3, RespireVectorEncoding.Values)]
+    public async Task SupportedVectorMagnitudesRoundTripAndInvalidWritesLeaveExistingVectorIntact(int protocol, RespireVectorEncoding encoding)
+    {
+        await using var client = await RespireClient.ConnectAsync(RespireOptions.Parse(Redis8.ConnectionString) with
+        {
+            Connections = 1,
+            Protocol = (RespireProtocol)protocol,
+        });
+        var key = $"vector-magnitude:{Guid.NewGuid():N}";
+        var add = new RespireVectorAddOptions { Quantization = RespireVectorQuantization.None };
+        var search = new RespireVectorSearchOptions { IncludeScores = true, Exact = true, NoThread = true };
+
+        try
+        {
+            foreach (var (member, component) in new[] { ("large", 1e19f), ("small", 1e-18f), ("zero", -0f) })
+            {
+                float[] vector = [component, 0f, 0f];
+                (await client.VectorSets.AddAsync(key, vector, member, add, encoding)).Should().BeTrue();
+                (await client.VectorSets.EmbeddingAsync(key, member)).Should().Equal(vector);
+
+                if (component != 0f)
+                {
+                    var matches = await client.VectorSets.SearchByMemberAsync(key, member, search);
+                    matches.Single(match => Encoding.UTF8.GetString(match.Member) == member).Score.Should().Be(1d);
+                }
+            }
+
+            Func<Task> replace = async () => await client.VectorSets.AddAsync(key, new float[] { 1e20f, 0f, 0f }, "large", add, encoding);
+            (await replace.Should().ThrowExactlyAsync<ArgumentOutOfRangeException>()).Which.ParamName.Should().Be("vector");
+            (await client.VectorSets.EmbeddingAsync(key, "large")).Should().Equal(1e19f, 0f, 0f);
+        }
+        finally
+        {
+            await client.Keys.DeleteAsync(key);
+        }
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task SimilarityCollectionEvaluationPreservesReplacementScoresAndLifecycle(int protocol)

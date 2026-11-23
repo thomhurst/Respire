@@ -9,7 +9,8 @@ namespace Respire;
 
 /// <summary>Redis vector-set commands. Requires a server with the requested vector-set command.</summary>
 /// <remarks>Input memory is borrowed until completion. Replies own their storage. Attributes must be JSON,
-/// including when produced by a custom serializer. No fallback or automatic conversion of existing data is performed.</remarks>
+/// including when produced by a custom serializer. Nonzero input vectors must have a finite, normal single-precision
+/// squared magnitude. No fallback or automatic conversion of existing data is performed.</remarks>
 public interface IRespireVectorSetCommands
 {
     /// <summary>VADD: adds or replaces a vector; true means a new member was added.</summary>
@@ -328,13 +329,39 @@ internal sealed class VectorSetCommands(RespireClient client) : IRespireVectorSe
             throw new ArgumentOutOfRangeException(nameof(vector), "Vector must contain a representable, nonzero number of components.");
         }
 
-        foreach (var component in vector)
+        // Match Redis's single-precision L2 accumulation, including its groups of four.
+        float squaredMagnitude = 0f;
+        int index = 0;
+
+        for (; index <= vector.Length - 4; index += 4)
+        {
+            float x = vector[index];
+            float y = vector[index + 1];
+            float z = vector[index + 2];
+            float w = vector[index + 3];
+            squaredMagnitude += x * x + y * y + z * z + w * w;
+        }
+
+        foreach (float component in vector[index..])
+        {
+            squaredMagnitude += component * component;
+        }
+
+        if (float.IsNormal(squaredMagnitude) || (squaredMagnitude == 0f && !vector.ContainsAnyExcept(0f)))
+        {
+            return;
+        }
+
+        foreach (float component in vector)
         {
             if (!float.IsFinite(component))
             {
                 throw new ArgumentException("Vector components must be finite.", nameof(vector));
             }
         }
+
+        throw new ArgumentOutOfRangeException(nameof(vector),
+            "The squared magnitude of a nonzero vector must be a finite, normal 32-bit float for Redis normalization.");
     }
 
     private static void ValidateEffort(int? effort, string parameterName)
