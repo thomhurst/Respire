@@ -10,14 +10,16 @@ namespace Respire.Streaming.Tests;
 public class StreamWorkerVerbatimReplicationTests(Redis62VerbatimReplication fixture)
 {
     [Test]
-    public async Task IdleRecoveryClaimsPendingDelivery()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task IdleRecoveryClaimsPendingDelivery(bool discoverCapabilities)
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
         const string stream = "idle-recovery";
         await DeliverAsync(client, stream);
 
-        using var reply = await client.Scripts.ExecuteAsync(
-            StreamWorkerScripts.CapabilityClaim, [stream], ["g", "successor", 0, "0-0", 1]);
+        var script = discoverCapabilities ? StreamWorkerScripts.CapabilityClaim : StreamWorkerScripts.Claim;
+        using var reply = await client.Scripts.ExecuteAsync(script, [stream], ["g", "successor", 0, "0-0", 1]);
 
         await Assert.That(reply[1][0][0].AsString()).IsEqualTo("1-0");
         await Assert.That(reply[1][0][2].AsString()).IsEqualTo("2");
@@ -41,6 +43,30 @@ public class StreamWorkerVerbatimReplicationTests(Redis62VerbatimReplication fix
         await Assert.That((await client.Streams.PendingSummaryAsync(stream, "g")).Count).IsEqualTo(0);
         // Redis 6.2 falls back to XACK when delete is requested, preserving the stream entry.
         await Assert.That(await client.Streams.CountAsync(stream)).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RateLimitedRecoveryClaimsPendingDelivery()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        const string stream = "controlled-recovery";
+        const string control = stream + ":control";
+        await DeliverAsync(client, stream);
+        await client.Scripts.ExecuteIntegerAsync(JobQueueControlTests.ControlScript("Configure"), [control], [1, 60_000, "set"]);
+
+        var script = JobQueueControlTests.ControlScript("Claim");
+        RespireKey[] keys = [stream, control, stream + ":dedup-deliveries"];
+        RespireValue[] args = ["g", "successor", 0, "0-0", 1];
+        using var claimed = await client.Scripts.ExecuteAsync(script, keys, args);
+
+        await Assert.That(claimed[1][0][0].AsString()).IsEqualTo("1-0");
+        await Assert.That(claimed[1][0][2].AsString()).IsEqualTo("2");
+        var pending = await client.Streams.PendingAsync(stream, "g", count: 1);
+        await Assert.That(pending[0].Consumer).IsEqualTo("successor");
+
+        using var limited = await client.Scripts.ExecuteAsync(script, keys, args);
+        await Assert.That(limited[1].Count).IsEqualTo(0);
+        await Assert.That(limited[3].AsInteger()).IsGreaterThan(0);
     }
 
     private static async Task DeliverAsync(RespireClient client, string stream)

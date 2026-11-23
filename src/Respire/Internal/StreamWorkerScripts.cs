@@ -69,7 +69,9 @@ internal static class StreamWorkerScripts
 
         """;
 
-    internal const string CapabilityClaimSource = RespireScript.EffectsReplicationPrelude + CapabilitySource + """
+    // Job queue scripts embed these fragments. Apply the replication guard
+    // where the full script is built so that it runs before the first write.
+    internal const string CapabilityClaimSource = CapabilitySource + """
         -- Cleanup permissions are additional to compatible recovery. Check them
         -- before CLAIM mutates the PEL: Lua errors cannot roll back those writes.
         if supports(4) and redis.acl_check_cmd('XRANGE', KEYS[1], '0-0', '0-0')
@@ -106,7 +108,7 @@ internal static class StreamWorkerScripts
 
         """ + ClaimSource;
 
-    internal const string AckAndDeleteSource = RespireScript.EffectsReplicationPrelude + CapabilitySource + """
+    internal const string AckAndDeleteSource = CapabilitySource + """
         local pending = redis.call('XPENDING', KEYS[1], ARGV[1], ARGV[3], ARGV[3], 1)
         if #pending ~= 1 or pending[1][2] ~= ARGV[2] or tostring(pending[1][4]) ~= ARGV[4] then return 0 end
         if supports(2) then
@@ -132,8 +134,10 @@ internal static class StreamWorkerScripts
         return 1
         """;
 
-    internal static readonly RespireScript CapabilityClaim = RespireScript.Create(CapabilityClaimSource);
-    internal static readonly RespireScript AckAndDelete = RespireScript.Create(AckAndDeleteSource);
+    internal static readonly RespireScript CapabilityClaim =
+        RespireScript.Create(RespireScript.EffectsReplicationPrelude + CapabilityClaimSource);
+    internal static readonly RespireScript AckAndDelete =
+        RespireScript.Create(RespireScript.EffectsReplicationPrelude + AckAndDeleteSource);
     internal static readonly RespireScript Nack = RespireScript.Create(NackSource);
 
     internal const string DeadLetterSource = """
