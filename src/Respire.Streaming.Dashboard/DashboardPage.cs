@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -79,7 +80,8 @@ internal static class DashboardPage
         else if (jobGroups is not null)
         {
             html.Append("<article class=\"stream\"><div class=\"stream-head\"><h2>").Append(E(jobGroups.QueueName)).Append("</h2></div>");
-            RenderJobGroups(html, jobGroups.Index, jobGroups.Groups, jobGroups.NextCursor, path, tokenFieldName, requestToken);
+            RenderJobGroups(html, jobGroups.Index, jobGroups.Groups, jobGroups.NextCursor, path, tokenFieldName, requestToken,
+                jobGroups.IsContinuation);
             html.Append("</article>");
         }
         else if (snapshot.Streams.Count == 0)
@@ -254,7 +256,7 @@ internal static class DashboardPage
                         break;
                     }
 
-                    html.Append("<dt>").Append(E(field.Key.Length > 256 ? field.Key[..256] + "…" : field.Key)).Append("</dt><dd>").Append(Preview(field.Value)).Append("</dd>");
+                    html.Append("<dt>").Append(PreviewFieldName(field.Key)).Append("</dt><dd>").Append(Preview(field.Value)).Append("</dd>");
                 }
 
                 html.Append("</dl><p class=\"note\">Preview shows at most 32 fields and 512 bytes per value. Actions use the complete stored entry.</p></details><div class=\"actions\">");
@@ -274,8 +276,9 @@ internal static class DashboardPage
 
         if (config.IsJobQueue)
         {
-            html.Append("<section class=\"section\"><h3>Job logs</h3><form method=\"get\" action=\"")
+            html.Append("<section class=\"section\"><h3>Job logs</h3><form method=\"post\" action=\"")
                 .Append(E(path.TrimEnd('/') + "/" + N(stream.Index) + "/logs"))
+                .Append("\"><input type=\"hidden\" name=\"").Append(E(tokenFieldName)).Append("\" value=\"").Append(E(requestToken))
                 .Append("\"><label for=\"job-id-").Append(N(stream.Index)).Append("\">Application job ID</label> <input id=\"job-id-")
                 .Append(N(stream.Index)).Append("\" name=\"jobId\" maxlength=\"4096\" required> <button type=\"submit\">View logs</button></form>")
                 .Append("<p class=\"note\">Look up retained log lines from any attempt, including completed and failed jobs.</p></section>");
@@ -331,7 +334,7 @@ internal static class DashboardPage
     }
 
     private static void RenderJobGroups(StringBuilder html, int index, IReadOnlyList<RespireJobGroupInfo>? groups,
-        string? cursor, string path, string tokenFieldName, string requestToken)
+        string? cursor, string path, string tokenFieldName, string requestToken, bool isContinuation = false)
     {
         var route = path.TrimEnd('/') + "/" + N(index);
         html.Append("<section class=\"section\"><h3>Application job groups</h3><p class=\"note\">Application groups partition jobs for scheduling and admission. Redis consumer groups track stream deliveries separately.</p>");
@@ -339,6 +342,11 @@ internal static class DashboardPage
         if (groups is null)
         {
             html.Append("<p class=\"notice\">Application job groups unavailable.</p>");
+        }
+        else if (groups.Count == 0 && isContinuation)
+        {
+            html.Append("<p class=\"empty\">No further groups. <a href=\"").Append(E(route + "/groups"))
+                .Append("\">Start from the first page</a>.</p>");
         }
         else if (groups.Count == 0)
         {
@@ -495,8 +503,38 @@ internal static class DashboardPage
             return "—";
         }
 
-        var length = Math.Min(bytes.Length, 512);
-        return E(Encoding.UTF8.GetString(bytes, 0, length)) + (bytes.Length > length ? "…" : "");
+        const int limit = 512;
+
+        if (bytes.Length <= limit)
+        {
+            return E(Encoding.UTF8.GetString(bytes));
+        }
+
+        // Find the scalar containing the last included byte. Keep replacement decoding for malformed UTF-8.
+        int start = limit - 1;
+
+        while (start > limit - 4 && (bytes[start] & 0xC0) == 0x80)
+        {
+            start--;
+        }
+
+        bool splitScalar = Rune.DecodeFromUtf8(bytes.AsSpan(start), out _, out int consumed) == OperationStatus.Done
+            && start + consumed > limit;
+        int length = splitScalar ? start : limit;
+        return E(Encoding.UTF8.GetString(bytes, 0, length)) + "…";
+    }
+
+    private static string PreviewFieldName(string name)
+    {
+        const int limit = 256;
+
+        if (name.Length <= limit)
+        {
+            return E(name);
+        }
+
+        int length = char.IsSurrogatePair(name[limit - 1], name[limit]) ? limit - 1 : limit;
+        return E(name[..length]) + "…";
     }
 
     private static string E(string value) => HtmlEncoder.Default.Encode(value);

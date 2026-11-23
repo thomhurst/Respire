@@ -117,8 +117,9 @@ application group pause/resume remains available for job queues.
 - **Pending deliveries** shows entry IDs, consumers, idle time, and delivery counts for the
   configured group. Viewing the dashboard does not claim or acknowledge entries.
 - **Dead letters** shows retained failed entries with expandable field previews. Previews
-  decode UTF-8, showing at most 32 fields and 512 bytes per value; binary data may display
-  replacement characters. Retry uses the original Redis bytes, not the preview.
+  decode UTF-8, showing at most 32 fields and 512 bytes per value. Truncated previews keep
+  complete Unicode characters, and malformed UTF-8 may display replacement characters.
+  Retry uses the original Redis bytes, not the preview.
 - **Deliveries / second** measures the configured group's `entries-read` delta between page
   requests on this application instance, with at least five seconds between samples. Refresh
   after five seconds to obtain a sample; quicker requests retain the last rate. It measures new
@@ -159,7 +160,8 @@ database. Lists include groups with queued work or retained leases; expired leas
 a visible group with zero active work. Use **Inspect application group** for an idle group
 whose policy remains configured. A missing group displays zero counts and default policy.
 Dashboard lookup and control names are limited to 4096 characters. Pagination reflects live
-state, so groups added before the cursor appear after restarting from the dashboard.
+state, so restart from the first page to see groups added before the cursor. If groups
+finish before you open the next page, an empty continuation links back to the first page.
 Lookup and pagination forms send identities in POST bodies so long names do not exceed
 server URL limits. Pause/resume redirects to the queue's first group page.
 
@@ -237,13 +239,14 @@ For registrations with `IsJobQueue = true`, enter an application job ID under **
 and select **View logs**. The page displays the newest retained lines in append order,
 up to `EntryLimit`, including logs from completed or failed jobs. It reads the queue's
 hashed log key without scanning Redis or requiring the original stream entry to remain.
-IDs entered through the dashboard are limited to 4096 characters.
+IDs entered through the dashboard can be up to 4096 characters. The form sends the ID in
+the POST body so Unicode IDs fit without changing the server's URL length limit.
 
 Handlers write lines with [LogAsync](job-queues.md#per-job-logs). Worker options cap line
 count, UTF-8 bytes per line, and retention; an explicit job TTL shortens retention. A blank
 history means no lines are retained, not necessarily that the job never existed. Multiple
-attempts with the same application job ID share the history. Refresh the log page to read
-new lines; log reads are not snapshot-cached.
+attempts with the same application job ID share the history. Submit the ID again to read
+new lines. Log reads always fetch the current retained lines.
 
 The log page uses the same authorization policy as the dashboard, escapes all content,
 and sends `Cache-Control: no-store`. Only configured job queues can be inspected. Grant

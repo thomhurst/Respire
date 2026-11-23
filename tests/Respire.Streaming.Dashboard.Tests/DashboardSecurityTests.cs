@@ -34,7 +34,11 @@ public class DashboardSecurityTests(RedisTestContainer redis)
     public async Task RendererEscapesNamesPathsTokensAndTruncatesPayloads()
     {
         await using var client = await RespireClient.ConnectAsync(redis.ConnectionString);
-        await client.Streams.AddAsync("{dash}:dead", ("<field>", new string('z', 1000) + "hidden-tail"));
+        string fieldPrefix = new('n', 255);
+        string valuePrefix = new('v', 509);
+        string fittingPrefix = new('v', 508);
+        await client.Streams.AddAsync("{dash}:dead", ("<field>", new string('z', 1000) + "hidden-tail"),
+            (fieldPrefix + "🙂tail", valuePrefix + "🙂tail"), ("fits", fittingPrefix + "🙂tail"));
         var config = Options().Streams[0];
         config.Name = "<script>name</script>";
         config.Group = "<group>";
@@ -48,6 +52,9 @@ public class DashboardSecurityTests(RedisTestContainer redis)
         await Assert.That(html).Contains("/tenant/workers/0/retry");
         await Assert.That(html).Contains("&lt;token&gt;");
         await Assert.That(html).DoesNotContain("hidden-tail");
+        string decoded = WebUtility.HtmlDecode(html);
+        await Assert.That(decoded).Contains($"<dt>{fieldPrefix}…</dt><dd>{valuePrefix}…</dd>");
+        await Assert.That(decoded).Contains($"<dt>fits</dt><dd>{fittingPrefix}🙂…</dd>");
     }
 
     [Test]
@@ -76,6 +83,9 @@ public class DashboardSecurityTests(RedisTestContainer redis)
     [Arguments("GET", "/workers/", null, 401)]
     [Arguments("GET", "/workers/0/logs?jobId=job", null, 401)]
     [Arguments("GET", "/workers/0/logs?jobId=job", "reader", 403)]
+    [Arguments("POST", "/workers/0/logs", null, 401)]
+    [Arguments("POST", "/workers/0/logs", "reader", 403)]
+    [Arguments("POST", "/workers/0/logs", "operator", 400)]
     [Arguments("GET", "/workers/0/groups", null, 401)]
     [Arguments("GET", "/workers/0/groups?group=a", "reader", 403)]
     [Arguments("POST", "/workers/0/groups", null, 401)]

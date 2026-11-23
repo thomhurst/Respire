@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.TestHost;
 using Respire.Testing;
 using TUnit.Assertions;
@@ -42,6 +43,47 @@ public class DashboardLogTests(RedisTestContainer redis)
         await Assert.That(html).Contains("href=\"" + path + "\"");
         using var missing = await http.GetAsync(path + "/0/logs?jobId=missing");
         await Assert.That(await missing.Content.ReadAsStringAsync()).Contains("No retained logs");
+    }
+
+    [Test]
+    [Arguments('x', 1000)]
+    [Arguments('東', 1000)]
+    [Arguments('東', 4096)]
+    public async Task LogFormPostsJobIdsThroughDefaultKestrel(char character, int length)
+    {
+        await using var root = await RespireClient.ConnectAsync(redis.ConnectionString);
+        var client = root.WithKeyPrefix("kestrel-logs:");
+        string job = new(character, length);
+        string key = "{dash}:source:logs:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(job)));
+        await client.Lists.RightPushAsync(key, ["retained line"]);
+
+        await using var app = await DashboardSecurityTests.CreateApplication(client, nested: true, jobs: true, kestrel: true);
+        using var http = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        http.DefaultRequestHeaders.Add("X-Test-Role", "operator");
+
+        const string path = "/tenant/admin/workers";
+        using var home = await http.GetAsync(path + "/");
+        string html = await home.Content.ReadAsStringAsync();
+        var form = Regex.Match(html, "<form method=\"post\" action=\"([^\"]+/logs)\">.*?</form>");
+        await Assert.That(form.Success).IsTrue();
+        string action = form.Groups[1].Value;
+        await Assert.That(action).IsEqualTo(path + "/0/logs");
+        string token = WebUtility.HtmlDecode(Regex.Match(form.Value, "name=\"__RequestVerificationToken\" value=\"([^\"]+)\"").Groups[1].Value);
+        await Assert.That(token.Length).IsGreaterThan(0);
+
+        using var response = await http.PostAsync(action, new FormUrlEncodedContent(
+            [new("__RequestVerificationToken", token), new("jobId", job)]));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.Headers.CacheControl!.NoStore).IsTrue();
+        await Assert.That(await response.Content.ReadAsStringAsync()).Contains("retained line");
+
+        using var tooLong = await http.PostAsync(action, new FormUrlEncodedContent(
+            [new("__RequestVerificationToken", token), new("jobId", new string(character, 4097))]));
+        await Assert.That(tooLong.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+
+        using var duplicate = await http.PostAsync(action, new FormUrlEncodedContent(
+            [new("__RequestVerificationToken", token), new("jobId", job), new("jobId", "other")]));
+        await Assert.That(duplicate.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
     }
 
     [Test]

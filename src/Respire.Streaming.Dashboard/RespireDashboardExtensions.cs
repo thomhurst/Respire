@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Primitives;
 
 namespace Respire.Streaming.Dashboard;
 
@@ -74,11 +75,27 @@ public static class RespireDashboardExtensions
             await context.Response.WriteAsync(DashboardPage.Render(snapshot,
                 DashboardPath(context, false), tokens.FormFieldName, tokens.RequestToken!), context.RequestAborted).ConfigureAwait(false);
         });
-        group.MapGet("/{index:int}/logs", async (HttpContext context) =>
+        group.MapMethods("/{index:int}/logs", ["GET", "POST"], async (HttpContext context) =>
         {
             ProtectResponse(context);
             var returnPath = DashboardPath(context, true);
-            var ids = context.Request.Query["jobId"];
+            StringValues ids;
+
+            if (HttpMethods.IsPost(context.Request.Method))
+            {
+                var form = await ReadVerifiedFormAsync(context, returnPath).ConfigureAwait(false);
+
+                if (form is null)
+                {
+                    return;
+                }
+
+                ids = form["jobId"];
+            }
+            else
+            {
+                ids = context.Request.Query["jobId"];
+            }
 
             if (ids.Count != 1 || string.IsNullOrWhiteSpace(ids[0]) || ids[0]!.Length > 4096)
             {
@@ -112,23 +129,18 @@ public static class RespireDashboardExtensions
         {
             ProtectResponse(context);
             var returnPath = DashboardPath(context, true);
-            var antiforgery = context.RequestServices.GetRequiredService<IAntiforgery>();
             var names = context.Request.Query["group"];
             var cursors = context.Request.Query["cursor"];
 
             if (HttpMethods.IsPost(context.Request.Method))
             {
-                try
+                var form = await ReadVerifiedFormAsync(context, returnPath).ConfigureAwait(false);
+
+                if (form is null)
                 {
-                    await antiforgery.ValidateRequestAsync(context).ConfigureAwait(false);
-                }
-                catch (AntiforgeryValidationException)
-                {
-                    await WriteErrorAsync(context, returnPath, 400, "The form expired or could not be verified. Refresh the dashboard and try again.").ConfigureAwait(false);
                     return;
                 }
 
-                var form = await context.Request.ReadFormAsync(context.RequestAborted).ConfigureAwait(false);
                 names = form["group"];
                 cursors = form["cursor"];
             }
@@ -172,15 +184,11 @@ public static class RespireDashboardExtensions
         {
             ProtectResponse(context);
             var returnPath = DashboardPath(context, true);
-            var antiforgery = context.RequestServices.GetRequiredService<IAntiforgery>();
 
-            try
+            var form = await ReadVerifiedFormAsync(context, returnPath).ConfigureAwait(false);
+
+            if (form is null)
             {
-                await antiforgery.ValidateRequestAsync(context).ConfigureAwait(false);
-            }
-            catch (AntiforgeryValidationException)
-            {
-                await WriteErrorAsync(context, returnPath, 400, "The form expired or could not be verified. Refresh the dashboard and try again.").ConfigureAwait(false);
                 return;
             }
 
@@ -192,7 +200,6 @@ public static class RespireDashboardExtensions
                 return;
             }
 
-            var form = await context.Request.ReadFormAsync(context.RequestAborted).ConfigureAwait(false);
             var groupAction = action is "pause-group" or "resume-group";
             var id = groupAction ? ReadGroupName(form) : form["id"].Count == 1 ? form["id"][0] : null;
 
@@ -249,6 +256,34 @@ public static class RespireDashboardExtensions
             }
         });
         return group;
+    }
+
+    private static async ValueTask<IFormCollection?> ReadVerifiedFormAsync(HttpContext context, string returnPath)
+    {
+        var antiforgery = context.RequestServices.GetRequiredService<IAntiforgery>();
+
+        try
+        {
+            await antiforgery.ValidateRequestAsync(context).ConfigureAwait(false);
+
+            if (context.Request.HasFormContentType)
+            {
+                return await context.Request.ReadFormAsync(context.RequestAborted).ConfigureAwait(false);
+            }
+        }
+        catch (AntiforgeryValidationException)
+        {
+            await WriteErrorAsync(context, returnPath, 400,
+                "The form expired or could not be verified. Refresh the dashboard and try again.").ConfigureAwait(false);
+            return null;
+        }
+        catch (InvalidDataException)
+        {
+            // A token supplied in a header can be verified before the form is parsed.
+        }
+
+        await WriteErrorAsync(context, returnPath, 400, "Submit a valid dashboard form.").ConfigureAwait(false);
+        return null;
     }
 
     private static Task WriteErrorAsync(HttpContext context, string path, int status, string message)
