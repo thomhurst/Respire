@@ -390,9 +390,12 @@ internal sealed partial class RespireConnection
                 remaining = Math.Min(remaining, window);
             }
 
+            var waitMilliseconds = Math.Min(remaining, MaximumCapacityWaitMilliseconds);
+
             try
             {
-                await capacityAvailable.WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken).ConfigureAwait(false);
+                await capacityAvailable.WaitAsync(TimeSpan.FromMilliseconds(waitMilliseconds), cancellationToken)
+                    .ConfigureAwait(false);
                 var resumedAt = Environment.TickCount64;
                 var resumedRemaining = RemainingUntilCommandDeadline(deadline.Ticks, resumedAt, out var resumedTimeout, out _, deadline.IsRelaxed);
 
