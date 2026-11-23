@@ -103,7 +103,9 @@ public class ClusterDispatchTests
     [Arguments("FCALL_RO", "function", "1", FirstKey)]
     [Arguments("TS.ADD", FirstKey, "*", "1")]
     [Arguments("TS.MADD", FirstKey, "1", "1")]
-    public async Task CommandsWithUndeclaredKeysOrderAcrossSlots(
+    [Arguments("MSET", FirstKey, "value", SecondKey)]
+    [Arguments("XREAD", "COUNT", "1", FirstKey)]
+    public async Task CommandsWithoutReliableKeyLayoutsOrderAcrossSlots(
         string command, string firstArgument, string secondArgument, string thirdArgument)
     {
         await using var client = RespireClient.Create("localhost:6379");

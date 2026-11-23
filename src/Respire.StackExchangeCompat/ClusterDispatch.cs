@@ -40,9 +40,23 @@ internal sealed class ClusterDispatch
 
     private static int[]? GetSlots(RespireClient client, RespireCommand command, RespireValue[] arguments)
     {
-        // Scripts and commands with indirect mutations may touch keys outside their argument layouts.
-        if (!RawCommandKeyLayouts.TryGetLayout(command.Name, arguments, out var layout, requireCompleteKeySet: true)
-            || (layout.Count == 0 && layout.Extra < 0))
+        RawCommandKeyLayouts.KeyLayout layout;
+
+        try
+        {
+            // Scripts and commands with indirect mutations may touch keys outside their argument layouts.
+            if (!RawCommandKeyLayouts.TryGetLayout(command.Name, arguments, out layout, requireCompleteKeySet: true))
+            {
+                return null;
+            }
+        }
+        catch (ArgumentException)
+        {
+            // Keep malformed commands in order and let native execution report the validation error.
+            return null;
+        }
+
+        if (layout.Count == 0 && layout.Extra < 0)
         {
             return null;
         }
