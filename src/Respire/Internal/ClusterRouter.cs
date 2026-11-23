@@ -1784,7 +1784,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(
         CancellationToken cancellationToken, DiscoveryRound? discovery,
-        RespireTelemetry.ErrorObservation observation)
+        RespireTelemetry.ErrorObservation observation, RespireEndpoint? askTarget = null)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -1798,7 +1798,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
                 try
                 {
-                    return await GetMasterConnectionsCoreAsync(cancellationToken, discovery, observation).ConfigureAwait(false);
+                    return await GetMasterConnectionsCoreAsync(cancellationToken, discovery, observation, askTarget)
+                        .ConfigureAwait(false);
                 }
                 catch (RespireConnectionRetiredException error) when (CanRetryRetirement(attempt, cancellationToken))
                 {
@@ -1813,8 +1814,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
     }
 
-    private async ValueTask<RespireConnection[]> GetMasterConnectionsCoreAsync(CancellationToken cancellationToken, DiscoveryRound? discovery,
-        RespireTelemetry.ErrorObservation observation)
+    private async ValueTask<RespireConnection[]> GetMasterConnectionsCoreAsync(
+        CancellationToken cancellationToken, DiscoveryRound? discovery,
+        RespireTelemetry.ErrorObservation observation, RespireEndpoint? askTarget)
     {
         var snapshotBatch = new object();
         var expectedTopologyVersion = CaptureTopologyVersion();
@@ -1881,6 +1883,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         if (masters.Count == 0)
         {
             masters.Add(Volatile.Read(ref _seed)!);
+        }
+
+        if (askTarget is { } endpoint)
+        {
+            // A refresh can retire the slotless importer. Resolve its current connection
+            // without adding it to permanent routing or duplicating a known primary.
+            masters.Add(GetOrCreateNode(endpoint, observe: false, redirect: true));
         }
 
         var connections = new RespireConnection[masters.Count];

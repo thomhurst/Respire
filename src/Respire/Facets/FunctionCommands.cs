@@ -299,7 +299,8 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
                 var currentGeneration = Volatile.Read(ref reload.Generation);
                 // A matching library without this function cannot be repaired by replication.
                 // Preserve Redis's original not-found error instead of entering propagation polling.
-                if (!await EnsureLibraryAsync(library, function.Name, cancellationToken, observation).ConfigureAwait(false))
+                if (!await EnsureLibraryAsync(library, function.Name, error.AskTarget, cancellationToken, observation)
+                    .ConfigureAwait(false))
                 {
                     observation.UseEndpoint(missingEndpoint);
                     throw;
@@ -634,11 +635,12 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
     }
 
     private async ValueTask<bool> EnsureLibraryAsync(RespireFunctionLibrary library, string functionName,
-        CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
+        RespireEndpoint? askTarget, CancellationToken cancellationToken, RespireTelemetry.ErrorObservation observation)
     {
         if (client.Core.Cluster is { } cluster)
         {
-            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation).ConfigureAwait(false);
+            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null, observation, askTarget)
+                .ConfigureAwait(false);
 
             if (connections.Length == 0)
             {

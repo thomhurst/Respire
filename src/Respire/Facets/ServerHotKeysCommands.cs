@@ -11,20 +11,22 @@ public partial interface IRespireServerCommands
     /// <remarks>The handle never switches connections or nodes. Reacquire explicitly after disconnection.</remarks>
     ValueTask<RespireHotKeysTracker> GetHotKeysTrackerAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Starts tracking separately on every currently discovered node. Requires AllowAdmin; true means OK.</summary>
+    /// <summary>Starts Redis 8.6+ tracking on each currently discovered node. Requires AllowAdmin; true means OK.</summary>
     /// <remarks>Includes replicas. Sessions are shared with other users, not owned by this client. Partial success is possible.</remarks>
     ValueTask<RespireServerResult<bool>[]> StartHotKeysOnAllNodesAsync(RespireHotKeysOptions options, CancellationToken cancellationToken = default);
 
-    /// <summary>Returns each currently discovered node's owned snapshots; null means no session on that node.</summary>
-    /// <remarks>Does not require AllowAdmin; server ACLs still apply. Discovery can change between calls.
+    /// <summary>Returns each currently discovered node's Redis 8.6+ snapshots; null means no session on that node.</summary>
+    /// <remarks>For Valkey 9.2 ranked QPS rows, connect to the target node and execute the raw
+    /// <see cref="RespireCommands.Server.HOTKEYS_GET"/> command. This method can run with AllowAdmin disabled.
+    /// Server ACLs apply. Discovery can change between calls.
     /// Compare endpoints; results are not a global ranking. Snapshot arrays preserve the server's outer array
     /// without assuming that future servers always return exactly one element.</remarks>
     ValueTask<RespireServerResult<RespireHotKeysSnapshot[]?>[]> GetHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Stops tracking on every currently discovered node. Requires AllowAdmin; false means no active session.</summary>
+    /// <summary>Stops Redis 8.6+ tracking on each currently discovered node. Requires AllowAdmin; false means no active session.</summary>
     ValueTask<RespireServerResult<bool>[]> StopHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Releases stopped tracking data on every currently discovered node. Requires AllowAdmin; true means OK.</summary>
+    /// <summary>Releases stopped Redis 8.6+ tracking data on each currently discovered node. Requires AllowAdmin; true means OK.</summary>
     /// <remarks>Active sessions fail on the server. No rollback, replication, or automatic stop is performed.</remarks>
     ValueTask<RespireServerResult<bool>[]> ResetHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default);
 }
