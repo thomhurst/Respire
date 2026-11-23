@@ -22,10 +22,10 @@ public abstract class StandaloneRedisTestContainer(string image) : IAsyncInitial
 
     public async Task InitializeAsync()
     {
-        _container = await Respire.Testing.ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
+        _container = await Respire.Testing.ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder(image)
             .WithPortBinding(RedisPort, true)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort))
-            .Build(), [RedisPort]).ConfigureAwait(false);
+            .Build(), RedisPort).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()

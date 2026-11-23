@@ -122,17 +122,16 @@ public class RedisTestContainer : IAsyncInitializer, IAsyncDisposable, ITestEndE
     {
         var image = ServerImage;
         var databases = DatabaseCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        // A failed start is removed by the retry helper, which also replaces it after a host-port bind collision.
         _container = IsGarnet
-            ? await ContainerStartRetry.StartAsync(() => new ContainerBuilder(image)
+            ? await ContainerStartRetry.StartRedisAsync(() => new ContainerBuilder(image)
                 .WithCommand("--max-databases", databases, "--lua", "--lua-transaction-mode",
                     "--memory", "256m", "--page", "4m", "--segment", "16m", "--index", "8m")
                 .WithPortBinding(RedisPort, true)
                 .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(RedisPort))
-                .Build(), [RedisPort]).ConfigureAwait(false)
-            : await ContainerStartRetry.StartAsync(() => new RedisBuilder(image)
+                .Build(), RedisPort).ConfigureAwait(false)
+            : await ContainerStartRetry.StartRedisAsync(() => new RedisBuilder(image)
                 .WithCommand(["redis-server", "--databases", databases, .. _serverArguments])
-                .Build(), [RedisPort]).ConfigureAwait(false);
+                .Build(), RedisPort).ConfigureAwait(false);
     }
 
     private int LeaseDatabase()
