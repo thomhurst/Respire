@@ -161,8 +161,18 @@ removed when the release is published.
    package check fails, and it never fails the release.
 4. To retry a failed publish, re-run that workflow run: packages already on NuGet are skipped.
 
-Every push to `main` rewrites the draft, so edits to it are lost if `main` moves before it is
-published. Do not move or delete a release tag after publishing; NuGet versions cannot be reused.
+The notes are grouped by `.github/release.yml`: Breaking Changes, New Features, Bug Fixes,
+Performance, Documentation, Other Changes and Dependencies. Label a pull request `breaking` to list
+it under Breaking Changes, or `ignore-for-release` to leave it out. Dependency pull requests are
+grouped under Dependencies automatically (Renovate labels them `dependencies`).
+
+Change the draft's tag to override the version; later pushes keep a higher version you set. "Higher"
+is SemVer precedence, so `v2.0.0` and `v2.0.0-rc.2010` both outrank a suggested `v2.0.0-rc.2001`.
+A version that already exists as a tag is not kept. Set the tag back to the suggestion (or lower)
+to return to the default.
+
+Every push to `main` regenerates the draft's notes and retargets it to the newest commit, so edits
+to the notes are lost if `main` moves before it is published. Do not move or delete a release tag after publishing; NuGet versions cannot be reused.
 Skip the 1.x line: it contains the unlisted, permanently occupied NuGet version `Respire 1.0.116`.
 
 ## Customization

@@ -1,0 +1,69 @@
+# Categories for GitHub's generated release notes, used by the draft release that
+# .github/workflows/release-draft.yml keeps for main. GitHub puts each pull request in the first
+# category it matches, in file order.
+#
+# - Label a pull request `breaking` (or `breaking-change`) to list it under Breaking Changes, even
+#   when it is also a dependency update.
+# - Label a pull request `ignore-for-release` to leave it out of the notes.
+# - Dependency pull requests (Renovate adds `dependencies`) are grouped under Dependencies: every
+#   earlier category except Breaking Changes excludes that label.
+#
+# The MAJOR, MINOR and PATCH labels are Renovate's update types, not API breaks, so they do not
+# select Breaking Changes.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - duplicate
+      - invalid
+      - wontfix
+  categories:
+    - title: Breaking Changes
+      labels:
+        - breaking
+        - breaking-change
+    - title: New Features
+      labels:
+        - enhancement
+        - feature
+      exclude:
+        labels:
+          - dependencies
+    - title: Bug Fixes
+      labels:
+        - bug
+        - fix
+      exclude:
+        labels:
+          - dependencies
+    - title: Performance
+      labels:
+        - performance
+      exclude:
+        labels:
+          - dependencies
+    - title: Documentation
+      labels:
+        - documentation
+        - docs
+      exclude:
+        labels:
+          - dependencies
+    - title: Other Changes
+      labels:
+        - '*'
+      exclude:
+        labels:
+          - dependencies
+          - breaking
+          - breaking-change
+          - enhancement
+          - feature
+          - bug
+          - fix
+          - performance
+          - documentation
+          - docs
+    - title: Dependencies
+      labels:
+        - dependencies

@@ -45,6 +45,48 @@ for tag in v1.02.3 v01.2.3 v1.2.03 v1.2.3-beta..1 v1.2.3-beta.01 v1.2.3-01 v1.2.
   reject next "$tag"
 done
 reject next v1.2.65534
+
+# gt: exit 0 when the first version ranks higher, 1 when it does not, 2 when either is invalid.
+gt() {
+  local status=0
+  bash "$script" gt "$1" "$2" 2>/dev/null || status=$?
+  if [ "$status" -ne "$3" ]; then
+    echo "FAIL: gt '$1' '$2' exited $status, expected $3"
+    failures=$((failures + 1))
+  fi
+}
+
+# Each pair is strictly increasing: the later one is greater, the earlier one is not.
+ordered=(
+  1.9.0 1.10.0
+  1.10.1 1.11.0
+  2.0.0-rc.9 2.0.0-rc.10
+  2.0.0-rc.2001 2.0.0-rc.2010
+  2.0.0-rc.2001 2.0.0
+  2.0.0-rc.1 2.0.0
+  1.0.0-alpha 1.0.0-alpha.1
+  1.0.0-alpha.1 1.0.0-alpha.beta
+  1.0.0-alpha.beta 1.0.0-beta
+  1.0.0-beta 1.0.0-beta.2
+  1.0.0-beta.2 1.0.0-beta.11
+  1.0.0-beta.11 1.0.0-rc.1
+  1.0.0-rc.1 1.0.0
+  1.0.0-1 1.0.0-alpha
+  1.0.0-Z 1.0.0-a
+  1.0.0-rc.99999999999999999999 1.0.0-rc.100000000000000000000
+  1.2.3 2.0.0-rc.1
+  0.13.3 2.0.0-rc.2001
+)
+for ((i = 0; i < ${#ordered[@]}; i += 2)); do
+  gt "v${ordered[i + 1]}" "v${ordered[i]}" 0
+  gt "${ordered[i]}" "${ordered[i + 1]}" 1
+done
+gt v2.0.0-rc.2001 2.0.0-rc.2001 1
+gt v1.2.3 v1.2.3 1
+gt v1.2.3 release-1 2
+gt release-1 v1.2.3 2
+gt v1.02.3 v1.2.3 2
+reject gt v1.2.3
 reject tag
 reject other v1.2.3
 
