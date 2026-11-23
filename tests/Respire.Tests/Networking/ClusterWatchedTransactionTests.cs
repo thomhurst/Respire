@@ -93,7 +93,7 @@ public class ClusterWatchedTransactionTests
         {
             await using var transaction = await view.CreateTransactionAsync(["{a}:watched", "{a}:other"]);
             await Assert.That(() => transaction.Set("{b}:wrong", "value")).ThrowsExactly<InvalidOperationException>();
-            await Assert.That(() => transaction.Keys.Rename("{a}:watched", "{b}:wrong"))
+            await Assert.That(() => transaction.Keys.Rename("{b}:source", "{b}:wrong"))
                 .ThrowsExactly<InvalidOperationException>();
             await Assert.That(transaction.Count).IsEqualTo(0);
             var pending = transaction.Set("{a}:watched", "value");
