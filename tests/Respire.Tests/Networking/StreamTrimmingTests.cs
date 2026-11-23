@@ -20,9 +20,10 @@ public class StreamTrimmingTests
             new() { MaxLength = 2, Approximate = true }, new() { MinId = "2-0", Approximate = true },
             new() { MaxLength = 2, Approximate = true, Limit = 0 },
             new() { MinId = "2-0", Approximate = true, Limit = 10 },
+            new() { MinId = "+4-+1" }, new() { MinId = "+4" },
         ];
         string[] clauses = ["MAXLEN 2", "MINID 2-0", "MINID 2", "MAXLEN ~ 2", "MINID ~ 2-0",
-            "MAXLEN ~ 2 LIMIT 0", "MINID ~ 2-0 LIMIT 10"];
+            "MAXLEN ~ 2 LIMIT 0", "MINID ~ 2-0 LIMIT 10", "MINID +4-+1", "MINID +4"];
         byte[][] replies = options.SelectMany(_ => new[] { "$3\r\n1-0\r\n"u8.ToArray(), ":2\r\n"u8.ToArray() }).ToArray();
 
         if (surface == 2)
@@ -105,6 +106,7 @@ public class StreamTrimmingTests
             new() { MinId = "$" }, new() { MinId = "-" }, new() { MinId = "+" },
             new() { MinId = "1-*" }, new() { MinId = "18446744073709551616-0" },
             new() { MinId = "-1" }, new() { MinId = "1-" },
+            new() { MinId = "++1-0" }, new() { MinId = "1-+" },
         ];
 
         foreach (var trim in invalid)
