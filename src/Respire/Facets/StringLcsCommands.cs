@@ -53,14 +53,7 @@ internal sealed partial class StringCommands
 
         var args = new RespireValue[3 + (options?.MinimumMatchLength is not null ? 2 : 0)
             + (options?.IncludeMatchLength == true ? 1 : 0)];
-        args[0] = client.Key(in firstKey);
-        args[1] = client.Key(in secondKey);
-
-        if (client.Core.Cluster is not null)
-        {
-            EnsureSameSlot(client, args.AsSpan(0, 2), stride: 1, operation: "LCS");
-        }
-
+        (args[0], args[1]) = ResolveLcsKeys(client, in firstKey, in secondKey);
         args[2] = "IDX";
         var index = 3;
 
@@ -76,6 +69,20 @@ internal sealed partial class StringCommands
         }
 
         return new(RespireCommands.String.LCS.Verb, args);
+    }
+
+    private static (RespireValue First, RespireValue Second) ResolveLcsKeys(
+        RespireClient client, in RespireKey firstKey, in RespireKey secondKey)
+    {
+        var first = client.Key(in firstKey);
+        var second = client.Key(in secondKey);
+
+        if (client.Core.Cluster is not null)
+        {
+            EnsureSameSlot(client, [first, second], stride: 1, operation: "LCS");
+        }
+
+        return (first, second);
     }
 
     internal static RespireLcsIndexResult ParseLcsIndex(in RespValue value)

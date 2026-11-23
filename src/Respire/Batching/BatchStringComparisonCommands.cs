@@ -8,7 +8,7 @@ namespace Respire;
 public partial interface IRespireBatchStringCommands
 {
     /// <summary>Queues a raw SET with a value/digest comparison; returns whether the value was written.</summary>
-    /// <remarks>Keep binary value buffers unchanged until execution completes. The condition owns its comparison operand.</remarks>
+    /// <remarks>See <see cref="RespireValueCondition"/> for server requirements. Keep binary value buffers unchanged until execution completes. The condition owns its comparison operand.</remarks>
     RespirePending<bool> SetConditional(RespireKey key, RespireValue value, RespireValueCondition condition, RespireExpiry expiry = default);
 
     /// <summary>Queues a serialized SET with a raw value/digest comparison; returns whether the value was written.</summary>
@@ -24,7 +24,8 @@ public partial interface IRespireBatchStringCommands
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?> GetAndSetConditional<T>(RespireKey key, T value, RespireValueCondition condition, RespireExpiry expiry = default);
 
-    /// <summary>Queues conditional deletion of a string. Redis 8.4+: DELEX.</summary>
+    /// <summary>Queues conditional deletion of a string with DELEX.</summary>
+    /// <remarks>Byte comparisons require Redis 8.4 or Valkey 9.2. Digest comparisons require Redis 8.4. For byte equality on Valkey 9.0 and 9.1, use <see cref="DeleteIfEqual"/>.</remarks>
     RespirePending<bool> DeleteConditional(RespireKey key, RespireValueCondition condition);
 
     /// <summary>Queues deletion only when the string equals the raw operand. Valkey 9.0+: DELIFEQ.</summary>

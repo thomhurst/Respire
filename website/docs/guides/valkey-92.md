@@ -68,7 +68,13 @@ are applied in order. Role identifiers, patterns, and rules receive no key prefi
 operate on one execution node; they do not broadcast changes, persist ACL files, or replicate
 configuration to other Cluster nodes.
 
-`SET IFNE` uses the existing `RespireValueCondition`.
+## Compare string values
+
+On Valkey 9.2, `Strings.SetConditionalAsync` with `RespireValueCondition.NotEqualTo` sends
+`SET IFNE`. `Strings.DeleteConditionalAsync` sends `DELEX` with `IFEQ` or `IFNE` for byte
+comparisons. The same conditions work in batches and transactions. See the
+[conditional string commands](../commands/strings-and-keys.md#compare-values-before-writing-or-deleting)
+for version requirements and digest support.
 
 ## Path Hashes
 
