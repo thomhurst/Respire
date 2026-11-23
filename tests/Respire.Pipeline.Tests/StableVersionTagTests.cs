@@ -331,7 +331,7 @@ public class StableVersionTagTests
         var updates = string.Join('\n', Enumerable.Range(0, stable ? 1000 : 512)
             .Select(index =>
             {
-                var tag = stable ? $"v2147483647.2147483647.{index:D10}"
+                var tag = stable ? $"v{index + 2}.65534.65534"
                     : $"v2.0.0+preview.{index:D4}.{new string('x', 64)}";
                 return $"create refs/tags/{tag} {head}";
             })) + "\n";
@@ -453,7 +453,7 @@ public class StableVersionTagTests
             await repository.Git("tag", "V1.2.3");
         }
 
-        foreach (var tag in new[] { "v1.4.0+build", "v1.5", "v999999999999999.0.0", "release-1" })
+        foreach (var tag in new[] { "v1.4.0+build", "v1.5", "v999999999999999.0.0", "v65535.0.0", "v1.06.0", "v1.7.0-rc.01", "release-1" })
         {
             await repository.CommitAsync(tag);
             await repository.Git("tag", tag);

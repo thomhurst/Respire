@@ -70,6 +70,7 @@ jobs:
           user: ${{ secrets.NUGET_USER }}
 
       - name: Run Pipeline
+        id: pipeline
         # Directory.Build.props multi-targets every project, so a framework must be picked.
         run: dotnet run -c Release -f net11.0
         working-directory: "Respire.Pipeline"
@@ -91,49 +92,62 @@ jobs:
 
       # The draft was named, and its compare link written, for the suggested version. Follow the tag
       # if it was edited before publishing, mark prereleases, and list the install commands for the
-      # packages. Cosmetic, so it never blocks a release.
+      # packages. It runs once the pipeline has pushed the packages, even if a later check fails, and
+      # it is cosmetic, so it never blocks a release.
       - name: Update release notes
-        if: github.event_name == 'release'
+        if: always() && github.event_name == 'release' && steps.pipeline.outcome == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ github.event.release.id }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-          VERSION: ${{ steps.packages.outputs.version }}
         run: |
           set -euo pipefail
           # RELEASE_TAG passed the version grammar above, so it is safe in a sed replacement.
-          bash .github/scripts/release-version.sh tag "$RELEASE_TAG" > /dev/null
-          marker='<!-- release-draft -->'
-          packages_heading='## NuGet packages'
+          version=$(bash .github/scripts/release-version.sh tag "$RELEASE_TAG")
+          draft_marker='<!-- release-draft -->'
+          start_marker='<!-- nuget-packages:start -->'
+          end_marker='<!-- nuget-packages:end -->'
           body=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.body // ""')
-          # Drop the draft marker and any install section from an earlier run of this step.
-          body=$(printf '%s\n' "$body" | awk -v marker="$marker" -v heading="$packages_heading" \
-            '$0 == heading { exit } index($0, marker) == 0 { print }')
-          body=$(printf '%s' "$body" | sed -E "s#(/compare/[^ )]+)\.\.\.[^ )]+#\1...$RELEASE_TAG#")
+
+          # Drop the draft marker and the install section a previous run of this step wrote between
+          # its markers. Everything else the maintainer wrote is kept.
+          body=$(printf '%s\n' "$body" | awk -v draft="$draft_marker" -v start="$start_marker" -v end="$end_marker" '
+            $0 == start { skipping = 1; next }
+            skipping { if ($0 == end) { skipping = 0 }; next }
+            index($0, draft) == 0 { print }')
+          # Only GitHub's generated "**Full Changelog**: .../compare/A...B" line is rewritten.
+          body=$(printf '%s\n' "$body" | sed -E "/^\*\*Full Changelog\*\*: /s#(/compare/[^ )]+)\.\.\.[^ )]+#\1...$RELEASE_TAG#")
 
           commands=""
+          packages=$(find artifacts/packages -maxdepth 1 -name "*.$version.nupkg" -exec basename {} ".$version.nupkg" \; | LC_ALL=C sort -f)
           while read -r package; do
-            if [ "$package" = Respire.Templates ]; then
-              commands+="dotnet new install $package@$VERSION"$'\n'
-            else
-              commands+="dotnet add package $package --version $VERSION"$'\n'
+            if [ -z "$package" ]; then
+              continue
             fi
-          done < <(find artifacts/packages -maxdepth 1 -name "*.$VERSION.nupkg" -exec basename {} ".$VERSION.nupkg" \; | LC_ALL=C sort -f)
+            if [ "$package" = Respire.Templates ]; then
+              commands+="dotnet new install $package@$version"$'\n'
+            else
+              commands+="dotnet add package $package --version $version"$'\n'
+            fi
+          done <<< "$packages"
 
           if [ -n "$commands" ]; then
-            body+=$'\n\n'"$packages_heading"$'\n\n```bash\n'"$commands"'```'
+            body+=$'\n\n'"$start_marker"$'\n## NuGet packages\n\n```bash\n'"$commands"$'```\n'"$end_marker"
           fi
 
           prerelease=false
-          if [[ "$VERSION" == *-* ]]; then
+          if [[ "$version" == *-* ]]; then
             prerelease=true
           fi
 
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            -f name="$VERSION" -F prerelease="$prerelease" -f body="$body" > /dev/null
+            -f name="$version" -F prerelease="$prerelease" -f body="$body" > /dev/null
 
       # The packed version comes from a release tag on release runs, so it reaches scripts through env.
+      # Builds between releases pack different code under the same version, so the restore uses its
+      # own packages folder: the cached ~/.nuget/packages could otherwise hold an earlier build's
+      # packages under this version, and NuGet looks there before the package sources.
       - name: Publish generated commands with Native AOT from packed NuGet assets
         env:
           PACKAGE_VERSION: ${{ steps.packages.outputs.version }}
@@ -141,6 +155,7 @@ jobs:
           dotnet publish tests/Respire.GeneratedCommands.Smoke -c Release -r linux-x64
           "-p:RespirePackageVersion=$PACKAGE_VERSION"
           "-p:RestoreAdditionalProjectSources=$GITHUB_WORKSPACE/artifacts/packages"
+          "-p:RestorePackagesPath=$GITHUB_WORKSPACE/artifacts/generated-commands-smoke-packages"
           -o artifacts/generated-commands-smoke
 
       - name: Execute generated commands with RESP2 and RESP3

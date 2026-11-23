@@ -106,10 +106,16 @@ internal sealed record GitVersionDetails(
     int CommitHeight,
     string IncrementKind)
 {
-    // The tag grammar the release workflows accept: an optional v prefix, X.Y.Z and an optional
-    // prerelease suffix. Build metadata is not allowed, because NuGet ignores it.
+    // The tag grammar the release workflows accept (.github/scripts/release-version.sh): an optional
+    // v prefix, then SemVer 2.0 without build metadata, which NuGet ignores. Numeric parts and numeric
+    // prerelease identifiers have no leading zeros. Major, minor and patch become the assembly
+    // version, so each is at most MaxVersionPart.
+    private const int MaxVersionPart = 65534;
+    private const string Number = "(?:0|[1-9][0-9]*)";
+    private const string Identifier = "(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)";
+
     private static readonly Regex VersionTagRegex = new(
-        @"\A[vV]?(?<major>[0-9]+)\.(?<minor>[0-9]+)\.(?<patch>[0-9]+)(?:-(?<prerelease>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\z",
+        $@"\A[vV]?(?<major>{Number})\.(?<minor>{Number})\.(?<patch>{Number})(?:-(?<prerelease>{Identifier}(?:\.{Identifier})*))?\z",
         RegexOptions.Compiled);
 
     public static async Task<GitVersionDetails> CreateAsync(
@@ -223,11 +229,14 @@ internal sealed record GitVersionDetails(
 
         var prerelease = match.Groups["prerelease"];
 
-        return int.TryParse(match.Groups["major"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var major)
-            && int.TryParse(match.Groups["minor"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var minor)
-            && int.TryParse(match.Groups["patch"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var patch)
+        return TryParsePart(match.Groups["major"].Value, out var major)
+            && TryParsePart(match.Groups["minor"].Value, out var minor)
+            && TryParsePart(match.Groups["patch"].Value, out var patch)
             ? new SemanticVersion(major, minor, patch, prerelease.Success ? prerelease.Value : null) : null;
     }
+
+    private static bool TryParsePart(string value, out int part)
+        => int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out part) && part <= MaxVersionPart;
 
     private static string NormalizeBranchName(string branchName)
     {
@@ -263,7 +272,9 @@ internal sealed record GitVersionDetails(
         {
             if (Prerelease is null)
             {
-                return this with { Patch = checked(Patch + 1) };
+                return Patch < MaxVersionPart
+                    ? this with { Patch = Patch + 1 }
+                    : throw new InvalidOperationException($"{this} has no next patch version: patch must be at most {MaxVersionPart}.");
             }
 
             var lastSeparator = Prerelease.LastIndexOf('.');

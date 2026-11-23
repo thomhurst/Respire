@@ -133,15 +133,20 @@ reachable from `HEAD`. GitHub creates these tags when a release is published.
 - On a published release (`GITHUB_EVENT_NAME=release`), the version is the release's tag, which the
   workflow passes in `RESPIRE_RELEASE_VERSION`.
 
-Version tags are `X.Y.Z` with an optional `v` prefix and an optional prerelease suffix. Tags with
-build metadata (`+build`) or other names are ignored. Use full Git history (`fetch-depth: 0`, as in
+Version tags are SemVer 2.0 versions with an optional `v` prefix and no build metadata: `X.Y.Z` with
+an optional prerelease suffix such as `-rc.1`, no leading zeros in numeric parts or numeric
+prerelease identifiers, and each of `X`, `Y` and `Z` at most 65534 (they become the assembly
+version). Other tags are ignored, and a release whose tag does not match fails. Use full Git history (`fetch-depth: 0`, as in
 the workflow).
 
 ## Releasing
 
 `.github/workflows/release-draft.yml` keeps one draft GitHub release for `main`, rewritten on every
 push. Its tag is one step above the last published release (prereleases included), it targets the
-newest `main` commit, and its notes are GitHub's generated notes since that release.
+newest `main` commit, and its notes are GitHub's generated notes since that release. The workflow
+finds its draft by the hidden `<!-- release-draft -->` comment at the end of the notes. Keep that
+comment when you edit the notes: without it, the next push to `main` creates a second draft. It is
+removed when the release is published.
 
 1. To release, edit the draft on GitHub. Change its tag to choose the version: keep the suggested
    `v2.0.0-rc.N` for another candidate, use `v2.0.0` to cut the stable release, or `v2.1.0` for a
@@ -149,9 +154,11 @@ newest `main` commit, and its notes are GitHub's generated notes since that rele
 2. Publishing creates the tag on the draft's commit and runs `modular-pipeline.yml` on it. That run
    fails unless the tag is a version and its commit is on `main`. It builds, tests and packs the
    commit with the tag's version, pushes the packages to NuGet.org, and runs the package checks.
-3. The run then renames the release to its version, points its compare link at the final tag,
-   marks it as a prerelease when the version has a suffix, and appends install commands for the
-   packages. This step never fails the release.
+3. Once the packages are pushed, the run renames the release to its version, points the generated
+   "Full Changelog" compare link at the final tag, marks it as a prerelease when the version has a
+   suffix, and appends install commands for the packages between `<!-- nuget-packages:start -->` and
+   `<!-- nuget-packages:end -->`. Re-runs replace only that section. This step runs even if a later
+   package check fails, and it never fails the release.
 4. To retry a failed publish, re-run that workflow run: packages already on NuGet are skipped.
 
 Every push to `main` rewrites the draft, so edits to it are lost if `main` moves before it is

@@ -13,6 +13,8 @@ public class NextVersionTests
     [Arguments("1.2.3", "1.2.4")]
     [Arguments("v2.0.0-rc.2000", "2.0.0-rc.2001")]
     [Arguments("v2.0.0-rc.9", "2.0.0-rc.10")]
+    [Arguments("v2.0.0-rc.0", "2.0.0-rc.1")]
+    [Arguments("v2.0.0-beta01", "2.0.0-beta01.1")]
     [Arguments("v2.0.0-beta", "2.0.0-beta.1")]
     [Arguments("v2.0.0-7", "2.0.0-8")]
     [Arguments("v2.0.0-preview.1.rc", "2.0.0-preview.1.rc.1")]
@@ -22,13 +24,43 @@ public class NextVersionTests
     }
 
     [Test]
-    [Arguments("v2.0")]
+    [Arguments("v1.02.3")]
+    [Arguments("v01.2.3")]
+    [Arguments("v1.2.03")]
+    [Arguments("v1.2.3-beta..1")]
+    [Arguments("v1.2.3-beta.01")]
+    [Arguments("v1.2.3-01")]
+    [Arguments("v1.2.3-")]
+    [Arguments("v1.2")]
+    [Arguments("v65535.0.0")]
+    [Arguments("v0.0.65535")]
     [Arguments("v2.0.0+build")]
+    [Arguments("v2.0.0-rc.1+build")]
     [Arguments("release-1")]
-    [Arguments("v2.0.0-")]
     public async Task NonVersionTagsHaveNoNextVersion(string tag)
     {
         await Assert.That(GitVersionDetails.GetNextVersion(tag)).IsNull();
+    }
+
+    [Test]
+    [Arguments("v1.2.3", "1.2.3")]
+    [Arguments("1.2.3", "1.2.3")]
+    [Arguments("v0.0.0", "0.0.0")]
+    [Arguments("v1.2.3-beta.1", "1.2.3-beta.1")]
+    [Arguments("v1.2.3-beta01", "1.2.3-beta01")]
+    [Arguments("v1.2.3-0", "1.2.3-0")]
+    [Arguments("v65534.65534.65534", "65534.65534.65534")]
+    public async Task ValidReleaseVersionsAreAccepted(string releaseVersion, string expected)
+    {
+        using var repository = new Repository();
+        await repository.InitializeAsync();
+        await Assert.That((await repository.VersionAsync(releaseVersion: releaseVersion)).PackageVersion).IsEqualTo(expected);
+    }
+
+    [Test]
+    public async Task PatchAtTheAssemblyVersionLimitHasNoNextVersion()
+    {
+        await Assert.That(() => GitVersionDetails.GetNextVersion("v1.2.65534")).Throws<InvalidOperationException>();
     }
 
     [Test]
@@ -108,6 +140,9 @@ public class NextVersionTests
     [Arguments("2.0")]
     [Arguments("2.0.0+build")]
     [Arguments("release-1")]
+    [Arguments("v1.02.3")]
+    [Arguments("v1.2.3-beta.01")]
+    [Arguments("v65535.0.0")]
     public async Task InvalidReleaseVersionFails(string releaseVersion)
     {
         using var repository = new Repository();

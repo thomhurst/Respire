@@ -10,8 +10,13 @@ name: Release Draft
 # that commit with the tag's version and pushes the packages to NuGet.
 #
 # Every push to main rewrites the draft, so edits to it are lost if main moves before it is
-# published. The draft this workflow owns carries DRAFT_MARKER in its notes; other drafts are left
-# alone.
+# published. The draft this workflow owns carries DRAFT_MARKER, a hidden comment at the end of its
+# notes; other drafts are left alone. Keep the marker when editing the notes: without it, the next
+# push creates a second draft. The marker is removed when the release is published.
+#
+# The previous release is the most recently published release, while pipeline builds use the
+# nearest reachable version tag. The two agree as long as version tags come only from published
+# releases.
 
 on:
   push:
@@ -34,7 +39,11 @@ concurrency:
 
 jobs:
   draft:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Pull requests only test the helper. Only main may write the draft: a manual run on another
+    # branch would point main's draft at an unmerged commit.
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
+      || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -51,23 +60,40 @@ jobs:
         run: bash .github/scripts/test-release-version.sh
 
       - name: Update draft release
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           repo="repos/$GITHUB_REPOSITORY"
 
+          # Exit 0 when the resource exists, 1 when GitHub answers 404. Any other failure (rate
+          # limit, 5xx, network) fails the step rather than being read as "not found".
+          exists() {
+            local response
+            if response=$(gh api -i "$1" 2> /dev/null); then
+              return 0
+            fi
+            if [[ "${response%%$'\n'*}" == HTTP/*' 404 '* ]]; then
+              return 1
+            fi
+            echo "::error::GitHub API request failed: $1" >&2
+            exit 1
+          }
+
           # The last published release, prereleases included: the most recently published release
           # whose tag is a version. releases/latest would skip prereleases such as v2.0.0-rc.2000.
+          # The list is captured first so that a failed request fails the step instead of looking
+          # like a repository without releases.
+          releases=$(gh api --paginate "$repo/releases?per_page=100" \
+            --jq '.[] | select(.draft | not) | [.published_at, .tag_name] | @tsv')
           previous=""
           while IFS=$'\t' read -r _ candidate; do
             if bash .github/scripts/release-version.sh tag "$candidate" > /dev/null 2>&1; then
               previous=$candidate
               break
             fi
-          done < <(gh api --paginate "$repo/releases?per_page=100" \
-            --jq '.[] | select(.draft | not) | [.published_at, .tag_name] | @tsv' | sort -r)
+          done <<< "$(sort -r <<< "$releases")"
 
           if [ -n "$previous" ]; then
             version=$(bash .github/scripts/release-version.sh next "$previous")
@@ -81,6 +107,17 @@ jobs:
           fi
 
           tag="v$version"
+
+          # Never suggest a version that already exists, in any tag form the release workflow accepts.
+          # Publishing a release creates its tag, so this also covers published releases. (The
+          # releases/tags endpoint is not used: it could match this workflow's own draft.)
+          for existing in "v$version" "V$version" "$version"; do
+            if exists "$repo/git/ref/tags/$existing"; then
+              echo "::warning::Tag $existing already exists; leaving the draft unchanged."
+              exit 0
+            fi
+          done
+
           body="$notes"$'\n\n'"$DRAFT_MARKER"
           prerelease=false
           if [[ "$version" == *-* ]]; then
@@ -92,15 +129,20 @@ jobs:
           draft_id=${draft_ids%%$'\n'*}
 
           if [ -n "$draft_id" ]; then
-            method=PATCH
-            endpoint="$repo/releases/$draft_id"
+            # Re-read the draft just before updating it, and leave it alone if it was published in
+            # the meantime. A publish in the sub-second gap between this read and the PATCH can still
+            # be renamed; the PATCH never sends draft=true, so it cannot turn a release back into a draft.
+            if [ "$(gh api "$repo/releases/$draft_id" --jq .draft)" != true ]; then
+              echo "::warning::Release $draft_id is no longer a draft; leaving it unchanged."
+              exit 0
+            fi
+            url=$(gh api -X PATCH "$repo/releases/$draft_id" \
+              -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -f name="$version" \
+              -F prerelease="$prerelease" -f body="$body" --jq .html_url)
           else
-            method=POST
-            endpoint="$repo/releases"
+            url=$(gh api -X POST "$repo/releases" \
+              -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -f name="$version" \
+              -F draft=true -F prerelease="$prerelease" -f body="$body" --jq .html_url)
           fi
-
-          url=$(gh api -X "$method" "$endpoint" \
-            -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -f name="$version" \
-            -F draft=true -F prerelease="$prerelease" -f body="$body" --jq .html_url)
 
           echo "Draft release $tag for $GITHUB_SHA (previous release ${previous:-none}): $url" | tee -a "$GITHUB_STEP_SUMMARY"
