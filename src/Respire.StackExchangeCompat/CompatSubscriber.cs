@@ -76,18 +76,19 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
                 }
 
                 byte[]? bytes = channel;
-                var subscription = await client.SubscribeAsync(new RespireChannel(bytes!.AsMemory()), cancellationToken: token).ConfigureAwait(false);
+                var nativeChannel = new RespireChannel(bytes!.AsMemory());
+                var subscription = await client.SubscribeAsync(nativeChannel, cancellationToken: token).ConfigureAwait(false);
                 var registration = new Registration(subscription, [handler]);
                 _subscriptions.Add(channel, registration);
                 // Never invoke a callback inline while subscription admission holds the dispatch gate.
-                _ = Task.Run(() => DeliverAsync(channel, registration));
+                _ = Task.Run(() => DeliverAsync(nativeChannel, registration));
                 return true;
             }
             finally { _dispatch.Release(); }
         });
     }
 
-    private static async Task DeliverAsync(RedisChannel channel, Registration registration)
+    private static async Task DeliverAsync(RespireChannel channel, Registration registration)
     {
         try
         {
@@ -109,7 +110,8 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
                 {
                     try
                     {
-                        handler(channel, message.Payload.ToArray());
+                        // RedisChannel exposes its backing array to the callback.
+                        handler(RedisChannel.Literal(channel.Bytes.ToArray()), message.Payload.ToArray());
                     }
                     catch { /* Like StackExchange.Redis, callback exceptions do not end delivery. */ }
                 }
