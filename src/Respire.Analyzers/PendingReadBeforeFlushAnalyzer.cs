@@ -730,14 +730,14 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                                   flush,
                                   context.CancellationToken));
 
-    private static IEnumerable<ExpressionSyntax> GetCompletionExpressions(
+    private static IEnumerable<SyntaxNode> GetCompletionExpressions(
         SyntaxNodeAnalysisContext context,
         SyntaxNode scope,
         InvocationExpressionSyntax invocation,
         ILocalSymbol batch,
         SyntaxNode origin)
     {
-        if (GetCompletionExpression(context, invocation) is { } directCompletion)
+        if (GetCompletionExpression(context, invocation, origin) is { } directCompletion)
         {
             yield return directCompletion;
             yield break;
@@ -751,12 +751,38 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         foreach (var reference in ScopeWalker.FindReferences(
                      scope, flush, context.SemanticModel, context.CancellationToken))
         {
-            if (GetCompletionExpression(context, reference) is { } completion
-                && HasOnlyMatchingReachingDefinitions(context, scope, flush, batch, origin, completion))
+            var completion = GetCompletionExpression(context, reference, origin);
+            var useSite = completion switch
+            {
+                ExpressionSyntax expression => expression,
+                ForEachStatementSyntax loop when CanTrackStoredWhenEachTask(context, scope, flush) => loop.Expression,
+                _ => null,
+            };
+
+            if (completion is not null && useSite is not null
+                && HasOnlyMatchingReachingDefinitions(context, scope, flush, batch, origin, useSite,
+                    requireFlushAfterOrigin: completion is ForEachStatementSyntax))
             {
                 yield return completion;
             }
         }
+    }
+
+    private static bool CanTrackStoredWhenEachTask(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, ILocalSymbol local)
+    {
+        // A collection can lose a task through another reference. Track only task locals.
+        if (local.RefKind != RefKind.None
+            || local.Type.Name is not (nameof(Task) or "ValueTask")
+            || local.Type.ContainingNamespace.ToDisplayString() != "System.Threading.Tasks")
+        {
+            return false;
+        }
+
+        return !ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken)
+            .Any(reference => ScopeWalker.IsNestedInLambda(reference, scope)
+                || ScopeWalker.GetOutermostTransparentExpression(reference).Parent
+                    is RefExpressionSyntax or ArgumentSyntax { RefKindKeyword.RawKind: not 0 });
     }
 
     private static ILocalSymbol? ResolveStoredFlushLocal(
@@ -777,7 +803,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         ILocalSymbol flush,
         ILocalSymbol batch,
         SyntaxNode origin,
-        ExpressionSyntax completion)
+        ExpressionSyntax completion,
+        bool requireFlushAfterOrigin)
     {
         var definitions = FindStoredValueDefinitions(context, scope, flush).ToArray();
         var reachingDefinitions = definitions.Where(definition =>
@@ -792,6 +819,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return reachingDefinitions.Length > 0
                && reachingDefinitions.All(definition =>
                    IsMatchingFlushDefinition(context, scope, definition, batch, origin))
+               && (!requireFlushAfterOrigin || !ScopeWalker.CanReachWithoutCrossing(
+                   context.SemanticModel, scope, origin, completion, reachingDefinitions, context.CancellationToken))
                && !HasMutatingCallBefore(context, scope, flush, completion);
     }
 
@@ -904,8 +933,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return false;
     }
 
-    private static ExpressionSyntax? GetCompletionExpression(
-        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+    private static SyntaxNode? GetCompletionExpression(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression, SyntaxNode origin)
     {
         expression = GetOutermostCompletionExpression(context, expression);
 
@@ -915,7 +944,86 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return awaitExpression;
         }
 
-        return GetSynchronousGetResult(context, expression);
+        return (SyntaxNode?)GetSynchronousGetResult(context, expression)
+               ?? GetWhenEachLoopCompletion(context, expression, origin);
+    }
+
+    private static ForEachStatementSyntax? GetWhenEachLoopCompletion(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression, SyntaxNode origin)
+    {
+        if (ScopeWalker.Unwrap(expression) is BaseObjectCreationExpressionSyntax
+            || expression.Parent is not ArgumentSyntax { Parent.Parent: InvocationExpressionSyntax combinator }
+            || context.SemanticModel.GetSymbolInfo(combinator, context.CancellationToken).Symbol is not IMethodSymbol
+            {
+                Name: "WhenEach",
+                IsStatic: true,
+            } method
+            || method.ContainingType.ToDisplayString() != typeof(Task).FullName
+            || method.ContainingType.Locations.Any(static location => location.IsInSource))
+        {
+            return null;
+        }
+
+        // WhenEach enumerates its tasks only once. Require a fresh sequence at the loop header.
+        expression = ScopeWalker.GetOutermostTransparentExpression(combinator);
+
+        if (expression.Parent is MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax adapter } member
+            && ScopeWalker.IsSame(member.Expression, expression)
+            && context.SemanticModel.GetSymbolInfo(adapter, context.CancellationToken).Symbol is IMethodSymbol
+            {
+                Name: "ConfigureAwait",
+                ReducedFrom.ContainingType: { } extensionType,
+            }
+            && extensionType.ToDisplayString() == "System.Threading.Tasks.TaskAsyncEnumerableExtensions")
+        {
+            expression = ScopeWalker.GetOutermostTransparentExpression(adapter);
+        }
+
+        if (expression.Parent is not ForEachStatementSyntax loop
+            || !loop.AwaitKeyword.IsKind(SyntaxKind.AwaitKeyword)
+            || !ScopeWalker.IsSame(loop.Expression, expression))
+        {
+            return null;
+        }
+
+        // Reaching exhaustion does not prove the header ran after work queued in this loop.
+        if (loop.Span.Contains(origin.Span))
+        {
+            return null;
+        }
+
+        // Await the iteration variable before body control flow can skip it.
+        // Exhaustion then proves that every supplied task was awaited.
+        var firstStatement = loop.Statement is BlockSyntax block ? block.Statements.FirstOrDefault() : loop.Statement;
+
+        if (firstStatement is not ExpressionStatementSyntax { Expression: AwaitExpressionSyntax awaited })
+        {
+            return null;
+        }
+
+        var operand = ScopeWalker.Unwrap(awaited.Expression);
+
+        if (operand is InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax configureAwait } invocation
+            && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol is IMethodSymbol
+            {
+                Name: "ConfigureAwait",
+                ContainingType.Name: nameof(Task),
+                Parameters.Length: 1,
+            } configureMethod
+            && configureMethod.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks"
+            && configureMethod.Parameters[0].Type.SpecialType == SpecialType.System_Boolean)
+        {
+            operand = ScopeWalker.Unwrap(configureAwait.Expression);
+        }
+
+        var task = context.SemanticModel.GetSymbolInfo(operand, context.CancellationToken).Symbol;
+        var iterationLocal = context.SemanticModel.GetDeclaredSymbol(loop, context.CancellationToken);
+
+        return iterationLocal is ILocalSymbol { Type.Name: nameof(Task) } local
+               && local.Type.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks"
+               && SymbolEqualityComparer.Default.Equals(task, local)
+            ? loop
+            : null;
     }
 
     private static ExpressionSyntax GetOutermostCompletionExpression(

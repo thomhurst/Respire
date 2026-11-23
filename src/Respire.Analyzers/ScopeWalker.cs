@@ -228,7 +228,8 @@ internal static partial class ScopeWalker
         if (graph is null)
         {
             return IsUnconditionalTopLevelSequence(scope, before, after, requireExitCoverage: false)
-                   && !barriers.Any(barrier => barrier.SpanStart > before.SpanStart
+                   && !barriers.Any(barrier => barrier is not ForEachStatementSyntax
+                                               && barrier.SpanStart > before.SpanStart
                                                && barrier.SpanStart < after.SpanStart);
         }
 

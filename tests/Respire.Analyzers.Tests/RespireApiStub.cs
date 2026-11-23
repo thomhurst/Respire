@@ -41,11 +41,12 @@ internal static class RespireApiStub
             public readonly struct RespireBatchResult { }
             public readonly struct RespireAofAcknowledgementResult { }
 
-            public sealed class RespireBatch
+            public sealed class RespireBatch : IAsyncDisposable
             {
                 public BatchHashCommands Hashes => new BatchHashCommands();
                 public RespirePending<string> GetStringAsync(string key) => new RespirePending<string>();
                 public RespirePending<long> IncrementAsync(string key) => new RespirePending<long>();
+                public ValueTask DisposeAsync() => default;
                 public ValueTask SendAsync() => default;
                 public ValueTask<RespireBatchResult> ExecuteAsync(System.Threading.CancellationToken cancellationToken = default) => default;
                 public ValueTask<RespireBatchResult> TryExecuteAsync() => default;

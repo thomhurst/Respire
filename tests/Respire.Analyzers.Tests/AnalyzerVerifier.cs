@@ -21,11 +21,19 @@ internal static class AnalyzerVerifier<TAnalyzer>
     public static Task VerifyUnsafeAsync(string source)
         => VerifyAsync(source, Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true);
 
-    private static Task VerifyAsync(string source, Microsoft.CodeAnalysis.OutputKind outputKind, bool allowUnsafe = false)
+    public static Task VerifyWithNet10Async(string source)
+        => VerifyAsync(source, Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary,
+            referenceAssemblies: ReferenceAssemblies.Net.Net100);
+
+    private static Task VerifyAsync(
+        string source,
+        Microsoft.CodeAnalysis.OutputKind outputKind,
+        bool allowUnsafe = false,
+        ReferenceAssemblies? referenceAssemblies = null)
     {
         var test = new CSharpAnalyzerTest<TAnalyzer, DefaultVerifier>
         {
-            ReferenceAssemblies = TestReferences.Assemblies,
+            ReferenceAssemblies = referenceAssemblies ?? TestReferences.Assemblies,
         };
 
         test.TestState.OutputKind = outputKind;
