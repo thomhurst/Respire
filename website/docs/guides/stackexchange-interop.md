@@ -340,6 +340,8 @@ Conditions work in trimmed applications.
 - `Publish[Async]` works on the subscriber and database with `None` or `DemandMaster`, not in batches.
 - Both apply the native pub/sub prefix.
 - `ChannelMessageQueue`, patterns, and other subscriber members are unsupported.
+- Passing a sharded channel (`RedisChannel.Sharded`) to subscribe, unsubscribe, or publish throws
+  `NotSupportedException`. This includes publishes queued in a transaction.
 - Closing the adapter removes only its own subscriptions.
 
 ## Move application code to native APIs

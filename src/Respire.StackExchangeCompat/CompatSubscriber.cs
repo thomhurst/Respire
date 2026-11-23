@@ -24,6 +24,11 @@ internal sealed partial class CompatSubscriber(RespireConnectionMultiplexer owne
 
     private static RedisChannel SnapshotChannel(RedisChannel channel, CommandFlags flags)
     {
+        if (channel.IsSharded)
+        {
+            throw Compatibility.Unsupported("Sharded channels");
+        }
+
         byte[]? bytes = channel;
 
         if (bytes is null)
