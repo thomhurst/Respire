@@ -4,7 +4,7 @@
     {
       "Name": "script-correction-borrower",
       "Role": "borrower",
-      "Member": "Respire.RespireClient.ExecuteScriptBorrowedAsync(RespireScript,RespireKey[],RespireValue[],CancellationToken,RespireTelemetry.ErrorObservation):ValueTask<RespireResult>",
+      "Member": "Respire.RespireClient.ExecuteScriptBorrowedAsync(RespireScript,RespireKey[],RespireValue[],CancellationToken,RespireTelemetry.ErrorObservation,bool):ValueTask<RespireResult>",
       "Owner": "Respire.Internal.DispatchResponseSource`1.IValueTaskSource<TResult>.GetResult(short):TResult",
       "Contract": "Borrow the correction caller's observation through script fallback and mutation cleanup. Never publish a producer final error or dispose an independent caller's owner."
     },

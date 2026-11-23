@@ -11,7 +11,7 @@ internal readonly struct ReadOnlyCommand<TCommand> : IRespCommandWrapper
     private readonly bool _declaredReadOnly;
     private readonly CancellationToken _scriptAdmissionToken;
 
-    private ReadOnlyCommand(TCommand command, bool declaredReadOnly, CancellationToken scriptAdmissionToken = default)
+    private ReadOnlyCommand(TCommand command, bool declaredReadOnly, CancellationToken scriptAdmissionToken)
     {
         _command = command;
         _declaredReadOnly = declaredReadOnly;
@@ -20,11 +20,11 @@ internal readonly struct ReadOnlyCommand<TCommand> : IRespCommandWrapper
 
     // Source guards restrict these declarations to their audited script and node paths.
     internal static ReadOnlyCommand<TCommand> ForAuditedScript(TCommand command, bool declaredReadOnly,
-        CancellationToken scriptAdmissionToken = default)
+        CancellationToken scriptAdmissionToken)
         => new(command, declaredReadOnly, scriptAdmissionToken);
 
     internal static ReadOnlyCommand<TCommand> ForNodeRead(TCommand command, bool declaredReadOnly)
-        => new(command, declaredReadOnly);
+        => new(command, declaredReadOnly, CancellationToken.None);
 
     public void Write(ref RespWriter writer) => _command.Write(ref writer);
 
