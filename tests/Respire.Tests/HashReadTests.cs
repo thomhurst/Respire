@@ -98,15 +98,17 @@ public class HashReadTests
     }
 
     [Test]
-    public async Task ExpiryTime_RejectsOverflowingSecondsAsMalformedReplies()
+    [Arguments(long.MaxValue / 1000, 9_223_372_036_854_775_000L)]
+    [Arguments(long.MaxValue / 1000 + 1, null)]
+    [Arguments(long.MaxValue, null)]
+    public async Task ExpiryTime_PreservesSecondsAcrossMillisecondBoundary(long seconds, long? expectedMilliseconds)
     {
-        const long largestSeconds = long.MaxValue / 1000;
-        await Assert.That(RespireExpiryTimeResult.FromRedis(largestSeconds, RespireExpiryTimePrecision.Seconds).UnixTimeMilliseconds)
-            .IsEqualTo(largestSeconds * 1000);
-        await Assert.That(() => RespireExpiryTimeResult.FromRedis(largestSeconds + 1, RespireExpiryTimePrecision.Seconds))
-            .Throws<RespireProtocolException>();
-        await Assert.That(() => RespireExpiryTimeResult.FromRedis(long.MaxValue, RespireExpiryTimePrecision.Seconds))
-            .Throws<RespireProtocolException>();
+        var expiry = RespireExpiryTimeResult.FromRedis(seconds, RespireExpiryTimePrecision.Seconds);
+
+        await Assert.That(expiry.Exists).IsTrue();
+        await Assert.That(expiry.HasExpiry).IsTrue();
+        await Assert.That(expiry.UnixTimeSeconds).IsEqualTo(seconds);
+        await Assert.That(expiry.UnixTimeMilliseconds).IsEqualTo(expectedMilliseconds);
     }
 
     [Test]
