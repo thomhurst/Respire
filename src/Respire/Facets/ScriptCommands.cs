@@ -260,6 +260,7 @@ public interface IRespireScriptCommands
     }
 
     /// <summary>Executes a script and reads its integer result. Redis: EVALSHA / EVAL, or EVALSHA_RO / EVAL_RO for read-only scripts.</summary>
+    /// <exception cref="RespireProtocolException">The script returned a reply whose RESP type is not integer.</exception>
     async ValueTask<long> ExecuteIntegerAsync(
         RespireScript script,
         RespireKey[]? keys = null,
@@ -267,7 +268,7 @@ public interface IRespireScriptCommands
         CancellationToken cancellationToken = default)
     {
         using var result = await ExecuteAsync(script, keys, args, cancellationToken).ConfigureAwait(false);
-        return result.AsInteger();
+        return result.ReadRequiredInteger();
     }
 
     /// <summary>Executes a script and reads its string result, or null. Redis: EVALSHA / EVAL, or EVALSHA_RO / EVAL_RO for read-only scripts.</summary>
@@ -391,7 +392,7 @@ internal sealed class ScriptCommands(RespireClient client) : IRespireScriptComma
     public ValueTask<long> ExecuteIntegerAsync(
         RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
         CancellationToken cancellationToken = default)
-        => ExecuteConvertedAsync(script, keys, args, cancellationToken, static result => result.AsInteger());
+        => ExecuteConvertedAsync(script, keys, args, cancellationToken, static result => result.ReadRequiredInteger());
 
     public ValueTask<string?> ExecuteStringAsync(
         RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,

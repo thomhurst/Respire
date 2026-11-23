@@ -31,6 +31,8 @@ execution. Other calls send `FCALL`.
 - `ExecuteAsync` returns a GC-owned `RespireResult`; disposal is optional.
 - `ExecuteLeaseAsync` and `ExecuteLeaseSpanAsync` return pooled results: dispose them with `using`.
 - `ExecuteStringAsync`, `ExecuteIntegerAsync`, and `ExecuteAsync<T>` convert and dispose replies.
+  `ExecuteIntegerAsync` requires a RESP integer. Other reply types, including null, throw
+  `RespireProtocolException`.
 - Keys are prefixed; arguments and function/library names are not. All keys must share a
   Cluster slot. Keyless calls use the router's default node.
 - Functions default to `RespireCommandRetryCategory.Never`. Opt in with `WithRetryCategory`

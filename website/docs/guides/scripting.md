@@ -29,7 +29,7 @@ var value = await client.Scripts.ExecuteStringAsync(read, keys: ["key"]);
 | `ExecuteSpanAsync` | A GC-owned `RespireResult` from span-based keys and arguments. |
 | `ExecuteLeaseAsync` / `ExecuteLeaseSpanAsync` | A pooled `RespireResult`. Dispose it with `using`. |
 | `ExecuteAsync<T>` | The reply deserialized with the client serializer. |
-| `ExecuteIntegerAsync` | The reply as `long`. |
+| `ExecuteIntegerAsync` | A RESP integer as `long`. Other reply types, including null, throw `RespireProtocolException`. |
 | `ExecuteStringAsync` | The reply as `string`, or `null`. |
 
 Typed helpers dispose their replies for you. `ExecuteSpanAsync` copies the span collections before returning, so you can reuse the span storage immediately. Binary key and argument buffers stay borrowed: keep them unchanged until the operation completes.

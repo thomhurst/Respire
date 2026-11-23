@@ -77,11 +77,12 @@ public interface IRespireFunctionCommands
     }
 
     /// <summary>Calls a function and reads its integer result.</summary>
+    /// <exception cref="RespireProtocolException">The function returned a reply whose RESP type is not integer.</exception>
     async ValueTask<long> ExecuteIntegerAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
     {
         using var result = await ExecuteAsync(function, keys, args, cancellationToken).ConfigureAwait(false);
-        return result.AsInteger();
+        return result.ReadRequiredInteger();
     }
 
     /// <summary>Calls a function and reads its string result, or null.</summary>
@@ -155,7 +156,7 @@ internal sealed class FunctionCommands(RespireClient client) : IRespireFunctionC
 
     public ValueTask<long> ExecuteIntegerAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
-        => ExecuteConvertedCoreAsync(function, keys, args, cancellationToken, static result => result.AsInteger());
+        => ExecuteConvertedCoreAsync(function, keys, args, cancellationToken, static result => result.ReadRequiredInteger());
 
     public ValueTask<string?> ExecuteStringAsync(RespireFunction function, RespireKey[]? keys = null,
         RespireValue[]? args = null, CancellationToken cancellationToken = default)
