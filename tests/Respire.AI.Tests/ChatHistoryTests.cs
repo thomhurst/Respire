@@ -183,6 +183,128 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         await store.ClearAsync("chat");
     }
 
+    [Test, Arguments(2), Arguments(3)]
+    public async Task StreamingPersistsProviderTextBeforeCallerEdits(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var store = Store(redis);
+        var provider = new RecordingChatClient();
+        using var chat = new ChatClientBuilder(provider).UseRespireChatHistory(store, "chat").Build();
+
+        await foreach (var update in chat.GetStreamingResponseAsync([new(ChatRole.User, "first")]))
+        {
+            var content = (TextContent)update.Contents[0];
+            content.Text = "decorated " + content.Text;
+            update.Contents.Add(new TextContent("!"));
+            update.Role = ChatRole.User;
+        }
+
+        var history = await store.ReadAsync("chat");
+        history.Select(message => message.Text).Should().Equal("first", "hello world");
+        history.Select(message => message.Role).Should().Equal(ChatRole.User, ChatRole.Assistant);
+
+        await chat.GetResponseAsync([new(ChatRole.User, "second")]);
+        provider.LastRequest.Select(message => message.Text).Should().Equal("first", "hello world", "second");
+        await store.ClearAsync("chat");
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task StreamingSnapshotsNestedToolArgumentsAndPreservesTextAcrossChunks(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var store = Store(redis);
+        var cities = new List<string> { "London" };
+        var toolCall = new FunctionCallContent("weather-call", "weather", new Dictionary<string, object?> { ["cities"] = cities });
+        var first = new ChatResponseUpdate(ChatRole.Assistant, "\uD83D")
+        {
+            MessageId = "reply",
+            AdditionalProperties = new() { ["cities"] = cities },
+        };
+        var second = new ChatResponseUpdate(null, [new TextContent("\uDE00"), toolCall]) { MessageId = "reply" };
+        var provider = new RecordingChatClient([first, second]);
+        using var chat = new ChatClientBuilder(provider).UseRespireChatHistory(store, "chat").Build();
+
+        await foreach (var update in chat.GetStreamingResponseAsync([new(ChatRole.User, "weather?")]))
+        {
+            if (update.Contents.Count > 1)
+            {
+                update.Should().BeSameAs(second);
+                update.Contents[1].Should().BeSameAs(toolCall);
+                cities[0] = "Paris";
+                update.MessageId = "display";
+            }
+        }
+
+        var history = await store.ReadAsync("chat");
+        history.Should().HaveCount(2);
+        history[1].Text.Should().Be("\U0001F600");
+        history[1].MessageId.Should().Be("reply");
+        history[1].AdditionalProperties!["cities"].Should().BeOfType<JsonElement>().Which[0].GetString().Should().Be("London");
+        var savedCall = history[1].Contents.OfType<FunctionCallContent>().Should().ContainSingle().Which;
+        savedCall.Arguments!["cities"].Should().BeOfType<JsonElement>().Which[0].GetString().Should().Be("London");
+        await store.ClearAsync("chat");
+    }
+
+    [Test, Arguments(2), Arguments(3)]
+    public async Task StreamingPreservesSplitUnicodeInCodeInterpreterContent(int protocol)
+    {
+        await using var redis = await Connect(protocol);
+        var store = Store(redis);
+        var provider = new RecordingChatClient(
+        [
+            new(ChatRole.Assistant, [new CodeInterpreterToolCallContent("code") { Inputs = [new TextContent("\uD83D")] }]),
+            new(null, [new CodeInterpreterToolCallContent("code") { Inputs = [new TextContent("\uDE00")] }]),
+            new(null, [new CodeInterpreterToolResultContent("code") { Outputs = [new TextReasoningContent("\uD83D")] }]),
+            new(null, [new CodeInterpreterToolResultContent("code") { Outputs = [new TextReasoningContent("\uDE00")] }]),
+        ]);
+        using var chat = new ChatClientBuilder(provider).UseRespireChatHistory(store, "chat").Build();
+
+        await foreach (var _ in chat.GetStreamingResponseAsync([new(ChatRole.User, "run code")]))
+        {
+        }
+
+        await chat.GetResponseAsync([new(ChatRole.User, "follow up")]);
+        var savedReply = provider.LastRequest[1];
+        var savedCall = savedReply.Contents.OfType<CodeInterpreterToolCallContent>().Should().ContainSingle().Which;
+        var savedResult = savedReply.Contents.OfType<CodeInterpreterToolResultContent>().Should().ContainSingle().Which;
+        savedCall.Inputs!.Should().ContainSingle().Which.Should().BeOfType<TextContent>().Which.Text.Should().Be("\U0001F600");
+        savedResult.Outputs!.Should().ContainSingle().Which.Should().BeOfType<TextReasoningContent>().Which.Text.Should().Be("\U0001F600");
+        await store.ClearAsync("chat");
+    }
+
+    [Test]
+    public async Task StreamingReportsHistorySerializationFailureAfterDeliveringUpdates()
+    {
+        await using var redis = await Connect(3);
+        var store = Store(redis);
+        var first = new ChatResponseUpdate(ChatRole.Assistant, "hello")
+        {
+            MessageId = "reply",
+            AdditionalProperties = new()
+            {
+                ["unsupported"] = (Action)(() =>
+                {
+                })
+            },
+        };
+        var second = new ChatResponseUpdate(null, " world") { MessageId = "reply" };
+        var provider = new RecordingChatClient([first, second]);
+        using var chat = new ChatClientBuilder(provider).UseRespireChatHistory(store, "chat").Build();
+        var delivered = new List<ChatResponseUpdate>();
+
+        Func<Task> enumerate = async () =>
+        {
+            await foreach (var update in chat.GetStreamingResponseAsync([new(ChatRole.User, "first")]))
+            {
+                delivered.Add(update);
+            }
+        };
+
+        await enumerate.Should().ThrowAsync<NotSupportedException>();
+        delivered.Should().Equal(first, second);
+        (await store.ReadAsync("chat")).Should().BeEmpty();
+    }
+
     [Test, Arguments(2, false), Arguments(3, false), Arguments(2, true), Arguments(3, true)]
     public async Task MiddlewarePersistsWholeToolLoopExactlyOnce(int protocol, bool streaming)
     {
@@ -550,7 +672,7 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
         }
     }
 
-    private sealed class RecordingChatClient : IChatClient
+    private sealed class RecordingChatClient(ChatResponseUpdate[]? streamingUpdates = null) : IChatClient
     {
         public List<ChatMessage> LastRequest
         {
@@ -583,15 +705,17 @@ public class ChatHistoryTests(ModernRedisTestContainer fixture)
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             LastRequest = messages.ToList();
-            yield return new(ChatRole.Assistant, "hello");
-            await Task.CompletedTask;
 
-            if (Fail)
+            foreach (var update in streamingUpdates ?? [new(ChatRole.Assistant, "hello"), new(ChatRole.Assistant, " world")])
             {
-                throw new InvalidOperationException("provider failed");
-            }
+                yield return update;
+                await Task.CompletedTask;
 
-            yield return new(ChatRole.Assistant, " world");
+                if (Fail)
+                {
+                    throw new InvalidOperationException("provider failed");
+                }
+            }
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;

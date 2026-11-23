@@ -434,6 +434,11 @@ since expired or been evicted). Past that budget, or when a read's keys are unkn
 socket clears the whole cache. New destinations, credential changes, target eviction, maintenance
 retirement and client disposal always clear the whole cache.
 
+Redis and Valkey send no tracking invalidation when you swap databases with `SWAPDB`. Respire
+clears the cache of the client issuing `SwapDatabasesAsync`. After the swap, call
+`ClientSideCache.Clear()` on other clients that cache reads from either database before resuming
+cached reads.
+
 ## Opt-out tracking and local writes
 
 Choose `OptOut` when most reads should be tracked. Each caching connection sends
