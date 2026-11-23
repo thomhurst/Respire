@@ -84,6 +84,12 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
         _hubProtocolResolver = hubProtocolResolver;
         _logger = logger;
         var configured = options.Value;
+        TimeSpan groupAckTimeout = configured.GroupAckTimeout;
+
+        if (!RespireSignalROptions.IsValidGroupAckTimeout(groupAckTimeout))
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Group acknowledgement timeout must be positive and within the timer limit.");
+        }
 
         if (configured.RemoteClientResultTimeout <= TimeSpan.Zero
             || configured.RemoteClientResultTimeout.TotalMilliseconds > uint.MaxValue - 1)
@@ -96,7 +102,7 @@ public sealed class RespireHubLifetimeManager<THub> : HubLifetimeManager<THub>, 
             ChannelPrefix = configured.ChannelPrefix,
             SubscriptionBufferSize = configured.SubscriptionBufferSize,
             UseShardedPubSub = configured.UseShardedPubSub,
-            GroupAckTimeout = configured.GroupAckTimeout,
+            GroupAckTimeout = groupAckTimeout,
             RemoteClientResultTimeout = configured.RemoteClientResultTimeout,
         };
         _bus = new RespirePubSub(client, _options, logger, typeof(THub).FullName!);
