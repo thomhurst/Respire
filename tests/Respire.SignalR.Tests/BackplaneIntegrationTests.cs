@@ -306,7 +306,7 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         string prefix = Guid.NewGuid().ToString("N");
         await using var sender = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, false, false);
         await using var owner = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, false, false,
-            commandHook: new RejectFirstUnsubscribe());
+            commandHook: new RejectSubscriptionCommands());
         await using var peer = await owner.ConnectAsync("user", false);
         const string group = "group";
 
@@ -325,6 +325,56 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         var client = sender.Application.Services.GetRequiredService<RespireClient>();
         string channel = prefix + typeof(BackplaneTestHub).FullName + ":group:" + group;
         await Assert.That(await client.PublishAsync(channel, ReadOnlyMemory<byte>.Empty)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task IdleGroupUnsubscribesAfterTransientRejections()
+    {
+        string prefix = Guid.NewGuid().ToString("N");
+        await using var host = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, false, false,
+            commandHook: new RejectSubscriptionCommands(rejectedUnsubscribes: 2));
+        await using var peer = await host.ConnectAsync("user", false);
+        await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        const string group = "group";
+        string channel = prefix + typeof(BackplaneTestHub).FullName + ":group:" + group;
+        await host.Manager.AddToGroupAsync(peer.Id, group);
+        var subscribers = await observer.Server.PubSubSubscriberCountsAsync([channel]);
+        await Assert.That(subscribers[0].Subscribers).IsEqualTo(1L);
+
+        await Assert.That(() => host.Manager.RemoveFromGroupAsync(peer.Id, group))
+            .ThrowsExactly<InvalidOperationException>();
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        while (true)
+        {
+            subscribers = await observer.Server.PubSubSubscriberCountsAsync([channel], cancellationToken: deadline.Token);
+
+            if (subscribers[0].Subscribers == 0)
+            {
+                break;
+            }
+
+            await Task.Delay(20, deadline.Token);
+        }
+    }
+
+    [Test]
+    public async Task BackplaneStartupRecoversWhenCleanupUnsubscribeIsRejected()
+    {
+        string prefix = Guid.NewGuid().ToString("N");
+        var hook = new RejectSubscriptionCommands(rejectedSubscribeNumber: 4);
+        await using var host = await BackplaneHost.StartAsync(fixture.ConnectionString, prefix, false, false,
+            commandHook: hook);
+        var failedConnection = new HubConnectionContext(new DefaultConnectionContext("failed"), new(),
+            NullLoggerFactory.Instance);
+
+        await Assert.That(() => host.Manager.OnConnectedAsync(failedConnection)).ThrowsExactly<IOException>();
+        await Assert.That(hook.UnsubscribeAttempts).IsGreaterThanOrEqualTo(3);
+
+        await using var peer = await host.ConnectAsync("user", false);
+        await host.Manager.SendAllAsync("message", ["after startup retry"]);
+        await peer.ExpectAsync("after startup retry");
     }
 
     [Test]
@@ -736,15 +786,25 @@ public class BackplaneIntegrationTests(RedisTestContainer fixture)
         await peer.ExpectAsync("after");
     }
 
-    private sealed class RejectFirstUnsubscribe : RespireCommandHook
+    private sealed class RejectSubscriptionCommands(int rejectedUnsubscribes = 1, int rejectedSubscribeNumber = 0)
+        : RespireCommandHook
     {
-        private int _rejectNext = 1;
+        private int _subscribeAttempts;
+        private int _unsubscribeAttempts;
+
+        internal int UnsubscribeAttempts => Volatile.Read(ref _unsubscribeAttempts);
 
         public override object? OnExecuting(RespireCommandContext context)
         {
-            if (context.Command == "UNSUBSCRIBE" && Interlocked.Exchange(ref _rejectNext, 0) == 1)
+            if (context.Command == "SUBSCRIBE" && Interlocked.Increment(ref _subscribeAttempts) == rejectedSubscribeNumber)
             {
-                throw new InvalidOperationException("Reject the first unsubscribe.");
+                throw new IOException("Reject backplane startup subscription.");
+            }
+
+            if (context.Command == "UNSUBSCRIBE"
+                && Interlocked.Increment(ref _unsubscribeAttempts) <= rejectedUnsubscribes)
+            {
+                throw new InvalidOperationException("Reject subscription teardown.");
             }
 
             return null;
