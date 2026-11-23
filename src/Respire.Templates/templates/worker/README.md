@@ -54,8 +54,9 @@ or the host stops. Each failure logs a warning. Invalid configuration, authentic
 protocol and permanent command errors still fail startup. Exhausted reconnect limits
 also fail startup because the client must be recreated. `/health/ready` reports unhealthy until
 Redis is connected; it does not assert that every job has finished. The queue name
-and Redis result key prefix follow the generated project name; instances with the
-same name share work.
+and Redis result key prefix use the percent-encoded assembly name, which defaults
+to the project name. Instances with the same assembly name share work when they
+use the same Redis database.
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` to export both `Respire` and `Respire.Streaming`
 traces and metrics. Without it, no exporter is enabled. Standard OpenTelemetry

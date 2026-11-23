@@ -18,9 +18,23 @@ public sealed class SampleJobHandler(IRespireClient redis, ILogger<SampleJobHand
         RespireJob<SampleJob> job, CancellationToken cancellationToken)
     {
         // Deterministic overwrite tolerates redelivery. Real side effects also need idempotency.
-        await redis.SetAsync($"RespireWorker:result:{job.Id}", job.Payload.Message.ToUpperInvariant(),
+        await redis.SetAsync(SampleJobKeys.GetResultKey(job.Id), job.Payload.Message.ToUpperInvariant(),
             expiry: TimeSpan.FromHours(1), cancellationToken: cancellationToken);
         logger.LogInformation("Processed job {JobId}", job.Id);
         return RespireStreamWorkerResult.Ack;
+    }
+}
+
+internal static class SampleJobKeys
+{
+    // Escape braces before putting the assembly name inside a Redis Cluster hash tag.
+    internal static string QueueName
+    {
+        get;
+    } = Uri.EscapeDataString(typeof(SampleJobKeys).Assembly.GetName().Name!);
+
+    internal static string GetResultKey(string id)
+    {
+        return $"{QueueName}:result:{id}";
     }
 }

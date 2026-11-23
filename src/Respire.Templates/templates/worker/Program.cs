@@ -24,7 +24,10 @@ builder.Services.AddAuthorization(options => options.AddPolicy(OperatorAuthentic
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("Redis")
     ?? throw new InvalidOperationException("ConnectionStrings:Redis is required."));
 builder.Services.AddHealthChecks().AddRespire();
-builder.Services.AddRespireJobQueue<SampleJobHandler, SampleJob>("RespireWorker",
+
+string queueName = SampleJobKeys.QueueName;
+string readyStream = $"{{respire-job:{queueName}}}:ready";
+builder.Services.AddRespireJobQueue<SampleJobHandler, SampleJob>(queueName,
     job => JsonSerializer.SerializeToUtf8Bytes(job, JobJson.Default.SampleJob),
     bytes => JsonSerializer.Deserialize(bytes, JobJson.Default.SampleJob)
         ?? throw new JsonException("Missing job payload."),
@@ -33,9 +36,9 @@ builder.Services.AddRespireJobQueue<SampleJobHandler, SampleJob>("RespireWorker"
 builder.Services.AddRespireStreamingDashboard(options => options.Streams.Add(new()
 {
     Name = "Sample jobs",
-    Stream = "{respire-job:RespireWorker}:ready",
+    Stream = readyStream,
     Group = RespireJobQueue<SampleJob>.ConsumerGroup,
-    DeadLetterStream = "{respire-job:RespireWorker}:ready:dead",
+    DeadLetterStream = readyStream + ":dead",
     IsJobQueue = true,
 }));
 var telemetry = builder.Services.AddOpenTelemetry()
@@ -61,7 +64,7 @@ jobs.MapPost("/{id}", async (string id, SampleJob job, IServiceProvider services
         return Results.BadRequest("Supply an ID of 1–128 characters and a message of 1–1000 characters.");
     }
 
-    var queue = services.GetRequiredKeyedService<RespireJobQueue<SampleJob>>("RespireWorker");
+    var queue = services.GetRequiredKeyedService<RespireJobQueue<SampleJob>>(queueName);
     var submitted = await queue.EnqueueAsync(id, job, cancellationToken: ct);
     return Results.Accepted($"/jobs/{Uri.EscapeDataString(id)}", new
     {
@@ -77,7 +80,7 @@ jobs.MapGet("/{id}", async (string id, IRespireClient redis, CancellationToken c
         return Results.BadRequest("Supply an ID of 1–128 characters.");
     }
 
-    var result = await redis.GetAsync<string>($"RespireWorker:result:{id}", ct);
+    var result = await redis.GetAsync<string>(SampleJobKeys.GetResultKey(id), ct);
     return result is null ? Results.NotFound() : Results.Ok(new { id, result });
 });
 await app.RunAsync();
