@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using DotNet.Testcontainers.Containers;
 using FluentAssertions;
 using TUnit.Core;
@@ -10,6 +13,162 @@ namespace Respire.IntegrationTests;
 public class ContainerStartRetryTests
 {
     private const string ListenFailure = "failed to set up container networking: driver failed programming external connectivity on endpoint sharp_colden (2db25cff5020): failed to listen on TCP socket: address already in use";
+    private const string ExpectedRunId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task WrongPublishedListenerStartsAFreshContainer(bool http)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var wrong = new TcpListener(IPAddress.Loopback, 0);
+        using var ready = new TcpListener(IPAddress.Loopback, 0);
+        wrong.Start();
+        ready.Start();
+        string wrongReply = http
+            ? "HTTP/1.1 400 Bad Request\r\n\r\n"
+            : InfoReply("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        Task wrongReplySent = ReplyAsync(wrong, wrongReply, timeout.Token);
+        Task readyReplySent = ReplyAsync(ready, InfoReply(ExpectedRunId), timeout.Token);
+        var attempts = new List<ContainerProbe>();
+        int bindFailures = http ? 1 : 0;
+
+        try
+        {
+            await using var started = await ContainerStartRetry.StartRedisAsync(() =>
+            {
+                attempts.Should().OnlyContain(attempt => attempt.DisposeCount == 1);
+                var container = attempts.Count < bindFailures
+                    ? ContainerProbe.Create(_ => Task.FromException(ApiError(ListenFailure)))
+                    : PublishedContainer(attempts.Count == bindFailures ? wrong : ready);
+                attempts.Add((ContainerProbe)container);
+                return container;
+            }, 6379, timeout.Token);
+            attempts.Should().HaveCount(bindFailures + 2).And.OnlyContain(attempt => attempt.StartCount == 1);
+            started.Should().BeSameAs(attempts[^1]);
+            attempts[^1].DisposeCount.Should().Be(0);
+            await Task.WhenAll(wrongReplySent, readyReplySent);
+        }
+        finally
+        {
+            await timeout.CancelAsync();
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SilentPublishedEndpointTimesOutOrHonorsCallerCancellation(bool cancelCaller)
+    {
+        using var caller = new CancellationTokenSource();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var container = PublishedContainer(listener);
+        var probe = (ContainerProbe)container;
+        Task<IContainer> startup = ContainerStartRetry.StartRedisAsync(() => container, 6379, caller.Token);
+        using var client = await listener.AcceptTcpClientAsync(timeout.Token);
+        using var stream = client.GetStream();
+        await ReadInfoRequestAsync(stream, timeout.Token);
+
+        Func<Task> start = () => startup;
+
+        if (cancelCaller)
+        {
+            await caller.CancelAsync();
+            var error = (await start.Should().ThrowAsync<OperationCanceledException>()).Which;
+            error.CancellationToken.Should().Be(caller.Token);
+        }
+        else
+        {
+            var error = (await start.Should().ThrowAsync<TimeoutException>()).Which;
+            error.Message.Should().Contain($"127.0.0.1:{probe.MappedPort}");
+            error.InnerException.Should().BeAssignableTo<OperationCanceledException>();
+        }
+
+        probe.StartCount.Should().Be(1);
+        probe.DisposeCount.Should().Be(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SuccessfulStartChecksThePublishedEndpoint(bool disconnect)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        Task reply = ReplyAsync(listener, disconnect ? null : InfoReply(ExpectedRunId), timeout.Token);
+        var container = PublishedContainer(listener);
+        var probe = (ContainerProbe)container;
+        int attempts = 0;
+        Func<Task<IContainer>> start = () => ContainerStartRetry.StartRedisAsync(() =>
+        {
+            attempts++;
+            return container;
+        }, 6379, timeout.Token);
+
+        try
+        {
+            if (disconnect)
+            {
+                var error = (await start.Should().ThrowAsync<IOException>()).Which;
+                error.Message.Should().Contain($"127.0.0.1:{probe.MappedPort}");
+                error.InnerException.Should().BeOfType<EndOfStreamException>();
+                probe.DisposeCount.Should().Be(1);
+            }
+            else
+            {
+                await using var started = await start();
+                started.Should().BeSameAs(container);
+                probe.DisposeCount.Should().Be(0);
+            }
+
+            attempts.Should().Be(1);
+            probe.StartCount.Should().Be(1);
+            await reply;
+        }
+        finally
+        {
+            await timeout.CancelAsync();
+        }
+    }
+
+    private static IContainer PublishedContainer(TcpListener listener)
+    {
+        var container = ContainerProbe.Create(_ => Task.CompletedTask);
+        var probe = (ContainerProbe)container;
+        probe.Hostname = "127.0.0.1";
+        probe.MappedPort = (ushort)((IPEndPoint)listener.LocalEndpoint).Port;
+        probe.Execute = (_, _) => Task.FromResult(new ExecResult($"run_id:{ExpectedRunId}\r\n", "", 0));
+        return container;
+    }
+
+    private static string InfoReply(string runId)
+    {
+        string info = $"# Server\r\nrun_id:{runId}\r\n";
+        return "$" + FormattableString.Invariant($"{info.Length}\r\n{info}\r\n");
+    }
+
+    private static async Task ReplyAsync(TcpListener listener, string? reply, CancellationToken cancellationToken)
+    {
+        using var client = await listener.AcceptTcpClientAsync(cancellationToken);
+        using var stream = client.GetStream();
+        await ReadInfoRequestAsync(stream, cancellationToken);
+
+        if (reply is not null)
+        {
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(reply), cancellationToken);
+        }
+    }
+
+    private static async Task ReadInfoRequestAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        var command = "*2\r\n$4\r\nINFO\r\n$6\r\nserver\r\n"u8.ToArray();
+        var request = new byte[command.Length];
+        await stream.ReadExactlyAsync(request, cancellationToken);
+        request.Should().Equal(command);
+    }
 
     [Test]
     [Arguments(0, ListenFailure)]

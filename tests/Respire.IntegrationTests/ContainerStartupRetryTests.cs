@@ -326,6 +326,16 @@ public class ContainerStartupRetryTests
             get; set;
         }
 
+        public string? Hostname
+        {
+            get; set;
+        }
+
+        public ushort MappedPort
+        {
+            get; set;
+        }
+
         public int StartCount
         {
             get; private set;
@@ -359,7 +369,9 @@ public class ContainerStartupRetryTests
                 case "get_Id":
                     return "controlled-container";
                 case "get_Hostname":
-                    throw HostnameError ?? new InvalidOperationException("Unexpected successful start in failure test.");
+                    return Hostname ?? throw HostnameError ?? new InvalidOperationException("Unexpected successful start in failure test.");
+                case "GetMappedPublicPort":
+                    return MappedPort;
                 default:
                     throw new NotSupportedException(method.Name);
             }
