@@ -80,10 +80,21 @@ public sealed partial class RespireSearchClient
             return (reply[0], RespireSearchProfileNode.Parse(reply[1]));
         }
 
-        if (reply.Type == RespireDataType.Map && TryReadProfileField(reply, "Results", out var result) &&
-            TryReadProfileField(reply, "Profile", out var profile))
+        if (reply.Type == RespireDataType.Map)
         {
-            return (result, RespireSearchProfileNode.Parse(profile));
+            bool hasNestedResult = TryReadProfileField(reply, "Results", out var result);
+
+            if (hasNestedResult && TryReadProfileField(reply, "Profile", out var profile))
+            {
+                return (result, RespireSearchProfileNode.Parse(profile));
+            }
+
+            if (!hasNestedResult && TryReadProfileField(reply, "profile", out var inlineProfile) &&
+                TryReadProfileField(reply, "results", out _) && TryReadProfileField(reply, "total_results", out _))
+            {
+                // RediSearch 2.10 adds profile to the ordinary RESP3 query map.
+                return (reply, RespireSearchProfileNode.Parse(inlineProfile, inlineResp3: true));
+            }
         }
 
         throw RespireSearchReply.Unexpected("FT.PROFILE",
