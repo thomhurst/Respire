@@ -76,7 +76,7 @@ jobs:
 
     services:
       redis:
-        image: mirror.gcr.io/library/redis:8.10
+        image: mirror.gcr.io/library/redis:8.12
         ports:
           - 6379:6379
         options: >-
